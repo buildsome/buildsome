@@ -16,7 +16,7 @@
 #define FORWARD(ret_type, name, fmt, ...)               \
     name##_func *real = dlsym(RTLD_NEXT, #name);        \
     ret_type rc = real(__VA_ARGS__);                    \
-    fprintf(stderr, #name " " fmt, ##__VA_ARGS__, rc);  \
+    fprintf(stderr, #name " " fmt "\n", ##__VA_ARGS__, rc);  \
     return rc;
 
 DEFINE_WRAPPER(int, open, (const char *pathname, int flags, ...))
@@ -49,14 +49,14 @@ DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
     FORWARD(int, stat, "%s (%p) called: %d", path, buf);
 }
 
-DEFINE_WRAPPER(struct dirent *, readdir, (DIR *dirp))
+DEFINE_WRAPPER(DIR *, opendir, (const char *name))
 {
-    FORWARD(struct dirent *, readdir, "%p: %p", dirp);
+    FORWARD(DIR *, opendir, "%s: %p", name);
 }
 
-DEFINE_WRAPPER(int, readdir_r, (DIR *dirp, struct dirent *entry, struct dirent **result))
+DEFINE_WRAPPER(DIR *, fdopendir, (int fd))
 {
-    FORWARD(int, readdir_r, "%p, %p, %p: %d", dirp, entry, result);
+    FORWARD(DIR *, fdopendir, "%d: %p", fd);
 }
 
 DEFINE_WRAPPER(int, access, (const char *pathname, int mode))
