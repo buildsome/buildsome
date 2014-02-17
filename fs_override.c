@@ -219,6 +219,9 @@ DEFINE_WRAPPER(int, ftruncate, (int fd, off_t length))
 
 DEFINE_WRAPPER(int, unlink, (const char *path))
 {
+    DEFINE_MSG(unlink);
+    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    send_connection(PS(msg));
     FORWARD(int, unlink, path);
 }
 

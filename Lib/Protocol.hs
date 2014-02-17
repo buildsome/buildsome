@@ -33,6 +33,7 @@ data Func
   = Open FilePath OpenMode CreationMode
   | Creat FilePath Word32
   | Rename FilePath FilePath
+  | Unlink FilePath
   deriving (Show)
 
 showFunc :: Func -> String
@@ -42,6 +43,8 @@ showFunc (Creat path perms) =
   unwords ["creat", path, showOct perms ""]
 showFunc (Rename old new) =
   unwords ["rename", old, "->", new]
+showFunc (Unlink path) =
+  unwords ["unlink", path]
 
 mAX_PATH :: Int
 mAX_PATH = 256
@@ -74,6 +77,9 @@ parseOpen = mkOpen <$> getPath <*> getWord32le <*> getWord32le
 parseRename :: Get Func
 parseRename = Rename <$> getPath <*> getPath
 
+parseUnlink :: Get Func
+parseUnlink = Unlink <$> getPath
+
 parseCreat :: Get Func
 parseCreat = Creat <$> getPath <*> getWord32le
 
@@ -89,7 +95,7 @@ funcs =
   -- , (0x10006, ("access", parseAccess))
   -- , (0x10007, ("truncate", parseTruncate))
   -- , (0x10008, ("ftruncate", parseFtruncate))
-  -- , (0x10009, ("unlink", parseUnlink))
+  , (0x10009, ("unlink", parseUnlink))
   , (0x1000A, ("rename", parseRename))
   -- , (0x1000B, ("chmod", parseChmod))
   -- , (0x1000C, ("readlink", parseReadlink))
