@@ -5,14 +5,16 @@ import Control.Concurrent.Chan
 import Control.Monad
 import Data.IORef
 import Data.Map (Map)
+import Lib.Sock (recvLoop, unixSeqPacketListener)
+import Network.Socket (Socket)
 import System.Environment (getEnv)
+import System.Exit (ExitCode)
 import System.Posix.Process (getProcessID)
 import System.Process
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
-import Network.Socket (Socket, socket)
-import qualified Network.Socket.ByteString as SockBS
 import qualified Network.Socket as Sock
+import qualified Network.Socket.ByteString as SockBS
 import qualified System.IO as IO
 
 type SlaveId = BS.ByteString
@@ -24,14 +26,6 @@ unprefixed :: BS.ByteString -> BS.ByteString -> Maybe BS.ByteString
 unprefixed prefix full
   | prefix `BS.isPrefixOf` full = Just $ BS.drop (BS.length prefix) full
   | otherwise = Nothing
-
-recvLoop :: Int -> Socket -> IO [BS.ByteString]
-recvLoop maxFrameSize sock = do
-  frame <- SockBS.recv sock maxFrameSize
-  if BS.null frame then return []
-    else do
-      rest <- recvLoop maxFrameSize sock
-      return (frame : rest)
 
 serve :: Map SlaveId SlaveDesc -> Socket -> IO ()
 serve slavesMap conn = do
@@ -52,11 +46,9 @@ startServer :: IORef (Map SlaveId SlaveDesc) -> IO FilePath
 startServer slavesMapRef = do
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
-  serverSock <- socket Sock.AF_UNIX Sock.SeqPacket 0
-  Sock.bind serverSock (Sock.SockAddrUnix serverFilename)
-  Sock.listen serverSock 5
+  listener <- unixSeqPacketListener serverFilename
   _ <- forkIO $ forever $ do
-    (conn, srcAddr) <- Sock.accept serverSock
+    (conn, srcAddr) <- Sock.accept listener
     putStrLn $ "Connection from \"" ++ show srcAddr ++ "\""
     slavesMap <- readIORef slavesMapRef
     forkIO $ serve slavesMap conn
@@ -65,30 +57,24 @@ startServer slavesMapRef = do
 inheritedEnvs :: [String]
 inheritedEnvs = ["HOME", "PATH"]
 
-main :: IO ()
-main = do
+type Env = [(String, String)]
+
+data Process = Process
+  { _processCmd :: CmdSpec
+  , _stdoutReader :: Async BS.ByteString
+  , _stderrReader :: Async BS.ByteString
+  , _exitCodeReader :: Async ExitCode
+  }
+
+makeProcess :: CmdSpec -> Env -> IO Process
+makeProcess cmd envs = do
   oldEnvs <- forM inheritedEnvs $ \name -> do
     val <- getEnv name
     return (name, val)
-
-  let slaveId = BS.pack "job1"
-
-  slaveLinesChan <- newChan
-  slavesMapRef <- newIORef $ M.singleton slaveId (SlaveDesc slaveLinesChan)
-
-  serverFileName <- startServer slavesMapRef
-
-  let cmd = "gcc -o example/a example/a.c -g -Wall"
-
   (Just stdinHandle, Just stdoutHandle, Just stderrHandle, process) <- createProcess CreateProcess
     { cwd = Nothing
-    , cmdspec = ShellCommand cmd
-    , env = Just $
-      oldEnvs ++
-      [ ("LD_PRELOAD", "/home/peaker/Dropbox/Elastifile/build/prototype/fs_override.so")
-      , ("EFBUILD_MASTER_UNIX_SOCKADDR", serverFileName)
-      , ("EFBUILD_SLAVE_ID", BS.unpack slaveId)
-      ]
+    , cmdspec = cmd
+    , env = Just (oldEnvs ++ envs)
     , std_in = CreatePipe
     , std_out = CreatePipe
     , std_err = CreatePipe
@@ -102,11 +88,14 @@ main = do
   stderrReader <- async (BS.hGetContents stderrHandle)
   exitCodeReader <- async (waitForProcess process)
 
+  return $ Process cmd stdoutReader stderrReader exitCodeReader
+
+waitProcess :: Process -> IO ()
+waitProcess (Process _cmd stdoutReader stderrReader exitCodeReader) = do
   stdout <- wait stdoutReader
   stderr <- wait stderrReader
   exitCode <- wait exitCodeReader
 
-  putStrLn cmd
   putStrLn $ "ExitCode: " ++ show exitCode
   putStrLn "STDOUT:"
   BS.putStr stdout
@@ -115,10 +104,32 @@ main = do
   BS.putStr stderr
   putStrLn ""
 
+main :: IO ()
+main = do
+  let slaveId = BS.pack "job1"
+
+  slaveLinesChan <- newChan
+  slavesMapRef <- newIORef $ M.singleton slaveId (SlaveDesc slaveLinesChan)
+
+  serverFileName <- startServer slavesMapRef
+
+  let cmd = "gcc -o example/a example/a.c -g -Wall"
+
+      envs =
+        [ ("LD_PRELOAD", "/home/peaker/Dropbox/Elastifile/build/prototype/fs_override.so")
+        , ("EFBUILD_MASTER_UNIX_SOCKADDR", serverFileName)
+        , ("EFBUILD_SLAVE_ID", BS.unpack slaveId)
+        ]
+
+  process <- makeProcess (ShellCommand cmd) envs
+  waitProcess process
+
   putStrLn "Slave data:"
   slaveReader <- async $ forever $ do
     (slavePid, slaveLines) <- readChan slaveLinesChan
     putStrLn $ "PID: " ++ show slavePid
     mapM_ BS.putStrLn slaveLines
+
   threadDelay 100000
+
   cancel slaveReader
