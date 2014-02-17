@@ -8,9 +8,11 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/socket.h>
-#include <arpa/inet.h>
+#include <sys/un.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define MAX_FRAME_SIZE 8192
 
 #define PREFIX "EFBUILD_"
 
@@ -19,44 +21,58 @@
 
 static int connect_master(void)
 {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
     ASSERT(-1 != fd);
 
-    char *env_hostname = getenv(PREFIX "MASTER_HOSTNAME");
-    ASSERT(env_hostname);
-
-    char *env_portstr = getenv(PREFIX "MASTER_PORT");
-    ASSERT(env_portstr);
+    char *env_sockaddr = getenv(PREFIX "MASTER_UNIX_SOCKADDR");
+    ASSERT(env_sockaddr);
 
     char *env_slave_id = getenv(PREFIX "SLAVE_ID");
     ASSERT(env_slave_id);
 
-    int port = atoi(env_portstr);
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_addr = { inet_addr(env_hostname) },
-        .sin_port = htons(port)
+    struct sockaddr_un addr = {
+        .sun_family = AF_UNIX,
     };
+    ASSERT(strlen(env_sockaddr) < sizeof addr.sun_path);
+    strcpy(addr.sun_path, env_sockaddr);
 
-    int rc = connect(fd, &addr, sizeof addr);
-    ASSERT(0 == rc);
+    LOG("pid%d: connecting \"%s\"", getpid(), env_sockaddr);
+    int connect_rc = connect(fd, &addr, sizeof addr);
+    ASSERT(0 == connect_rc);
 
     #define HELLO "HELLO, I AM: "
-    char hello[strlen(HELLO) + strlen(env_slave_id) + 2];
+    char hello[strlen(HELLO) + strlen(env_slave_id) + 16];
     hello[sizeof hello-1] = 0;
-    int len = snprintf(hello, sizeof hello-1, HELLO "%s\n", env_slave_id);
-    write(fd, hello, len);
+    int len = snprintf(hello, sizeof hello-1, HELLO "%d:%s", getpid(), env_slave_id);
+    ssize_t send_rc = send(fd, hello, len, 0);
+    ASSERT(send_rc == len);
+    LOG("pid%d: Sent \"%.*s\"", getpid(), len, hello);
     return fd;
 }
+
+static int connection_fd = -1;
 
 static int connection(void)
 {
-    static int fd = -1;
-    if(-1 == fd) {
-        fd = connect_master();
+    if(-1 == connection_fd) {
+        connection_fd = connect_master();
     }
-    return fd;
+    return connection_fd;
 }
+
+static void send_connection(const char *buf, size_t size, int flags)
+{
+    ssize_t rc = send(connection(), buf, size, flags);
+    ASSERT(rc == (ssize_t)size);
+}
+
+#define REPORT(fmt, ...)                                                \
+    do {                                                                \
+        char buf[MAX_FRAME_SIZE];                                       \
+        int res = snprintf(buf, MAX_FRAME_SIZE, fmt, ##__VA_ARGS__);    \
+        ASSERT(res < MAX_FRAME_SIZE);                                   \
+        send_connection(buf, res, 0);                                   \
+    } while(0)
 
 #define DEFINE_WRAPPER(ret_type, name, params)  \
     typedef ret_type name##_func params;        \
@@ -65,15 +81,8 @@ static int connection(void)
 
 #define FORWARD(ret_type, name, fmt, ...)               \
     name##_func *real = dlsym(RTLD_NEXT, #name);        \
-    {                                                   \
-        int fd = connection();                          \
-        char x[] = #name;                               \
-        write(fd, x, sizeof x);                         \
-        char newline = '\n';                            \
-        write(fd, &newline, 1);                         \
-    }                                                   \
     ret_type rc = real(__VA_ARGS__);                    \
-    /*fprintf(stderr, #name " " fmt "\n", ##__VA_ARGS__, rc);*/ \
+    REPORT(#name " called: " fmt, ##__VA_ARGS__, rc);    \
     return rc;
 
 DEFINE_WRAPPER(int, open, (const char *pathname, int flags, ...))
@@ -83,24 +92,24 @@ DEFINE_WRAPPER(int, open, (const char *pathname, int flags, ...))
     mode_t mode = va_arg(args, mode_t);
     va_end(args);
 
-    FORWARD(int, open, "%s (0x%X, 0x%X) called: %d", pathname, flags, mode);
+    FORWARD(int, open, "%s (0x%X, 0x%X): %d", pathname, flags, mode);
 }
 
 DEFINE_WRAPPER(int, creat, (const char *pathname, mode_t mode))
 {
-    FORWARD(int, creat, "%s (0x%X) called: %d", pathname, mode);
+    FORWARD(int, creat, "%s (0x%X): %d", pathname, mode);
 }
 
 /* No need to wrap fstat because "fd" was opened so is considered an input */
 
 DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 {
-    FORWARD(int, stat, "%s (%p) called: %d", path, buf);
+    FORWARD(int, stat, "%s (%p): %d", path, buf);
 }
 
 DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 {
-    FORWARD(int, lstat, "%s (%p) called: %d", path, buf);
+    FORWARD(int, lstat, "%s (%p): %d", path, buf);
 }
 
 DEFINE_WRAPPER(DIR *, opendir, (const char *name))
@@ -135,7 +144,7 @@ DEFINE_WRAPPER(int, unlink, (const char *pathname))
 
 DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 {
-    FORWARD(int, rename, "%s: %d", oldpath, newpath);
+    FORWARD(int, rename, "%s -> %s: %d", oldpath, newpath);
 }
 
 DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
@@ -145,12 +154,12 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
 
 DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
-    FORWARD(ssize_t, readlink, "%s, buf=%p, bufsiz=%d: %zd", path, buf, bufsiz);
+    FORWARD(ssize_t, readlink, "%s, buf=%p, bufsiz=%zd: %zd", path, buf, bufsiz);
 }
 
 DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
 {
-    FORWARD(int, mknod, "%s, mode=0x%X dev=%d: %d", path, mode, dev);
+    FORWARD(int, mknod, "%s, mode=0x%X dev=%ld: %d", path, mode, dev);
 }
 
 DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
