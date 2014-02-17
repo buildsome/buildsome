@@ -13,6 +13,7 @@
 #include <string.h>
 #include <bsd/string.h>         /* strlcpy */
 #include <stdint.h>
+#include <stdbool.h>
 
 #define MAX_FRAME_SIZE 8192
 
@@ -97,6 +98,10 @@ enum func {
 /* NOTE: This must be kept in sync with Protocol.hs */
 #define MAX_PATH 256
 
+/* func_open.flags */
+#define FLAG_WRITE 1
+#define FLAG_CREATE 2           /* func_open.mode is meaningful iff this flag */
+
 /* NOTE: This must be kept in sync with Protocol.hs */
 struct func_open      {char path[MAX_PATH]; uint32_t flags; uint32_t mode;};
 struct func_creat     {char path[MAX_PATH]; uint32_t mode;};
@@ -132,32 +137,33 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
     struct {                                    \
         enum func func;                         \
         struct func_##name args;                \
-    } msg;                                      \
-    msg.func = func_##name;
+    } msg = { .func = func_##name };
 
-/* File creation flags from open's manpage: */
-#define CREATION_FLAGS                                                  \
-    (O_CLOEXEC | O_CREAT | O_DIRECTORY | O_EXCL | O_NOCTTY | O_NOFOLLOW | O_TRUNC)
-
-/* Some flags are defines as 0! */
-#define CHECK_FLAG(x, flag)   (((x) & (flag)) == (flag))
+#define CREATION_FLAGS (O_CREAT | O_EXCL)
 
 DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
 {
     va_list args;
     va_start(args, flags);
-    mode_t mode = flags & CREATION_FLAGS ? va_arg(args, mode_t) : 0;
+    bool creation = flags & CREATION_FLAGS;
+    mode_t mode = creation ? va_arg(args, mode_t) : 0;
     va_end(args);
 
-    if(CHECK_FLAG(flags, O_RDWR)) {
-        LOG("What can we do with read-write files?");
-        abort();
-    } else if(O_RDONLY == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
-        /* Read-only file */
-    }
     DEFINE_MSG(open);
     strlcpy(msg.args.path, path, sizeof msg.args.path);
-    msg.args.flags = flags;
+    if(O_RDWR == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
+        LOG("What can we do with read-write files?");
+        abort();
+    } else if(O_WRONLY == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
+        msg.args.flags |= FLAG_WRITE;
+    } else if(O_RDONLY == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
+    } else {
+        LOG("invalid open mode?!");
+        ASSERT(0);
+    }
+    if(creation) {
+        msg.args.flags |= FLAG_CREATE;
+    }
     msg.args.mode = mode;
     send_connection(PS(msg));
 
@@ -166,6 +172,11 @@ DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
 
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
+    DEFINE_MSG(creat);
+    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    msg.args.mode = mode;
+    send_connection(PS(msg));
+
     FORWARD(int, creat, path, mode);
 }
 
@@ -213,6 +224,11 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
 
 DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 {
+    DEFINE_MSG(rename);
+    strlcpy(msg.args.oldpath, oldpath, sizeof msg.args.oldpath);
+    strlcpy(msg.args.newpath, newpath, sizeof msg.args.newpath);
+    send_connection(PS(msg));
+
     FORWARD(int, rename, oldpath, newpath);
 }
 

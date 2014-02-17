@@ -5,7 +5,7 @@ import Control.Concurrent.Chan
 import Control.Monad
 import Data.IORef
 import Data.Map (Map)
-import Lib.Protocol (parseMsg)
+import Lib.Protocol (parseMsg, showFunc)
 import Lib.Sock (recvLoop, unixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Environment (getEnv)
@@ -105,6 +105,14 @@ waitProcess (Process _cmd stdoutReader stderrReader exitCodeReader) = do
   BS.putStr stderr
   putStrLn ""
 
+printExceptionCancel :: Async a -> IO ()
+printExceptionCancel a = do
+  x <- poll a
+  case x of
+    Just (Left exc) -> putStrLn $ "Exception: " ++ show exc
+    _ -> return ()
+  cancel a
+
 main :: IO ()
 main = do
   let slaveId = BS.pack "job1"
@@ -129,8 +137,8 @@ main = do
   slaveReader <- async $ forever $ do
     (slavePid, slaveMsgs) <- readChan slaveMsgsChan
     putStrLn $ "PID: " ++ show slavePid
-    mapM_ (print . parseMsg) slaveMsgs
+    mapM_ (putStrLn . showFunc . parseMsg) slaveMsgs
 
   threadDelay 100000
 
-  cancel slaveReader
+  printExceptionCancel slaveReader
