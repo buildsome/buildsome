@@ -5,6 +5,7 @@ import Control.Concurrent.Chan
 import Control.Monad
 import Data.IORef
 import Data.Map (Map)
+import Lib.Protocol (parseMsg)
 import Lib.Sock (recvLoop, unixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Environment (getEnv)
@@ -37,10 +38,10 @@ serve slavesMap conn = do
           pid = read (BS.unpack pidStr)
       case M.lookup slaveId slavesMap of
         Nothing -> putStrLn $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show (M.keys slavesMap)
-        Just (SlaveDesc linesVar) -> do
+        Just (SlaveDesc msgsVar) -> do
           putStrLn $ "Got connection from " ++ BS.unpack slaveId
           contents <- recvLoop 8192 conn
-          writeChan linesVar (pid, contents)
+          writeChan msgsVar (pid, contents)
 
 startServer :: IORef (Map SlaveId SlaveDesc) -> IO FilePath
 startServer slavesMapRef = do
@@ -108,8 +109,8 @@ main :: IO ()
 main = do
   let slaveId = BS.pack "job1"
 
-  slaveLinesChan <- newChan
-  slavesMapRef <- newIORef $ M.singleton slaveId (SlaveDesc slaveLinesChan)
+  slaveMsgsChan <- newChan
+  slavesMapRef <- newIORef $ M.singleton slaveId (SlaveDesc slaveMsgsChan)
 
   serverFileName <- startServer slavesMapRef
 
@@ -126,9 +127,9 @@ main = do
 
   putStrLn "Slave data:"
   slaveReader <- async $ forever $ do
-    (slavePid, slaveLines) <- readChan slaveLinesChan
+    (slavePid, slaveMsgs) <- readChan slaveMsgsChan
     putStrLn $ "PID: " ++ show slavePid
-    mapM_ BS.putStrLn slaveLines
+    mapM_ (print . parseMsg) slaveMsgs
 
   threadDelay 100000
 
