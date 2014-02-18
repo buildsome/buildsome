@@ -23,7 +23,8 @@ import qualified System.IO as IO
 type SlaveId = BS.ByteString
 type Pid = Int
 
-data SlaveDesc = SlaveDesc (Chan (Pid, [BS.ByteString])) -- TODO: Outputs, etc.
+type SlaveOutput = (Pid, [BS.ByteString])
+data SlaveDesc = SlaveDesc (Chan SlaveOutput) -- TODO: Outputs, etc.
 
 unprefixed :: BS.ByteString -> BS.ByteString -> Maybe BS.ByteString
 unprefixed prefix full
@@ -45,8 +46,25 @@ serve slavesMap conn = do
           contents <- recvLoop 8192 conn
           writeChan msgsVar (pid, contents)
 
-startServer :: IORef (Map SlaveId SlaveDesc) -> IO FilePath
-startServer slavesMapRef = do
+data MasterServer = MasterServer
+  { masterSlaveMap :: IORef (Map SlaveId SlaveDesc)
+  , masterAddress :: FilePath -- unix socket server
+  , masterLdPreloadPath :: FilePath
+  }
+
+atomicModifyIORef_ :: IORef a -> (a -> a) -> IO ()
+atomicModifyIORef_ ioref f = atomicModifyIORef ioref (\x -> (f x, ()))
+
+masterAddSlave :: MasterServer -> SlaveId -> IO (Chan SlaveOutput)
+masterAddSlave masterServer slaveId = do
+  chan <- newChan
+  atomicModifyIORef_ (masterSlaveMap masterServer) $
+    M.insert slaveId (SlaveDesc chan)
+  return chan
+
+startServer :: FilePath -> IO MasterServer
+startServer ldPreloadPath = do
+  slavesMapRef <- newIORef M.empty
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
   listener <- unixSeqPacketListener serverFilename
@@ -55,7 +73,11 @@ startServer slavesMapRef = do
     putStrLn $ "Connection from \"" ++ show srcAddr ++ "\""
     slavesMap <- readIORef slavesMapRef
     forkIO $ serve slavesMap conn
-  return serverFilename
+  return $ MasterServer
+    { masterSlaveMap = slavesMapRef
+    , masterAddress = serverFilename
+    , masterLdPreloadPath = ldPreloadPath
+    }
 
 inheritedEnvs :: [String]
 inheritedEnvs = ["HOME", "PATH"]
@@ -117,34 +139,43 @@ printExceptionCancel a = do
     _ -> return ()
   cancel a
 
-main :: IO ()
-main = do
-  let slaveId = BS.pack "job1"
+data Slave = Slave
+  { _slaveIdentifier :: SlaveId
+  , _slaveCmd :: String
+  , slaveProcess :: Process
+  , slaveChan :: Chan SlaveOutput
+  }
 
-  slaveMsgsChan <- newChan
-  slavesMapRef <- newIORef $ M.singleton slaveId (SlaveDesc slaveMsgsChan)
-
-  serverFileName <- startServer slavesMapRef
-
-  progName <- getProgName
-  overridePath <- canonicalizePath (takeDirectory progName </> "fs_override.so")
-  let cmd = "gcc -o example/a example/a.c -g -Wall"
-
-      envs =
-        [ ("LD_PRELOAD", overridePath)
-        , ("EFBUILD_MASTER_UNIX_SOCKADDR", serverFileName)
+makeSlave :: MasterServer -> SlaveId -> String -> IO Slave
+makeSlave masterServer slaveId cmd = do
+  slaveMsgsChan <- masterAddSlave masterServer slaveId
+  process <- makeProcess (ShellCommand cmd) envs
+  return (Slave slaveId cmd process slaveMsgsChan)
+  where
+    envs =
+        [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
+        , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
         , ("EFBUILD_SLAVE_ID", BS.unpack slaveId)
         ]
 
-  process <- makeProcess (ShellCommand cmd) envs
-  waitProcess process
+getLdPreloadPath :: IO FilePath
+getLdPreloadPath = do
+  progName <- getProgName
+  canonicalizePath (takeDirectory progName </> "fs_override.so")
 
+dumpSlaveData :: Slave -> IO ()
+dumpSlaveData slave = do
   putStrLn "Slave data:"
-  slaveReader <- async $ forever $ do
-    (slavePid, slaveMsgs) <- readChan slaveMsgsChan
+  forever $ do
+    (slavePid, slaveMsgs) <- readChan $ slaveChan slave
     putStrLn $ "PID: " ++ show slavePid
     mapM_ (putStrLn . showFunc . parseMsg) slaveMsgs
 
+main :: IO ()
+main = do
+  masterServer <- startServer =<< getLdPreloadPath
+  slave <- makeSlave masterServer (BS.pack "job1") "gcc -o example/a example/a.c -g -Wall"
+  waitProcess $ slaveProcess slave
+  slaveReader <- async (dumpSlaveData slave)
   threadDelay 100000
-
   printExceptionCancel slaveReader
