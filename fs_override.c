@@ -42,6 +42,7 @@ static int connect_master(void)
     ASSERT(strlen(env_sockaddr) < sizeof addr.sun_path);
     strcpy(addr.sun_path, env_sockaddr);
 
+    /* TODO: Send tid, not pid! */
     DEBUG("pid%d: connecting \"%s\"", getpid(), env_sockaddr);
     int connect_rc = connect(fd, &addr, sizeof addr);
     ASSERT(0 == connect_rc);
@@ -56,14 +57,25 @@ static int connect_master(void)
     return fd;
 }
 
-static int connection_fd = -1;
+static __thread struct {
+    pid_t pid;
+    int connection_fd;
+} thread_state = {-1, -1};
 
 static int connection(void)
 {
-    if(-1 == connection_fd) {
-        connection_fd = connect_master();
+    pid_t pid = getpid();
+    if(pid != thread_state.pid) {
+        thread_state.connection_fd = connect_master();
+        thread_state.pid = pid;
     }
-    return connection_fd;
+    return thread_state.connection_fd;
+}
+
+static int assert_connection(void)
+{
+    ASSERT(getpid() == thread_state.pid);
+    return thread_state.connection_fd;
 }
 
 static void send_connection(const char *buf, size_t size)
@@ -148,6 +160,14 @@ void open_readwrite(void)
     abort();
 }
 
+static void await_go(void)
+{
+    char buf[16];
+    ssize_t rc = recv(assert_connection(), PS(buf), 0);
+    ASSERT(2 == rc);        /* Expect "GO" response! */
+    ASSERT(!strncmp(buf, "GO", 2));
+}
+
 static mode_t open_common(const char *path, int flags, va_list args)
 {
     bool creation = flags & CREATION_FLAGS;
@@ -169,6 +189,10 @@ static mode_t open_common(const char *path, int flags, va_list args)
     }
     msg.args.mode = mode;
     send_connection(PS(msg));
+    if(!(msg.args.flags & FLAG_WRITE)) {
+        ASSERT(!(msg.args.flags & FLAG_CREATE));
+        await_go();
+    }
     return mode;
 }
 

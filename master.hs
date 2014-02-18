@@ -1,21 +1,20 @@
 {-# OPTIONS -Wall -O2 #-}
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.Async
-import Control.Concurrent.Chan
 import Control.Monad
 import Data.IORef
 import Data.Map (Map)
-import Lib.Protocol (parseMsg, showFunc)
-import Lib.Sock (recvLoop, unixSeqPacketListener)
+import Lib.Sock (recvLoop_, unixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Directory (canonicalizePath)
-import System.FilePath (takeDirectory, (</>))
 import System.Environment (getEnv, getProgName)
 import System.Exit (ExitCode)
+import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
 import System.Process
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
+import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.IO as IO
@@ -23,8 +22,7 @@ import qualified System.IO as IO
 type SlaveId = BS.ByteString
 type Pid = Int
 
-type SlaveOutput = (Pid, [BS.ByteString])
-data SlaveDesc = SlaveDesc (Chan SlaveOutput) -- TODO: Outputs, etc.
+data SlaveDesc = SlaveDesc -- TODO: Outputs, etc.
 
 unprefixed :: BS.ByteString -> BS.ByteString -> Maybe BS.ByteString
 unprefixed prefix full
@@ -38,13 +36,20 @@ serve slavesMap conn = do
     Nothing -> putStrLn $ "Bad connection started with: " ++ show helloLine
     Just pidSlaveId -> do
       let [pidStr, slaveId] = BS.split ':' pidSlaveId
+          pid :: Pid
           pid = read (BS.unpack pidStr)
       case M.lookup slaveId slavesMap of
         Nothing -> putStrLn $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show (M.keys slavesMap)
-        Just (SlaveDesc msgsVar) -> do
-          putStrLn $ "Got connection from " ++ BS.unpack slaveId
-          contents <- recvLoop 8192 conn
-          writeChan msgsVar (pid, contents)
+        Just SlaveDesc -> do
+          putStrLn $ concat ["Got connection from " ++ BS.unpack slaveId ++ " (", show pid, ")"]
+          recvLoop_ 8192 (handleMsg . Protocol.parseMsg) conn
+  where
+    handleMsg msg = do
+      putStrLn $ "Got " ++ Protocol.showFunc msg
+      case msg of
+        Protocol.Open _path Protocol.OpenReadMode _creationMode ->
+          void $ SockBS.send conn (BS.pack "GO")
+        _ -> return ()
 
 data MasterServer = MasterServer
   { masterSlaveMap :: IORef (Map SlaveId SlaveDesc)
@@ -55,12 +60,10 @@ data MasterServer = MasterServer
 atomicModifyIORef_ :: IORef a -> (a -> a) -> IO ()
 atomicModifyIORef_ ioref f = atomicModifyIORef ioref (\x -> (f x, ()))
 
-masterAddSlave :: MasterServer -> SlaveId -> IO (Chan SlaveOutput)
+masterAddSlave :: MasterServer -> SlaveId -> IO ()
 masterAddSlave masterServer slaveId = do
-  chan <- newChan
   atomicModifyIORef_ (masterSlaveMap masterServer) $
-    M.insert slaveId (SlaveDesc chan)
-  return chan
+    M.insert slaveId SlaveDesc
 
 startServer :: FilePath -> IO MasterServer
 startServer ldPreloadPath = do
@@ -131,26 +134,17 @@ waitProcess (Process _cmd stdoutReader stderrReader exitCodeReader) = do
     BS.putStr stderr
     putStrLn ""
 
-printExceptionCancel :: Async a -> IO ()
-printExceptionCancel a = do
-  x <- poll a
-  case x of
-    Just (Left exc) -> putStrLn $ "Exception: " ++ show exc
-    _ -> return ()
-  cancel a
-
 data Slave = Slave
   { _slaveIdentifier :: SlaveId
   , _slaveCmd :: String
   , slaveProcess :: Process
-  , slaveChan :: Chan SlaveOutput
   }
 
 makeSlave :: MasterServer -> SlaveId -> String -> IO Slave
 makeSlave masterServer slaveId cmd = do
-  slaveMsgsChan <- masterAddSlave masterServer slaveId
+  masterAddSlave masterServer slaveId
   process <- makeProcess (ShellCommand cmd) envs
-  return (Slave slaveId cmd process slaveMsgsChan)
+  return (Slave slaveId cmd process)
   where
     envs =
         [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
@@ -163,19 +157,9 @@ getLdPreloadPath = do
   progName <- getProgName
   canonicalizePath (takeDirectory progName </> "fs_override.so")
 
-dumpSlaveData :: Slave -> IO ()
-dumpSlaveData slave = do
-  putStrLn "Slave data:"
-  forever $ do
-    (slavePid, slaveMsgs) <- readChan $ slaveChan slave
-    putStrLn $ "PID: " ++ show slavePid
-    mapM_ (putStrLn . showFunc . parseMsg) slaveMsgs
-
 main :: IO ()
 main = do
   masterServer <- startServer =<< getLdPreloadPath
   slave <- makeSlave masterServer (BS.pack "job1") "gcc -o example/a example/a.c -g -Wall"
   waitProcess $ slaveProcess slave
-  slaveReader <- async (dumpSlaveData slave)
   threadDelay 100000
-  printExceptionCancel slaveReader
