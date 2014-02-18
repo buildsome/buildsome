@@ -14,6 +14,7 @@
 #include <bsd/string.h>         /* strlcpy */
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/syscall.h>
 
 #define MAX_FRAME_SIZE 8192
 
@@ -24,6 +25,11 @@
 #define ASSERT(x)  do { if (!(x)) { LOG("ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__); abort(); } } while(0)
 
 #define PS(x)   ((char *)& (x)) , sizeof (x)
+
+static int gettid(void)
+{
+    return syscall(__NR_gettid);
+}
 
 static int connect_master(void)
 {
@@ -42,18 +48,16 @@ static int connect_master(void)
     ASSERT(strlen(env_sockaddr) < sizeof addr.sun_path);
     strcpy(addr.sun_path, env_sockaddr);
 
-    /* TODO: Send tid, not pid! */
-    DEBUG("pid%d: connecting \"%s\"", getpid(), env_sockaddr);
+    DEBUG("pid%d, tid%d: connecting \"%s\"", getpid(), gettid(), env_sockaddr);
     int connect_rc = connect(fd, &addr, sizeof addr);
     ASSERT(0 == connect_rc);
 
     #define HELLO "HELLO, I AM: "
     char hello[strlen(HELLO) + strlen(env_slave_id) + 16];
     hello[sizeof hello-1] = 0;
-    int len = snprintf(hello, sizeof hello-1, HELLO "%d:%s", getpid(), env_slave_id);
+    int len = snprintf(hello, sizeof hello-1, HELLO "%d:%d:%s", getpid(), gettid(), env_slave_id);
     ssize_t send_rc = send(fd, hello, len, 0);
     ASSERT(send_rc == len);
-    DEBUG("pid%d: Sent \"%.*s\"", getpid(), len, hello);
     return fd;
 }
 

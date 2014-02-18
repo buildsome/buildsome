@@ -35,13 +35,15 @@ serve slavesMap conn = do
   case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
     Nothing -> putStrLn $ "Bad connection started with: " ++ show helloLine
     Just pidSlaveId -> do
-      let [pidStr, slaveId] = BS.split ':' pidSlaveId
-          pid :: Pid
-          pid = read (BS.unpack pidStr)
+      let [pidStr, tidStr, slaveId] = BS.split ':' pidSlaveId
+          getPid :: BS.ByteString -> Pid
+          getPid = read . BS.unpack
+          pid = getPid pidStr
+          tid = getPid tidStr
       case M.lookup slaveId slavesMap of
         Nothing -> putStrLn $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show (M.keys slavesMap)
         Just SlaveDesc -> do
-          putStrLn $ concat ["Got connection from " ++ BS.unpack slaveId ++ " (", show pid, ")"]
+          putStrLn $ concat ["Got connection from " ++ BS.unpack slaveId ++ " (", show pid, ":", show tid, ")"]
           recvLoop_ 8192 (handleMsg . Protocol.parseMsg) conn
   where
     handleMsg msg = do
