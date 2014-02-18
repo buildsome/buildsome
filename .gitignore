@@ -1,1 +1,3 @@
+*.hi
+*.o
 fs_override.so
