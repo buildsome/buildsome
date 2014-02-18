@@ -1,14 +1,13 @@
 {-# OPTIONS -Wall -O2 #-}
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.Async
 import Control.Monad
 import Data.IORef
 import Data.Map (Map)
+import Lib.Process (Process, makeProcess, waitProcess)
 import Lib.Sock (recvLoop_, unixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Directory (canonicalizePath)
-import System.Environment (getEnv, getProgName)
-import System.Exit (ExitCode)
+import System.Environment (getProgName)
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
 import System.Process
@@ -17,7 +16,6 @@ import qualified Data.Map as M
 import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
-import qualified System.IO as IO
 
 type SlaveId = BS.ByteString
 type Pid = Int
@@ -84,58 +82,6 @@ startServer ldPreloadPath = do
     , masterLdPreloadPath = ldPreloadPath
     }
 
-inheritedEnvs :: [String]
-inheritedEnvs = ["HOME", "PATH"]
-
-type Env = [(String, String)]
-
-data Process = Process
-  { _processCmd :: CmdSpec
-  , _stdoutReader :: Async BS.ByteString
-  , _stderrReader :: Async BS.ByteString
-  , _exitCodeReader :: Async ExitCode
-  }
-
-makeProcess :: CmdSpec -> Env -> IO Process
-makeProcess cmd envs = do
-  oldEnvs <- forM inheritedEnvs $ \name -> do
-    val <- getEnv name
-    return (name, val)
-  (Just stdinHandle, Just stdoutHandle, Just stderrHandle, process) <- createProcess CreateProcess
-    { cwd = Nothing
-    , cmdspec = cmd
-    , env = Just (oldEnvs ++ envs)
-    , std_in = CreatePipe
-    , std_out = CreatePipe
-    , std_err = CreatePipe
-    , close_fds = False
-    , create_group = True
---    , delegate_ctlc = True
-    }
-  IO.hClose stdinHandle
-
-  stdoutReader <- async (BS.hGetContents stdoutHandle)
-  stderrReader <- async (BS.hGetContents stderrHandle)
-  exitCodeReader <- async (waitForProcess process)
-
-  return $ Process cmd stdoutReader stderrReader exitCodeReader
-
-waitProcess :: Process -> IO ()
-waitProcess (Process _cmd stdoutReader stderrReader exitCodeReader) = do
-  stdout <- wait stdoutReader
-  stderr <- wait stderrReader
-  exitCode <- wait exitCodeReader
-
-  putStrLn $ "ExitCode: " ++ show exitCode
-  when (not (BS.null stdout)) $ do
-    putStrLn "STDOUT:"
-    BS.putStr stdout
-    putStrLn ""
-  when (not (BS.null stderr)) $ do
-    putStrLn "STDERR:"
-    BS.putStr stderr
-    putStrLn ""
-
 data Slave = Slave
   { _slaveIdentifier :: SlaveId
   , _slaveCmd :: String
@@ -145,7 +91,7 @@ data Slave = Slave
 makeSlave :: MasterServer -> SlaveId -> String -> IO Slave
 makeSlave masterServer slaveId cmd = do
   masterAddSlave masterServer slaveId
-  process <- makeProcess (ShellCommand cmd) envs
+  process <- makeProcess (ShellCommand cmd) ["HOME", "PATH"] envs
   return (Slave slaveId cmd process)
   where
     envs =
