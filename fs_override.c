@@ -128,7 +128,7 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
     name##_func name;                           \
     ret_type name params
 
-#define FORWARD(ret_type, name, ...)                \
+#define CALL_REAL(ret_type, name, ...)                \
     name##_func *real = dlsym(RTLD_NEXT, #name);    \
     ret_type rc = real(__VA_ARGS__);                \
     return rc;
@@ -141,19 +141,22 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
 
 #define CREATION_FLAGS (O_CREAT | O_EXCL)
 
-DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
+void open_readwrite(void)
 {
-    va_list args;
-    va_start(args, flags);
+    LOG("What can we do with read-write files?");
+    /* TODO: Allow them, but only if they do not already exist? */
+    abort();
+}
+
+static mode_t open_common(const char *path, int flags, va_list args)
+{
     bool creation = flags & CREATION_FLAGS;
     mode_t mode = creation ? va_arg(args, mode_t) : 0;
-    va_end(args);
 
     DEFINE_MSG(open);
     strlcpy(msg.args.path, path, sizeof msg.args.path);
     if(O_RDWR == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
-        LOG("What can we do with read-write files?");
-        abort();
+        open_readwrite();
     } else if(O_WRONLY == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
         msg.args.flags |= FLAG_WRITE;
     } else if(O_RDONLY == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
@@ -166,8 +169,62 @@ DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
     }
     msg.args.mode = mode;
     send_connection(PS(msg));
+    return mode;
+}
 
-    FORWARD(int, open, path, flags, mode);
+DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
+{
+    va_list args;
+    va_start(args, flags);
+    mode_t mode = open_common(path, flags, args);
+    va_end(args);
+
+    CALL_REAL(int, open, path, flags, mode);
+}
+
+DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
+{
+    va_list args;
+    va_start(args, flags);
+    mode_t mode = open_common(path, flags, args);
+    va_end(args);
+
+    CALL_REAL(int, open64, path, flags, mode);
+}
+
+static void fopen_common(const char *path, const char *mode)
+{
+    DEFINE_MSG(open);
+    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    switch(mode[0]) {
+    case 'r':
+        if(mode[1] == '+') open_readwrite();
+        break;
+    case 'w':
+        // w+ not a problem: no reading of previous content possible
+        msg.args.flags |= FLAG_WRITE;
+        break;
+    case 'a':
+        if(mode[1] == '+') open_readwrite();
+        msg.args.flags |= FLAG_WRITE;
+        break;
+    default:
+        LOG("Invalid fopen mode?!");
+        ASSERT(0);
+    }
+    send_connection(PS(msg));
+}
+
+DEFINE_WRAPPER(FILE *, fopen, (const char *path, const char *mode))
+{
+    fopen_common(path, mode);
+    CALL_REAL(FILE *, fopen, path, mode);
+}
+
+DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *mode))
+{
+    fopen_common(path, mode);
+    CALL_REAL(FILE *, fopen64, path, mode);
 }
 
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
@@ -177,44 +234,44 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
     msg.args.mode = mode;
     send_connection(PS(msg));
 
-    FORWARD(int, creat, path, mode);
+    CALL_REAL(int, creat, path, mode);
 }
 
 /* No need to wrap fstat because "fd" was opened so is considered an input */
 
 DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 {
-    FORWARD(int, stat, path, buf);
+    CALL_REAL(int, stat, path, buf);
 }
 
 DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 {
-    FORWARD(int, lstat, path, buf);
+    CALL_REAL(int, lstat, path, buf);
 }
 
 DEFINE_WRAPPER(DIR *, opendir, (const char *name))
 {
-    FORWARD(DIR *, opendir, name);
+    CALL_REAL(DIR *, opendir, name);
 }
 
 DEFINE_WRAPPER(DIR *, fdopendir, (int fd))
 {
-    FORWARD(DIR *, fdopendir, fd);
+    CALL_REAL(DIR *, fdopendir, fd);
 }
 
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
-    FORWARD(int, access, path, mode);
+    CALL_REAL(int, access, path, mode);
 }
 
 DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
-    FORWARD(int, truncate, path, length);
+    CALL_REAL(int, truncate, path, length);
 }
 
 DEFINE_WRAPPER(int, ftruncate, (int fd, off_t length))
 {
-    FORWARD(int, ftruncate, fd, length);
+    CALL_REAL(int, ftruncate, fd, length);
 }
 
 DEFINE_WRAPPER(int, unlink, (const char *path))
@@ -222,7 +279,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
     DEFINE_MSG(unlink);
     strlcpy(msg.args.path, path, sizeof msg.args.path);
     send_connection(PS(msg));
-    FORWARD(int, unlink, path);
+    CALL_REAL(int, unlink, path);
 }
 
 DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
@@ -232,47 +289,47 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
     strlcpy(msg.args.newpath, newpath, sizeof msg.args.newpath);
     send_connection(PS(msg));
 
-    FORWARD(int, rename, oldpath, newpath);
+    CALL_REAL(int, rename, oldpath, newpath);
 }
 
 DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
 {
-    FORWARD(int, chmod, path, mode);
+    CALL_REAL(int, chmod, path, mode);
 }
 
 DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
-    FORWARD(ssize_t, readlink, path, buf, bufsiz);
+    CALL_REAL(ssize_t, readlink, path, buf, bufsiz);
 }
 
 DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
 {
-    FORWARD(int, mknod, path, mode, dev);
+    CALL_REAL(int, mknod, path, mode, dev);
 }
 
 DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
 {
-    FORWARD(int, mkdir, path, mode);
+    CALL_REAL(int, mkdir, path, mode);
 }
 
 DEFINE_WRAPPER(int, rmdir, (const char *path))
 {
-    FORWARD(int, rmdir, path);
+    CALL_REAL(int, rmdir, path);
 }
 
 DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
 {
-    FORWARD(int, symlink, linkpath, target);
+    CALL_REAL(int, symlink, linkpath, target);
 }
 
 DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
 {
-    FORWARD(int, link, oldpath, newpath);
+    CALL_REAL(int, link, oldpath, newpath);
 }
 
 DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
 {
-    FORWARD(int, chown, path, owner, group);
+    CALL_REAL(int, chown, path, owner, group);
 }
 
 /* TODO: Track utime? */

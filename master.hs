@@ -8,7 +8,9 @@ import Data.Map (Map)
 import Lib.Protocol (parseMsg, showFunc)
 import Lib.Sock (recvLoop, unixSeqPacketListener)
 import Network.Socket (Socket)
-import System.Environment (getEnv)
+import System.Directory (canonicalizePath)
+import System.FilePath (takeDirectory, (</>))
+import System.Environment (getEnv, getProgName)
 import System.Exit (ExitCode)
 import System.Posix.Process (getProcessID)
 import System.Process
@@ -98,12 +100,14 @@ waitProcess (Process _cmd stdoutReader stderrReader exitCodeReader) = do
   exitCode <- wait exitCodeReader
 
   putStrLn $ "ExitCode: " ++ show exitCode
-  putStrLn "STDOUT:"
-  BS.putStr stdout
-  putStrLn ""
-  putStrLn "STDERR:"
-  BS.putStr stderr
-  putStrLn ""
+  when (not (BS.null stdout)) $ do
+    putStrLn "STDOUT:"
+    BS.putStr stdout
+    putStrLn ""
+  when (not (BS.null stderr)) $ do
+    putStrLn "STDERR:"
+    BS.putStr stderr
+    putStrLn ""
 
 printExceptionCancel :: Async a -> IO ()
 printExceptionCancel a = do
@@ -122,10 +126,12 @@ main = do
 
   serverFileName <- startServer slavesMapRef
 
+  progName <- getProgName
+  overridePath <- canonicalizePath (takeDirectory progName </> "fs_override.so")
   let cmd = "gcc -o example/a example/a.c -g -Wall"
 
       envs =
-        [ ("LD_PRELOAD", "/home/peaker/Dropbox/Elastifile/build/prototype/fs_override.so")
+        [ ("LD_PRELOAD", overridePath)
         , ("EFBUILD_MASTER_UNIX_SOCKADDR", serverFileName)
         , ("EFBUILD_SLAVE_ID", BS.unpack slaveId)
         ]

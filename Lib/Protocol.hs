@@ -38,13 +38,13 @@ data Func
 
 showFunc :: Func -> String
 showFunc (Open path mode creation) =
-  "open" ++ showOpenMode mode ++ show path ++ showCreationMode creation
+  "open:" ++ showOpenMode mode ++ show path ++ showCreationMode creation
 showFunc (Creat path perms) =
-  unwords ["creat", path, showOct perms ""]
+  concat ["create:", show path, " ", showOct perms ""]
 showFunc (Rename old new) =
-  unwords ["rename", old, "->", new]
+  concat ["rename:", show old, "->", show new]
 showFunc (Unlink path) =
-  unwords ["unlink", path]
+  concat ["unlink:", show path]
 
 mAX_PATH :: Int
 mAX_PATH = 256
