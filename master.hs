@@ -187,28 +187,28 @@ nextJobId masterServer =
 
 need :: MasterServer -> FilePath -> IO ()
 need masterServer path = do
-  case M.lookup path (masterBuildMap masterServer) of
-    Nothing -> return ()
-    Just (repPath, buildStep) -> do
-      jobId <- nextJobId masterServer
-      let slaveId = BS.pack ("job" ++ show jobId)
-      slave <- makeSlaveForRepPath masterServer slaveId repPath buildStep
-      slaveWait slave
+  -- TODO: if path is a directory/parent of some targets, then do need
+  -- all of these (non-directory) targets
+  traverse_ (makeSlaveForRepPath masterServer) $
+    M.lookup path (masterBuildMap masterServer)
 
-makeSlaveForRepPath :: MasterServer -> SlaveId -> FilePath -> BuildStep -> IO Slave
-makeSlaveForRepPath masterServer slaveId outPath buildStep = do
+makeSlaveForRepPath :: MasterServer -> (FilePath, BuildStep) -> IO ()
+makeSlaveForRepPath masterServer (outPathRep, buildStep) = do
+  jobId <- nextJobId masterServer
+  let slaveId = BS.pack ("job" ++ show jobId)
   newSlaveMVar <- newEmptyMVar
-  E.mask $ \restore -> do
+  slave <- E.mask $ \restore -> do
     getSlave <-
       atomicModifyIORef (masterSlaveByRepPath masterServer) $
       \oldSlaveMap ->
-      case M.lookup outPath oldSlaveMap of
-      Nothing -> (M.insert outPath newSlaveMVar oldSlaveMap, spawnSlave restore newSlaveMVar)
+      case M.lookup outPathRep oldSlaveMap of
+      Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave slaveId restore newSlaveMVar)
       Just slaveMVar ->
         ( oldSlaveMap
-        , putStrLn ("Slave for " ++ outPath ++ "(" ++ cmd ++ ") already spawned") >> readMVar slaveMVar
+        , putStrLn ("Slave for " ++ outPathRep ++ "(" ++ cmd ++ ") already spawned") >> readMVar slaveMVar
         )
     getSlave
+  slaveWait slave
   where
     cmd = buildStepCmd buildStep
     showOutput name bs
@@ -217,11 +217,11 @@ makeSlaveForRepPath masterServer slaveId outPath buildStep = do
         putStrLn (name ++ ":")
         BS.putStr bs
 
-    spawnSlave restore mvar = do
+    spawnSlave slaveId restore mvar = do
       putStrLn $ unwords [show cmd, "spawning as", show slaveId]
       atomicModifyIORef_ (masterSlaveBySlaveId masterServer) $ M.insert slaveId mvar
       execution <- async . restore $ do
-        (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) ["HOME", "PATH"] envs
+        (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) ["HOME", "PATH"] (envs slaveId)
         putStrLn $ concat [show cmd, " completed"]
         showOutput "STDOUT" stdout
         showOutput "STDERR" stderr
@@ -231,7 +231,7 @@ makeSlaveForRepPath masterServer slaveId outPath buildStep = do
       let slave = Slave slaveId buildStep execution
       putMVar mvar slave
       return slave
-    envs =
+    envs slaveId =
         [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
         , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
         , ("EFBUILD_SLAVE_ID", BS.unpack slaveId)
