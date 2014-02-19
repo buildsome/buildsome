@@ -7,10 +7,12 @@ module Lib.Protocol
   ) where
 
 import Control.Applicative
+import Control.Monad
 import Data.Binary.Get
 import Data.Bits
 import Data.IntMap (IntMap, (!))
 import Data.Word
+import Lib.ByteString (truncateAt)
 import Numeric (showOct)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -37,6 +39,16 @@ data Func
   | Rename FilePath FilePath
   | Unlink FilePath
   | Access FilePath Word32{- TODO: replace Int with AccessMode -}
+  | OpenDir FilePath
+  | Truncate FilePath Word64{- length -}
+  | Chmod FilePath Word32{-mode-}
+  | ReadLink FilePath
+  | MkNod FilePath Word32{-mode-} Word64{-dev-}
+  | MkDir FilePath Word32{-mode-}
+  | RmDir FilePath
+  | SymLink FilePath FilePath
+  | Link FilePath FilePath
+  | Chown FilePath Word32 Word32
   deriving (Show)
 
 showFunc :: Func -> String
@@ -47,18 +59,23 @@ showFunc (Creat path perms) = concat ["create:", show path, " ", showOct perms "
 showFunc (Rename old new) = concat ["rename:", show old, "->", show new]
 showFunc (Unlink path) = concat ["unlink:", show path]
 showFunc (Access path mode) = concat ["access:", show path, " ", show mode]
+showFunc (OpenDir path) = concat ["openDir:", show path]
+showFunc (Truncate path len) = concat ["truncate:", show path, " ", show len]
+showFunc (Chmod path perms) = concat ["chmod:", show path, " ", showOct perms ""]
+showFunc (ReadLink path) = concat ["readlink:", show path]
+showFunc (MkNod path mode dev) = unwords ["mknod:", show path, showOct mode "", show dev]
+showFunc (MkDir path mode) = unwords ["mkdir:", show path, showOct mode ""]
+showFunc (RmDir path) = unwords ["rmdir:", show path]
+showFunc (SymLink target linkpath) = unwords ["symlink:", show target, show linkpath]
+showFunc (Link src dest) = unwords ["link:", show src, show dest]
+showFunc (Chown path uid gid) = unwords ["chown:", show path, show uid, show gid]
 
 mAX_PATH :: Int
 mAX_PATH = 256
 
-truncateAtZero :: BS.ByteString -> BS.ByteString
-truncateAtZero bs =
-  case BS.split 0 bs of
-  [] -> BS.empty
-  (x:_) -> x
 
 getPath :: Get FilePath
-getPath = BS8.unpack . truncateAtZero <$> getByteString mAX_PATH
+getPath = BS8.unpack . truncateAt 0 <$> getByteString mAX_PATH
 
 fLAG_WRITE :: Word32
 fLAG_WRITE = 1
@@ -83,26 +100,29 @@ funcs =
   , (0x10001, ("creat", Creat <$> getPath <*> getWord32le))
   , (0x10002, ("stat", Stat <$> getPath))
   , (0x10003, ("lstat", LStat <$> getPath))
-  -- , (0x10004, ("opendir", parseOpendir))
+  , (0x10004, ("opendir", OpenDir <$> getPath))
   , (0x10005, ("access", Access <$> getPath <*> getWord32le))
-  -- , (0x10006, ("truncate", parseTruncate))
+  , (0x10006, ("truncate", Truncate <$> getPath <*> getWord64le))
   , (0x10007, ("unlink", Unlink <$> getPath))
   , (0x10008, ("rename", Rename <$> getPath <*> getPath))
-  -- , (0x10009, ("chmod", parseChmod))
-  -- , (0x1000A, ("readlink", parseReadlink))
-  -- , (0x1000B, ("mknod", parseMknod))
-  -- , (0x1000C, ("mkdir", parseMkdir))
-  -- , (0x1000D, ("rmdir", parseRmdir))
-  -- , (0x1000E, ("symlink", parseSymlink))
-  -- , (0x1000F, ("link", parseLink))
-  -- , (0x10010, ("chown", parseChown))
+  , (0x10009, ("chmod", Chmod <$> getPath <*> getWord32le))
+  , (0x1000A, ("readlink", ReadLink <$> getPath))
+  , (0x1000B, ("mknod", MkNod <$> getPath <*> getWord32le <*> getWord64le))
+  , (0x1000C, ("mkdir", MkDir <$> getPath <*> getWord32le))
+  , (0x1000D, ("rmdir", RmDir <$> getPath))
+  , (0x1000E, ("symlink", SymLink <$> getPath <*> getPath))
+  , (0x1000F, ("link", Link <$> getPath <*> getPath))
+  , (0x10010, ("chown", Chown <$> getPath <*> getWord32le <*> getWord32le))
   ]
 
 parseMsgLazy :: BSL.ByteString -> Func
 parseMsgLazy = runGet $ do
   funcId <- getWord32le
   let (_name, getter) = funcs ! fromIntegral funcId
-  getter
+  func <- getter
+  finished <- isEmpty
+  when (not finished) $ fail "Unexpected trailing input in message"
+  return func
 
 strictToLazy :: BS.ByteString -> BSL.ByteString
 strictToLazy x = BSL.fromChunks [x]

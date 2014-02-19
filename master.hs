@@ -53,8 +53,8 @@ slaveWait = wait . slaveExecution
 sendGo :: Socket -> IO ()
 sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 
-buildGo :: MasterServer -> FilePath -> Socket -> IO ()
-buildGo masterServer path conn = do
+needAndGo :: MasterServer -> FilePath -> Socket -> IO ()
+needAndGo masterServer path conn = do
   need masterServer path
   sendGo conn
 
@@ -95,7 +95,7 @@ serve masterServer conn = do
     handleMsg slave msg = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
       let BuildStep outputPaths cmd = slaveBuildStep slave
-          pauseToBuild path = buildGo masterServer path conn
+          pauseToBuild path = needAndGo masterServer path conn
           verifyLegalOutput fullPath = do
             path <- makeRelativeToCurrentDirectory fullPath
             when (path `notElem` outputPaths &&
@@ -107,6 +107,12 @@ serve masterServer conn = do
         Protocol.Open path _ (Protocol.Create _) -> verifyLegalOutput path
         Protocol.Open path Protocol.OpenReadMode _creationMode -> pauseToBuild path
         Protocol.Access path _mode -> pauseToBuild path
+        Protocol.Stat path -> pauseToBuild path
+        Protocol.LStat path -> pauseToBuild path
+        Protocol.OpenDir path -> pauseToBuild path
+        Protocol.ReadLink path -> pauseToBuild path
+        Protocol.SymLink target _linkPath -> pauseToBuild target
+        Protocol.Link src _dest -> pauseToBuild src
         _ -> return ()
 
 toBuildMap :: [BuildStep] -> Map FilePath (FilePath, BuildStep)
