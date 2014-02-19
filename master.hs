@@ -4,9 +4,11 @@ import Control.Concurrent.MVar
 import Control.Monad
 import Data.IORef
 import Data.Map (Map)
+import Data.Set (Set)
+import Lib.ByteString (unprefixed)
+import Lib.IORef (atomicModifyIORef_)
 import Lib.Process (Process, makeProcess, waitProcess)
 import Lib.Sock (recvLoop_, unixSeqPacketListener)
-import Lib.ByteString (unprefixed)
 import Network.Socket (Socket)
 import System.Directory (canonicalizePath)
 import System.Environment (getProgName)
@@ -15,6 +17,7 @@ import System.Posix.Process (getProcessID)
 import System.Process
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
+import qualified Data.Set as S
 import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
@@ -25,12 +28,14 @@ type Pid = Int
 type BuildMap = Map FilePath String
 
 data Slave = Slave
-  { _slaveCmd :: String
+  { _slaveId :: SlaveId
+  , _slaveCmd :: String
   , slaveProcess :: Process
   }
 
 data MasterServer = MasterServer
-  { masterSlaveMap :: IORef (Map SlaveId (MVar Slave))
+  { masterSlaveIds :: IORef (Set SlaveId)
+  , masterSlaveByPath :: IORef (Map FilePath (MVar Slave))
   , masterAddress :: FilePath -- unix socket server
   , masterLdPreloadPath :: FilePath
   , masterBuildMap :: BuildMap
@@ -54,13 +59,13 @@ serve masterServer conn = do
   case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
     Nothing -> putStrLn $ "Bad connection started with: " ++ show helloLine
     Just pidSlaveId -> do
-      slavesMap <- readIORef (masterSlaveMap masterServer)
-      case M.lookup slaveId slavesMap of
-        Nothing -> fail $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show (M.keys slavesMap)
-        Just _slaveMVar -> do
-          -- slave <- readMVar slaveMVar
-          putStrLn $ concat ["Got connection from " ++ BS.unpack slaveId ++ " (", show pid, ":", show tid, ")"]
-          recvLoop_ 8192 (handleMsg . Protocol.parseMsg) conn
+      slaveIds <- readIORef (masterSlaveIds masterServer)
+      if slaveId `S.member` slaveIds then do
+        -- slave <- readMVar slaveMVar
+        putStrLn $ concat ["Got connection from " ++ BS.unpack slaveId ++ " (", show pid, ":", show tid, ")"]
+        recvLoop_ 8192 (handleMsg . Protocol.parseMsg) conn
+        else
+        fail $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show slaveIds
       where
         [pidStr, tidStr, slaveId] = BS.split ':' pidSlaveId
         getPid :: BS.ByteString -> Pid
@@ -77,7 +82,8 @@ serve masterServer conn = do
 
 startServer :: BuildMap -> FilePath -> IO MasterServer
 startServer buildMap ldPreloadPath = do
-  slavesMapRef <- newIORef M.empty
+  slaveIdsRef <- newIORef S.empty
+  slaveMapByPath <- newIORef M.empty
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
   listener <- unixSeqPacketListener serverFilename
@@ -85,7 +91,8 @@ startServer buildMap ldPreloadPath = do
   let
     server =
       MasterServer
-      { masterSlaveMap = slavesMapRef
+      { masterSlaveIds = slaveIdsRef
+      , masterSlaveByPath = slaveMapByPath
       , masterAddress = serverFilename
       , masterLdPreloadPath = ldPreloadPath
       , masterBuildMap = buildMap
@@ -97,19 +104,25 @@ startServer buildMap ldPreloadPath = do
     forkIO $ serve server conn
   return server
 
-makeSlave :: MasterServer -> SlaveId -> String -> IO Slave
-makeSlave masterServer slaveId cmd = do
+makeSlave :: MasterServer -> SlaveId -> FilePath -> String -> IO Slave
+makeSlave masterServer slaveId outPath cmd = do
   newSlaveMVar <- newEmptyMVar
-  getSlave <- atomicModifyIORef (masterSlaveMap masterServer) $
+  getSlave <-
+    atomicModifyIORef (masterSlaveByPath masterServer) $
     \oldSlaveMap ->
-    case M.lookup slaveId oldSlaveMap of
-    Nothing -> (M.insert slaveId newSlaveMVar oldSlaveMap, spawnSlave newSlaveMVar)
-    Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
+    case M.lookup outPath oldSlaveMap of
+    Nothing -> (M.insert outPath newSlaveMVar oldSlaveMap, spawnSlave newSlaveMVar)
+    Just slaveMVar ->
+      ( oldSlaveMap
+      , putStrLn ("Slave for " ++ outPath ++ "(" ++ cmd ++ ") already running") >> readMVar slaveMVar
+      )
   getSlave
   where
     spawnSlave mvar = do
+      putStrLn $ unwords ["Spawning slave ", show slaveId, show cmd]
+      atomicModifyIORef_ (masterSlaveIds masterServer) $ S.insert slaveId
       process <- makeProcess (ShellCommand cmd) ["HOME", "PATH"] envs
-      let slave = Slave cmd process
+      let slave = Slave slaveId cmd process
       putMVar mvar slave
       return slave
     envs =
@@ -126,7 +139,7 @@ getLdPreloadPath = do
 exampleBuildMap :: BuildMap
 exampleBuildMap = M.fromList
   [ ("example/a", "gcc -o example/a example/a.o -g -Wall")
-  , ("example/a.o", "gcc -o example/a.o example/a.c -g -Wall")
+  , ("example/a.o", "gcc -c -o example/a.o example/a.c -g -Wall")
   ]
 
 nextJobId :: MasterServer -> IO Int
@@ -135,13 +148,12 @@ nextJobId masterServer =
 
 need :: MasterServer -> FilePath -> IO ()
 need masterServer path = do
-  putStrLn $ "Need: " ++ show path
   case M.lookup path (masterBuildMap masterServer) of
     Nothing -> return ()
     Just cmd -> do
       jobId <- nextJobId masterServer
       let slaveId = BS.pack ("job" ++ show jobId)
-      slave <- makeSlave masterServer slaveId cmd
+      slave <- makeSlave masterServer slaveId path cmd
       slaveWait slave
 
 main :: IO ()
