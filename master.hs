@@ -10,7 +10,7 @@ import Data.Map (Map)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Process (getOutputs)
-import Lib.Sock (recvLoop_, unixSeqPacketListener)
+import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Directory (canonicalizePath)
 import System.Environment (getProgName)
@@ -129,23 +129,23 @@ withServer buildSteps ldPreloadPath body = do
       , masterCurJobId = curJobId
       }
 
-  listener <- unixSeqPacketListener serverFilename
-  connections <- newIORef M.empty
-  let
-    addConnection i connAsync = atomicModifyIORef_ connections $ M.insert i connAsync
-    deleteConnection i = atomicModifyIORef_ connections $ M.delete i
-    serverLoop = forM_ [(1 :: Int)..] $ \i -> do
-      (conn, _srcAddr) <- Sock.accept listener
-      -- TODO: This never frees the memory for each of the connection
-      -- servers, even when they die. Best to maintain an explicit set
-      -- of connections, and iterate to kill them when killing the
-      -- server
-      connAsync <-
-        async $ serve server conn `E.finally` deleteConnection i
-      addConnection i connAsync
-    cancelConnections = traverse_ cancel =<< readIORef connections
-  withAsync (serverLoop `E.finally` cancelConnections) $
-    \_serverLoop -> body server
+  withUnixSeqPacketListener serverFilename $ \listener -> do
+    connections <- newIORef M.empty
+    let
+      addConnection i connAsync = atomicModifyIORef_ connections $ M.insert i connAsync
+      deleteConnection i = atomicModifyIORef_ connections $ M.delete i
+      serverLoop = forM_ [(1 :: Int)..] $ \i -> do
+        (conn, _srcAddr) <- Sock.accept listener
+        -- TODO: This never frees the memory for each of the connection
+        -- servers, even when they die. Best to maintain an explicit set
+        -- of connections, and iterate to kill them when killing the
+        -- server
+        connAsync <-
+          async $ serve server conn `E.finally` deleteConnection i
+        addConnection i connAsync
+      cancelConnections = traverse_ cancel =<< readIORef connections
+    withAsync (serverLoop `E.finally` cancelConnections) $
+      \_serverLoop -> body server
 
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
