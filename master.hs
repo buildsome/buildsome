@@ -5,14 +5,14 @@ import Control.Concurrent.MVar
 import Control.Monad
 import Data.Foldable (traverse_)
 import Data.IORef
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, isSuffixOf)
 import Data.Map (Map)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Process (getOutputs)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
-import System.Directory (canonicalizePath)
+import System.Directory (canonicalizePath, makeRelativeToCurrentDirectory)
 import System.Environment (getProgName)
 import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
@@ -58,6 +58,12 @@ buildGo masterServer path conn = do
   need masterServer path
   sendGo conn
 
+allowedUnspecifiedOutput :: FilePath -> Bool
+allowedUnspecifiedOutput path = or
+  [ "/tmp" `isPrefixOf` path
+  , ".pyc" `isSuffixOf` path
+  ]
+
 serve :: MasterServer -> Socket -> IO ()
 serve masterServer conn = do
   helloLine <- SockBS.recv conn 1024
@@ -90,10 +96,10 @@ serve masterServer conn = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
       let BuildStep outputPaths cmd = slaveBuildStep slave
           pauseToBuild path = buildGo masterServer path conn
-          verifyLegalOutput path
-            | path `elem` outputPaths = return ()
-            | "/tmp" `isPrefixOf` path = return ()
-            | otherwise =
+          verifyLegalOutput fullPath = do
+            path <- makeRelativeToCurrentDirectory fullPath
+            when (path `notElem` outputPaths &&
+                  not (allowedUnspecifiedOutput path)) $
               fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
                             , " (", show outputPaths, ")" ]
       case msg of
@@ -156,6 +162,7 @@ exampleBuildSteps :: [BuildStep]
 exampleBuildSteps =
   [ BuildStep ["example/a"] "gcc -o example/a example/a.o -g -Wall"
   , BuildStep ["example/a.o"] "gcc -c -o example/a.o example/a.c -g -Wall"
+  , BuildStep ["example/auto.h"] "python example/generate.py"
   ]
 
 nextJobId :: MasterServer -> IO Int
