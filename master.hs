@@ -25,7 +25,6 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 
 type SlaveId = BS.ByteString
-type Pid = Int
 
 data BuildStep = BuildStep
   { _buildStepOutputs :: [FilePath]
@@ -34,12 +33,12 @@ data BuildStep = BuildStep
 
 data Slave = Slave
   { _slaveId :: SlaveId
-  , _slaveBuildStep :: BuildStep
+  , slaveBuildStep :: BuildStep
   , slaveExecution :: Async ()
   }
 
 data MasterServer = MasterServer
-  { masterBuildStepOfSlaveId :: IORef (Map SlaveId BuildStep)
+  { masterSlaveBySlaveId :: IORef (Map SlaveId (MVar Slave))
   , masterSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
   , masterAddress :: FilePath -- unix socket server
   , masterLdPreloadPath :: FilePath
@@ -51,9 +50,7 @@ slaveWait :: Slave -> IO ()
 slaveWait = wait . slaveExecution
 
 sendGo :: Socket -> IO ()
-sendGo conn = do
-  putStrLn "Sending go"
-  void $ SockBS.send conn (BS.pack "GO")
+sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 
 buildGo :: MasterServer -> FilePath -> Socket -> IO ()
 buildGo masterServer path conn = do
@@ -66,29 +63,32 @@ serve masterServer conn = do
   case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
     Nothing -> fail $ "Bad connection started with: " ++ show helloLine
     Just pidSlaveId -> do
-      buildStepOfSlaveId <- readIORef (masterBuildStepOfSlaveId masterServer)
+      buildStepOfSlaveId <- readIORef (masterSlaveBySlaveId masterServer)
       case M.lookup slaveId buildStepOfSlaveId of
         Nothing -> do
           let slaveIds = M.keys buildStepOfSlaveId
           fail $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show slaveIds
-        Just buildStep@(BuildStep outputPaths cmd) -> do
-          putStrLn $ concat
-            [ "Got connection from ", BS.unpack slaveId
-            , " (", show cmd, show pid, ":", show tid, ")"
-            ]
-          slaveByRepPath <- readIORef (masterSlaveByRepPath masterServer)
-          case M.lookup xx
-          recvLoop_ 8192 (handleMsg buildStep . Protocol.parseMsg) conn
+        Just slaveMVar -> do
+          slave <- readMVar slaveMVar
+          -- putStrLn $ concat
+          --   [ "Got connection from ", BS.unpack slaveId
+          --   , " (", show (buildStepCmd (slaveBuildStep slave)), show pid, ":", show tid, ")"
+          --   ]
+          handleSlaveConnection slave
+            `E.catch` \e@E.SomeException{} -> cancelWith (slaveExecution slave) e
       where
-        [pidStr, tidStr, slaveId] = BS.split ':' pidSlaveId
-        getPid :: BS.ByteString -> Pid
-        getPid = read . BS.unpack
-        pid = getPid pidStr
-        tid = getPid tidStr
+        [_pidStr, _tidStr, slaveId] = BS.split ':' pidSlaveId
+        -- getPid :: BS.ByteString -> Int
+        -- getPid = read . BS.unpack
+        -- pid = getPid pidStr
+        -- tid = getPid tidStr
   where
-    handleMsg (BuildStep outputPaths cmd) msg = do
-      putStrLn $ "Got " ++ Protocol.showFunc msg
-      let pauseToBuild path = buildGo masterServer path conn
+    handleSlaveConnection slave =
+      recvLoop_ 8192 (handleMsg slave . Protocol.parseMsg) conn
+    handleMsg slave msg = do
+      -- putStrLn $ "Got " ++ Protocol.showFunc msg
+      let BuildStep outputPaths cmd = slaveBuildStep slave
+          pauseToBuild path = buildGo masterServer path conn
           verifySpecifiedOutput path
             | path `elem` outputPaths = return ()
             | otherwise = fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
@@ -118,7 +118,7 @@ withServer buildSteps ldPreloadPath body = do
   let
     server =
       MasterServer
-      { masterBuildStepOfSlaveId = buildStepOfSlaveId
+      { masterSlaveBySlaveId = buildStepOfSlaveId
       , masterSlaveByRepPath = slaveMapByRepPath
       , masterAddress = serverFilename
       , masterLdPreloadPath = ldPreloadPath
@@ -132,8 +132,7 @@ withServer buildSteps ldPreloadPath body = do
     addConnection i connAsync = atomicModifyIORef_ connections $ M.insert i connAsync
     deleteConnection i = atomicModifyIORef_ connections $ M.delete i
     serverLoop = forM_ [(1 :: Int)..] $ \i -> do
-      (conn, srcAddr) <- Sock.accept listener
-      putStrLn $ "Connection from \"" ++ show srcAddr ++ "\""
+      (conn, _srcAddr) <- Sock.accept listener
       -- TODO: This never frees the memory for each of the connection
       -- servers, even when they die. Best to maintain an explicit set
       -- of connections, and iterate to kill them when killing the
@@ -148,12 +147,12 @@ withServer buildSteps ldPreloadPath body = do
 makeSlaveForRepPath :: MasterServer -> SlaveId -> FilePath -> BuildStep -> IO Slave
 makeSlaveForRepPath masterServer slaveId outPath buildStep = do
   newSlaveMVar <- newEmptyMVar
-  E.mask_ $ do
+  E.mask $ \restore -> do
     getSlave <-
       atomicModifyIORef (masterSlaveByRepPath masterServer) $
       \oldSlaveMap ->
       case M.lookup outPath oldSlaveMap of
-      Nothing -> (M.insert outPath newSlaveMVar oldSlaveMap, spawnSlave newSlaveMVar)
+      Nothing -> (M.insert outPath newSlaveMVar oldSlaveMap, spawnSlave restore newSlaveMVar)
       Just slaveMVar ->
         ( oldSlaveMap
         , putStrLn ("Slave for " ++ outPath ++ "(" ++ cmd ++ ") already running") >> readMVar slaveMVar
@@ -161,10 +160,10 @@ makeSlaveForRepPath masterServer slaveId outPath buildStep = do
     getSlave
   where
     cmd = buildStepCmd buildStep
-    spawnSlave mvar = do
-      putStrLn $ unwords ["Spawning slave ", show slaveId, show cmd]
-      atomicModifyIORef_ (masterBuildStepOfSlaveId masterServer) $ M.insert slaveId buildStep
-      execution <- async $ do
+    spawnSlave restore mvar = do
+      putStrLn $ unwords ["Spawning slave", show slaveId, show cmd]
+      atomicModifyIORef_ (masterSlaveBySlaveId masterServer) $ M.insert slaveId mvar
+      execution <- async . restore $ do
         (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) ["HOME", "PATH"] envs
         putStrLn $ concat [show cmd, " completed: ", show exitCode]
         putStrLn "STDOUT:" >> BS.putStr stdout
