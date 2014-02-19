@@ -1,0 +1,9 @@
+Thread model:
+
+main thread -> withAsync
+  server thread -> accept
+    connection thread -> need(async)
+      slave execution
+
+Receiving stuff in the connection server, send to slave thread that awaits process execution completion?
+Or just specifically kill a slave when handling on its behalf failed?

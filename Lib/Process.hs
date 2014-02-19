@@ -10,8 +10,6 @@ import System.Process
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS
 
-import Debug.TraceUtils
-
 type Env = [(String, String)]
 
 -- | Create a process, and kill it when leaving the given code section
@@ -32,7 +30,7 @@ getOutputs cmd inheritedEnvs envs = do
   (Just stdinHandle, Just stdoutHandle, Just stderrHandle, processHandle) <- createProcess CreateProcess
     { cwd = Nothing
     , cmdspec = cmd
-    , env = Just (traceId "envs" (oldEnvs ++ envs))
+    , env = Just (oldEnvs ++ envs)
     , std_in = CreatePipe
     , std_out = CreatePipe
     , std_err = CreatePipe

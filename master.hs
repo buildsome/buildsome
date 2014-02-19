@@ -1,11 +1,11 @@
 {-# OPTIONS -Wall -O2 #-}
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
 import Control.Monad
+import Data.Foldable (traverse_)
 import Data.IORef
 import Data.Map (Map)
-import Data.Set (Set)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Process (getOutputs)
@@ -20,7 +20,6 @@ import System.Process
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
-import qualified Data.Set as S
 import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
@@ -30,7 +29,7 @@ type Pid = Int
 
 data BuildStep = BuildStep
   { _buildStepOutputs :: [FilePath]
-  , _buildStepCmd :: String
+  , buildStepCmd :: String
   }
 
 data Slave = Slave
@@ -40,7 +39,7 @@ data Slave = Slave
   }
 
 data MasterServer = MasterServer
-  { masterSlaveIds :: IORef (Set SlaveId)
+  { masterBuildStepOfSlaveId :: IORef (Map SlaveId BuildStep)
   , masterSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
   , masterAddress :: FilePath -- unix socket server
   , masterLdPreloadPath :: FilePath
@@ -65,15 +64,21 @@ serve :: MasterServer -> Socket -> IO ()
 serve masterServer conn = do
   helloLine <- SockBS.recv conn 1024
   case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
-    Nothing -> putStrLn $ "Bad connection started with: " ++ show helloLine
+    Nothing -> fail $ "Bad connection started with: " ++ show helloLine
     Just pidSlaveId -> do
-      slaveIds <- readIORef (masterSlaveIds masterServer)
-      if slaveId `S.member` slaveIds then do
-        -- slave <- readMVar slaveMVar
-        putStrLn $ concat ["Got connection from " ++ BS.unpack slaveId ++ " (", show pid, ":", show tid, ")"]
-        recvLoop_ 8192 (handleMsg . Protocol.parseMsg) conn
-        else
-        fail $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show slaveIds
+      buildStepOfSlaveId <- readIORef (masterBuildStepOfSlaveId masterServer)
+      case M.lookup slaveId buildStepOfSlaveId of
+        Nothing -> do
+          let slaveIds = M.keys buildStepOfSlaveId
+          fail $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show slaveIds
+        Just buildStep@(BuildStep outputPaths cmd) -> do
+          putStrLn $ concat
+            [ "Got connection from ", BS.unpack slaveId
+            , " (", show cmd, show pid, ":", show tid, ")"
+            ]
+          slaveByRepPath <- readIORef (masterSlaveByRepPath masterServer)
+          case M.lookup xx
+          recvLoop_ 8192 (handleMsg buildStep . Protocol.parseMsg) conn
       where
         [pidStr, tidStr, slaveId] = BS.split ':' pidSlaveId
         getPid :: BS.ByteString -> Pid
@@ -81,10 +86,16 @@ serve masterServer conn = do
         pid = getPid pidStr
         tid = getPid tidStr
   where
-    handleMsg msg = do
+    handleMsg (BuildStep outputPaths cmd) msg = do
       putStrLn $ "Got " ++ Protocol.showFunc msg
       let pauseToBuild path = buildGo masterServer path conn
+          verifySpecifiedOutput path
+            | path `elem` outputPaths = return ()
+            | otherwise = fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
+                                        , " (", show outputPaths, ")" ]
       case msg of
+        Protocol.Open path Protocol.OpenWriteMode _ -> verifySpecifiedOutput path
+        Protocol.Open path _ (Protocol.Create _) -> verifySpecifiedOutput path
         Protocol.Open path Protocol.OpenReadMode _creationMode -> pauseToBuild path
         Protocol.Access path _mode -> pauseToBuild path
         _ -> return ()
@@ -97,32 +108,45 @@ toBuildMap buildSteps =
   , outputPath <- outputPaths
   ]
 
-startServer :: [BuildStep] -> FilePath -> IO MasterServer
-startServer buildSteps ldPreloadPath = do
-  slaveIdsRef <- newIORef S.empty
+withServer :: [BuildStep] -> FilePath -> (MasterServer -> IO a) -> IO a
+withServer buildSteps ldPreloadPath body = do
+  buildStepOfSlaveId <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
-  listener <- unixSeqPacketListener serverFilename
   curJobId <- newIORef 0
   let
     server =
       MasterServer
-      { masterSlaveIds = slaveIdsRef
+      { masterBuildStepOfSlaveId = buildStepOfSlaveId
       , masterSlaveByRepPath = slaveMapByRepPath
       , masterAddress = serverFilename
       , masterLdPreloadPath = ldPreloadPath
       , masterBuildMap = toBuildMap buildSteps
       , masterCurJobId = curJobId
       }
-  _ <- forkIO $ forever $ do
-    (conn, srcAddr) <- Sock.accept listener
-    putStrLn $ "Connection from \"" ++ show srcAddr ++ "\""
-    forkIO $ serve server conn
-  return server
+
+  listener <- unixSeqPacketListener serverFilename
+  connections <- newIORef M.empty
+  let
+    addConnection i connAsync = atomicModifyIORef_ connections $ M.insert i connAsync
+    deleteConnection i = atomicModifyIORef_ connections $ M.delete i
+    serverLoop = forM_ [(1 :: Int)..] $ \i -> do
+      (conn, srcAddr) <- Sock.accept listener
+      putStrLn $ "Connection from \"" ++ show srcAddr ++ "\""
+      -- TODO: This never frees the memory for each of the connection
+      -- servers, even when they die. Best to maintain an explicit set
+      -- of connections, and iterate to kill them when killing the
+      -- server
+      connAsync <-
+        async $ serve server conn `E.finally` deleteConnection i
+      addConnection i connAsync
+    cancelConnections = traverse_ cancel =<< readIORef connections
+  withAsync (serverLoop `E.finally` cancelConnections) $
+    \_serverLoop -> body server
 
 makeSlaveForRepPath :: MasterServer -> SlaveId -> FilePath -> BuildStep -> IO Slave
-makeSlaveForRepPath masterServer slaveId outPath buildStep@(BuildStep _ cmd) = do
+makeSlaveForRepPath masterServer slaveId outPath buildStep = do
   newSlaveMVar <- newEmptyMVar
   E.mask_ $ do
     getSlave <-
@@ -136,9 +160,10 @@ makeSlaveForRepPath masterServer slaveId outPath buildStep@(BuildStep _ cmd) = d
         )
     getSlave
   where
+    cmd = buildStepCmd buildStep
     spawnSlave mvar = do
       putStrLn $ unwords ["Spawning slave ", show slaveId, show cmd]
-      atomicModifyIORef_ (masterSlaveIds masterServer) $ S.insert slaveId
+      atomicModifyIORef_ (masterBuildStepOfSlaveId masterServer) $ M.insert slaveId buildStep
       execution <- async $ do
         (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) ["HOME", "PATH"] envs
         putStrLn $ concat [show cmd, " completed: ", show exitCode]
@@ -183,6 +208,7 @@ need masterServer path = do
 
 main :: IO ()
 main = do
-  masterServer <- startServer exampleBuildSteps =<< getLdPreloadPath
-  need masterServer "example/a"
-  threadDelay 100000
+  ldPreloadPath <- getLdPreloadPath
+  withServer exampleBuildSteps ldPreloadPath $ \masterServer -> do
+    need masterServer "example/a"
+    threadDelay 100000
