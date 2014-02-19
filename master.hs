@@ -147,6 +147,31 @@ withServer buildSteps ldPreloadPath body = do
   withAsync (serverLoop `E.finally` cancelConnections) $
     \_serverLoop -> body server
 
+getLdPreloadPath :: IO FilePath
+getLdPreloadPath = do
+  progName <- getProgName
+  canonicalizePath (takeDirectory progName </> "fs_override.so")
+
+exampleBuildSteps :: [BuildStep]
+exampleBuildSteps =
+  [ BuildStep ["example/a"] "gcc -o example/a example/a.o -g -Wall >/tmp/out.linkage 2>/tmp/err.linkage"
+  , BuildStep ["example/a.o"] "gcc -c -o example/a.o example/a.c -g -Wall >/tmp/out.compile 2>/tmp/err.compile"
+  ]
+
+nextJobId :: MasterServer -> IO Int
+nextJobId masterServer =
+  atomicModifyIORef (masterCurJobId masterServer) $ \oldJobId -> (oldJobId+1, oldJobId)
+
+need :: MasterServer -> FilePath -> IO ()
+need masterServer path = do
+  case M.lookup path (masterBuildMap masterServer) of
+    Nothing -> return ()
+    Just (repPath, buildStep) -> do
+      jobId <- nextJobId masterServer
+      let slaveId = BS.pack ("job" ++ show jobId)
+      slave <- makeSlaveForRepPath masterServer slaveId repPath buildStep
+      slaveWait slave
+
 makeSlaveForRepPath :: MasterServer -> SlaveId -> FilePath -> BuildStep -> IO Slave
 makeSlaveForRepPath masterServer slaveId outPath buildStep = do
   newSlaveMVar <- newEmptyMVar
@@ -182,31 +207,6 @@ makeSlaveForRepPath masterServer slaveId outPath buildStep = do
         , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
         , ("EFBUILD_SLAVE_ID", BS.unpack slaveId)
         ]
-
-getLdPreloadPath :: IO FilePath
-getLdPreloadPath = do
-  progName <- getProgName
-  canonicalizePath (takeDirectory progName </> "fs_override.so")
-
-exampleBuildSteps :: [BuildStep]
-exampleBuildSteps =
-  [ BuildStep ["example/a"] "gcc -o example/a example/a.o -g -Wall"
-  , BuildStep ["example/a.o"] "gcc -c -o example/a.o example/a.c -g -Wall"
-  ]
-
-nextJobId :: MasterServer -> IO Int
-nextJobId masterServer =
-  atomicModifyIORef (masterCurJobId masterServer) $ \oldJobId -> (oldJobId+1, oldJobId)
-
-need :: MasterServer -> FilePath -> IO ()
-need masterServer path = do
-  case M.lookup path (masterBuildMap masterServer) of
-    Nothing -> return ()
-    Just (repPath, buildStep) -> do
-      jobId <- nextJobId masterServer
-      let slaveId = BS.pack ("job" ++ show jobId)
-      slave <- makeSlaveForRepPath masterServer slaveId repPath buildStep
-      slaveWait slave
 
 main :: IO ()
 main = do
