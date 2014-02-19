@@ -25,20 +25,23 @@ import qualified Network.Socket.ByteString as SockBS
 type SlaveId = BS.ByteString
 type Pid = Int
 
-type BuildMap = Map FilePath String
-
 data Slave = Slave
   { _slaveId :: SlaveId
   , _slaveCmd :: String
   , slaveProcess :: Process
   }
 
+data BuildStep = BuildStep
+  { _buildStepOutputs :: [FilePath]
+  , _buildStepCmd :: String
+  }
+
 data MasterServer = MasterServer
   { masterSlaveIds :: IORef (Set SlaveId)
-  , masterSlaveByPath :: IORef (Map FilePath (MVar Slave))
+  , masterSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
   , masterAddress :: FilePath -- unix socket server
   , masterLdPreloadPath :: FilePath
-  , masterBuildMap :: BuildMap
+  , masterBuildMap :: Map FilePath (FilePath, BuildStep) -- output paths -> min(representative) path and original spec
   , masterCurJobId :: IORef Int
   }
 
@@ -46,7 +49,9 @@ slaveWait :: Slave -> IO ()
 slaveWait = waitProcess . slaveProcess
 
 sendGo :: Socket -> IO ()
-sendGo conn = void $ SockBS.send conn (BS.pack "GO")
+sendGo conn = do
+  putStrLn "Sending go"
+  void $ SockBS.send conn (BS.pack "GO")
 
 buildGo :: MasterServer -> FilePath -> Socket -> IO ()
 buildGo masterServer path conn = do
@@ -75,15 +80,24 @@ serve masterServer conn = do
   where
     handleMsg msg = do
       putStrLn $ "Got " ++ Protocol.showFunc msg
+      let pauseToBuild path = buildGo masterServer path conn
       case msg of
-        Protocol.Open path Protocol.OpenReadMode _creationMode -> buildGo masterServer path conn
-        Protocol.Access path _mode -> buildGo masterServer path conn
+        Protocol.Open path Protocol.OpenReadMode _creationMode -> pauseToBuild path
+        Protocol.Access path _mode -> pauseToBuild path
         _ -> return ()
 
-startServer :: BuildMap -> FilePath -> IO MasterServer
-startServer buildMap ldPreloadPath = do
+toBuildMap :: [BuildStep] -> Map FilePath (FilePath, BuildStep)
+toBuildMap buildSteps =
+  M.fromListWith (error "Overlapping output paths")
+  [ (outputPath, (minimum outputPaths, buildStep))
+  | buildStep@(BuildStep outputPaths _cmd) <- buildSteps
+  , outputPath <- outputPaths
+  ]
+
+startServer :: [BuildStep] -> FilePath -> IO MasterServer
+startServer buildSteps ldPreloadPath = do
   slaveIdsRef <- newIORef S.empty
-  slaveMapByPath <- newIORef M.empty
+  slaveMapByRepPath <- newIORef M.empty
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
   listener <- unixSeqPacketListener serverFilename
@@ -92,10 +106,10 @@ startServer buildMap ldPreloadPath = do
     server =
       MasterServer
       { masterSlaveIds = slaveIdsRef
-      , masterSlaveByPath = slaveMapByPath
+      , masterSlaveByRepPath = slaveMapByRepPath
       , masterAddress = serverFilename
       , masterLdPreloadPath = ldPreloadPath
-      , masterBuildMap = buildMap
+      , masterBuildMap = toBuildMap buildSteps
       , masterCurJobId = curJobId
       }
   _ <- forkIO $ forever $ do
@@ -104,11 +118,11 @@ startServer buildMap ldPreloadPath = do
     forkIO $ serve server conn
   return server
 
-makeSlave :: MasterServer -> SlaveId -> FilePath -> String -> IO Slave
-makeSlave masterServer slaveId outPath cmd = do
+makeSlaveForRepPath :: MasterServer -> SlaveId -> FilePath -> String -> IO Slave
+makeSlaveForRepPath masterServer slaveId outPath cmd = do
   newSlaveMVar <- newEmptyMVar
   getSlave <-
-    atomicModifyIORef (masterSlaveByPath masterServer) $
+    atomicModifyIORef (masterSlaveByRepPath masterServer) $
     \oldSlaveMap ->
     case M.lookup outPath oldSlaveMap of
     Nothing -> (M.insert outPath newSlaveMVar oldSlaveMap, spawnSlave newSlaveMVar)
@@ -136,10 +150,10 @@ getLdPreloadPath = do
   progName <- getProgName
   canonicalizePath (takeDirectory progName </> "fs_override.so")
 
-exampleBuildMap :: BuildMap
-exampleBuildMap = M.fromList
-  [ ("example/a", "gcc -o example/a example/a.o -g -Wall")
-  , ("example/a.o", "gcc -c -o example/a.o example/a.c -g -Wall")
+exampleBuildSteps :: [BuildStep]
+exampleBuildSteps =
+  [ BuildStep ["example/a"] "gcc -o example/a example/a.o -g -Wall"
+  , BuildStep ["example/a.o"] "gcc -c -o example/a.o example/a.c -g -Wall"
   ]
 
 nextJobId :: MasterServer -> IO Int
@@ -150,14 +164,14 @@ need :: MasterServer -> FilePath -> IO ()
 need masterServer path = do
   case M.lookup path (masterBuildMap masterServer) of
     Nothing -> return ()
-    Just cmd -> do
+    Just (repPath, BuildStep _paths cmd) -> do
       jobId <- nextJobId masterServer
       let slaveId = BS.pack ("job" ++ show jobId)
-      slave <- makeSlave masterServer slaveId path cmd
+      slave <- makeSlaveForRepPath masterServer slaveId repPath cmd
       slaveWait slave
 
 main :: IO ()
 main = do
-  masterServer <- startServer exampleBuildMap =<< getLdPreloadPath
+  masterServer <- startServer exampleBuildSteps =<< getLdPreloadPath
   need masterServer "example/a"
   threadDelay 100000
