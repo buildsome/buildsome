@@ -28,7 +28,7 @@ import qualified Network.Socket.ByteString as SockBS
 type SlaveId = BS.ByteString
 
 data BuildStep = BuildStep
-  { _buildStepOutputs :: [FilePath]
+  { buildStepOutputs :: [FilePath]
   , buildStepCmd :: String
   }
 
@@ -44,6 +44,7 @@ data MasterServer = MasterServer
   , masterAddress :: FilePath -- unix socket server
   , masterLdPreloadPath :: FilePath
   , masterBuildMap :: Map FilePath (FilePath, BuildStep) -- output paths -> min(representative) path and original spec
+  , masterChildrenMap :: Map FilePath [(FilePath, BuildStep)] -- parent/dir paths -> all build steps that build directly into it
   , masterCurJobId :: IORef Int
   }
 
@@ -125,13 +126,27 @@ serve masterServer conn = do
         Protocol.OpenDir path -> pauseToBuild path
         Protocol.ReadLink path -> pauseToBuild path
 
-toBuildMap :: [BuildStep] -> Map FilePath (FilePath, BuildStep)
-toBuildMap buildSteps =
-  M.fromListWith (error "Overlapping output paths")
-  [ (outputPath, (minimum outputPaths, buildStep))
-  | buildStep@(BuildStep outputPaths _cmd) <- buildSteps
-  , outputPath <- outputPaths
-  ]
+toBuildMap ::
+  [BuildStep] ->
+  ( Map FilePath (FilePath, BuildStep)
+  , Map FilePath [(FilePath, BuildStep)]
+  )
+toBuildMap buildSteps = (buildMap, childrenMap)
+  where
+    outputs =
+      [ (outputPath, buildStep)
+      | buildStep <- buildSteps
+      , outputPath <- buildStepOutputs buildStep
+      ]
+    pair buildStep = (minimum (buildStepOutputs buildStep), buildStep)
+    childrenMap =
+      M.fromListWith (++)
+      [ (takeDirectory outputPath, [pair buildStep])
+      | (outputPath, buildStep) <- outputs ]
+    buildMap =
+      M.fromListWith (error "Overlapping output paths")
+      [ (outputPath, pair buildStep)
+      | (outputPath, buildStep) <- outputs ]
 
 withServer :: [BuildStep] -> FilePath -> (MasterServer -> IO a) -> IO a
 withServer buildSteps ldPreloadPath body = do
@@ -141,13 +156,15 @@ withServer buildSteps ldPreloadPath body = do
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
   curJobId <- newIORef 0
   let
+    (buildMap, childrenMap) = toBuildMap buildSteps
     server =
       MasterServer
       { masterSlaveBySlaveId = buildStepOfSlaveId
       , masterSlaveByRepPath = slaveMapByRepPath
       , masterAddress = serverFilename
       , masterLdPreloadPath = ldPreloadPath
-      , masterBuildMap = toBuildMap buildSteps
+      , masterBuildMap = buildMap
+      , masterChildrenMap = childrenMap
       , masterCurJobId = curJobId
       }
 
@@ -179,6 +196,8 @@ exampleBuildSteps =
   [ BuildStep ["example/a"] "gcc -o example/a example/a.o -g -Wall"
   , BuildStep ["example/a.o"] "gcc -c -o example/a.o example/a.c -g -Wall"
   , BuildStep ["example/auto.h"] "python example/generate.py"
+  , BuildStep ["example/subdir.list"] "ls -l example/subdir > example/subdir.list"
+  , BuildStep ["example/subdir/a"] "echo hi > example/subdir/a"
   ]
 
 nextJobId :: MasterServer -> IO Int
@@ -187,10 +206,11 @@ nextJobId masterServer =
 
 need :: MasterServer -> FilePath -> IO ()
 need masterServer path = do
-  -- TODO: if path is a directory/parent of some targets, then do need
-  -- all of these (non-directory) targets
-  traverse_ (makeSlaveForRepPath masterServer) $
-    M.lookup path (masterBuildMap masterServer)
+  traverse_ mkSlave $ M.lookup path (masterBuildMap masterServer)
+  let children = M.findWithDefault [] path (masterChildrenMap masterServer)
+  traverse_ mkSlave children
+  where
+    mkSlave = makeSlaveForRepPath masterServer
 
 makeSlaveForRepPath :: MasterServer -> (FilePath, BuildStep) -> IO ()
 makeSlaveForRepPath masterServer (outPathRep, buildStep) = do
@@ -242,4 +262,5 @@ main = do
   ldPreloadPath <- getLdPreloadPath
   withServer exampleBuildSteps ldPreloadPath $ \masterServer -> do
     need masterServer "example/a"
+    need masterServer "example/subdir.list"
     threadDelay 100000
