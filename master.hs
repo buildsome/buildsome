@@ -28,15 +28,15 @@ import qualified Network.Socket.ByteString as SockBS
 type SlaveId = BS.ByteString
 type Pid = Int
 
-data Slave = Slave
-  { _slaveId :: SlaveId
-  , _slaveCmd :: String
-  , slaveExecution :: Async ()
-  }
-
 data BuildStep = BuildStep
   { _buildStepOutputs :: [FilePath]
   , _buildStepCmd :: String
+  }
+
+data Slave = Slave
+  { _slaveId :: SlaveId
+  , _slaveBuildStep :: BuildStep
+  , slaveExecution :: Async ()
   }
 
 data MasterServer = MasterServer
@@ -121,8 +121,8 @@ startServer buildSteps ldPreloadPath = do
     forkIO $ serve server conn
   return server
 
-makeSlaveForRepPath :: MasterServer -> SlaveId -> FilePath -> String -> IO Slave
-makeSlaveForRepPath masterServer slaveId outPath cmd = do
+makeSlaveForRepPath :: MasterServer -> SlaveId -> FilePath -> BuildStep -> IO Slave
+makeSlaveForRepPath masterServer slaveId outPath buildStep@(BuildStep _ cmd) = do
   newSlaveMVar <- newEmptyMVar
   E.mask_ $ do
     getSlave <-
@@ -147,7 +147,7 @@ makeSlaveForRepPath masterServer slaveId outPath cmd = do
         case exitCode of
           ExitFailure {} -> fail $ concat [show cmd, " failed!"]
           _ -> return ()
-      let slave = Slave slaveId cmd execution
+      let slave = Slave slaveId buildStep execution
       putMVar mvar slave
       return slave
     envs =
@@ -175,10 +175,10 @@ need :: MasterServer -> FilePath -> IO ()
 need masterServer path = do
   case M.lookup path (masterBuildMap masterServer) of
     Nothing -> return ()
-    Just (repPath, BuildStep _paths cmd) -> do
+    Just (repPath, buildStep) -> do
       jobId <- nextJobId masterServer
       let slaveId = BS.pack ("job" ++ show jobId)
-      slave <- makeSlaveForRepPath masterServer slaveId repPath cmd
+      slave <- makeSlaveForRepPath masterServer slaveId repPath buildStep
       slaveWait slave
 
 main :: IO ()
