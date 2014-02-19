@@ -183,19 +183,25 @@ makeSlaveForRepPath masterServer slaveId outPath buildStep = do
       Nothing -> (M.insert outPath newSlaveMVar oldSlaveMap, spawnSlave restore newSlaveMVar)
       Just slaveMVar ->
         ( oldSlaveMap
-        , putStrLn ("Slave for " ++ outPath ++ "(" ++ cmd ++ ") already running") >> readMVar slaveMVar
+        , putStrLn ("Slave for " ++ outPath ++ "(" ++ cmd ++ ") already spawned") >> readMVar slaveMVar
         )
     getSlave
   where
     cmd = buildStepCmd buildStep
+    showOutput name bs
+      | BS.null bs = return ()
+      | otherwise = do
+        putStrLn (name ++ ":")
+        BS.putStr bs
+
     spawnSlave restore mvar = do
-      putStrLn $ unwords ["Spawning slave", show slaveId, show cmd]
+      putStrLn $ unwords [show cmd, "spawning as", show slaveId]
       atomicModifyIORef_ (masterSlaveBySlaveId masterServer) $ M.insert slaveId mvar
       execution <- async . restore $ do
         (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) ["HOME", "PATH"] envs
-        putStrLn $ concat [show cmd, " completed: ", show exitCode]
-        putStrLn "STDOUT:" >> BS.putStr stdout
-        putStrLn "STDERR:" >> BS.putStr stderr
+        putStrLn $ concat [show cmd, " completed"]
+        showOutput "STDOUT" stdout
+        showOutput "STDERR" stderr
         case exitCode of
           ExitFailure {} -> fail $ concat [show cmd, " failed!"]
           _ -> return ()
