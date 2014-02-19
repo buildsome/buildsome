@@ -5,6 +5,7 @@ import Control.Concurrent.MVar
 import Control.Monad
 import Data.Foldable (traverse_)
 import Data.IORef
+import Data.List (isPrefixOf)
 import Data.Map (Map)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
@@ -89,13 +90,15 @@ serve masterServer conn = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
       let BuildStep outputPaths cmd = slaveBuildStep slave
           pauseToBuild path = buildGo masterServer path conn
-          verifySpecifiedOutput path
+          verifyLegalOutput path
             | path `elem` outputPaths = return ()
-            | otherwise = fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
-                                        , " (", show outputPaths, ")" ]
+            | "/tmp" `isPrefixOf` path = return ()
+            | otherwise =
+              fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
+                            , " (", show outputPaths, ")" ]
       case msg of
-        Protocol.Open path Protocol.OpenWriteMode _ -> verifySpecifiedOutput path
-        Protocol.Open path _ (Protocol.Create _) -> verifySpecifiedOutput path
+        Protocol.Open path Protocol.OpenWriteMode _ -> verifyLegalOutput path
+        Protocol.Open path _ (Protocol.Create _) -> verifyLegalOutput path
         Protocol.Open path Protocol.OpenReadMode _creationMode -> pauseToBuild path
         Protocol.Access path _mode -> pauseToBuild path
         _ -> return ()
