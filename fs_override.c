@@ -241,6 +241,10 @@ static void fopen_common(const char *path, const char *mode)
         ASSERT(0);
     }
     send_connection(PS(msg));
+    if(!(msg.args.flags & FLAG_WRITE)) {
+        ASSERT(!(msg.args.flags & FLAG_CREATE));
+        await_go();
+    }
 }
 
 DEFINE_WRAPPER(FILE *, fopen, (const char *path, const char *mode))
