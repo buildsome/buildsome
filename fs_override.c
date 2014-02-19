@@ -95,10 +95,8 @@ enum func {
     func_stat,
     func_lstat,
     func_opendir,
-    func_fdopendir,
     func_access,
     func_truncate,
-    func_ftruncate,
     func_unlink,
     func_rename,
     func_chmod,
@@ -124,10 +122,8 @@ struct func_creat     {char path[MAX_PATH]; uint32_t mode;};
 struct func_stat      {char path[MAX_PATH];};
 struct func_lstat     {char path[MAX_PATH];};
 struct func_opendir   {char path[MAX_PATH];};
-struct func_fdopendir {uint32_t fd;};
 struct func_access    {char path[MAX_PATH]; uint32_t mode;};
 struct func_truncate  {char path[MAX_PATH]; uint64_t length;};
-struct func_ftruncate {uint32_t fd; off_t length;};
 struct func_unlink    {char path[MAX_PATH];};
 struct func_rename    {char oldpath[MAX_PATH]; char newpath[MAX_PATH];};
 struct func_chmod     {char path[MAX_PATH]; uint32_t mode;};
@@ -286,11 +282,6 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *name))
     CALL_REAL(DIR *, opendir, name);
 }
 
-DEFINE_WRAPPER(DIR *, fdopendir, (int fd))
-{
-    CALL_REAL(DIR *, fdopendir, fd);
-}
-
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
     DEFINE_MSG(access);
@@ -304,11 +295,6 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
 DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
     CALL_REAL(int, truncate, path, length);
-}
-
-DEFINE_WRAPPER(int, ftruncate, (int fd, off_t length))
-{
-    CALL_REAL(int, ftruncate, fd, length);
 }
 
 DEFINE_WRAPPER(int, unlink, (const char *path))
