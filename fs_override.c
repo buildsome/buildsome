@@ -124,10 +124,10 @@ struct func_creat     {char path[MAX_PATH]; uint32_t mode;};
 struct func_stat      {char path[MAX_PATH];};
 struct func_lstat     {char path[MAX_PATH];};
 struct func_opendir   {char path[MAX_PATH];};
-struct func_fdopendir {int fd;};
-struct func_access    {char path[MAX_PATH]; int mode;};
-struct func_truncate  {char path[MAX_PATH]; off_t length;};
-struct func_ftruncate {int fd; off_t length;};
+struct func_fdopendir {uint32_t fd;};
+struct func_access    {char path[MAX_PATH]; uint32_t mode;};
+struct func_truncate  {char path[MAX_PATH]; uint64_t length;};
+struct func_ftruncate {uint32_t fd; off_t length;};
 struct func_unlink    {char path[MAX_PATH];};
 struct func_rename    {char oldpath[MAX_PATH]; char newpath[MAX_PATH];};
 struct func_chmod     {char path[MAX_PATH]; uint32_t mode;};
@@ -289,6 +289,11 @@ DEFINE_WRAPPER(DIR *, fdopendir, (int fd))
 
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
+    DEFINE_MSG(access);
+    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    msg.args.mode = mode;
+    send_connection(PS(msg));
+    await_go();
     CALL_REAL(int, access, path, mode);
 }
 

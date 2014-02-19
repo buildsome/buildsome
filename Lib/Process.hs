@@ -8,6 +8,8 @@ import System.Process
 import qualified Data.ByteString.Char8 as BS
 import qualified System.IO as IO
 
+import Debug.TraceUtils
+
 type Env = [(String, String)]
 
 data Process = Process
@@ -25,7 +27,7 @@ makeProcess cmd inheritedEnvs envs = do
   (Just stdinHandle, Just stdoutHandle, Just stderrHandle, process) <- createProcess CreateProcess
     { cwd = Nothing
     , cmdspec = cmd
-    , env = Just (oldEnvs ++ envs)
+    , env = Just (traceId "envs" (oldEnvs ++ envs))
     , std_in = CreatePipe
     , std_out = CreatePipe
     , std_err = CreatePipe

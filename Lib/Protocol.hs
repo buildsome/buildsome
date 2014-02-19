@@ -34,6 +34,7 @@ data Func
   | Creat FilePath Word32
   | Rename FilePath FilePath
   | Unlink FilePath
+  | Access FilePath Word32{- TODO: replace Int with AccessMode -}
   deriving (Show)
 
 showFunc :: Func -> String
@@ -45,6 +46,8 @@ showFunc (Rename old new) =
   concat ["rename:", show old, "->", show new]
 showFunc (Unlink path) =
   concat ["unlink:", show path]
+showFunc (Access path mode) =
+  concat ["access:", show path, " ", show mode]
 
 mAX_PATH :: Int
 mAX_PATH = 256
@@ -83,6 +86,9 @@ parseUnlink = Unlink <$> getPath
 parseCreat :: Get Func
 parseCreat = Creat <$> getPath <*> getWord32le
 
+parseAccess :: Get Func
+parseAccess = Access <$> getPath <*> getWord32le
+
 funcs :: IntMap (String, Get Func)
 funcs =
   M.fromList
@@ -92,7 +98,7 @@ funcs =
   -- , (0x10003, ("lstat", parseLstat))
   -- , (0x10004, ("opendir", parseOpendir))
   -- , (0x10005, ("fdopendir", parseFdopendir))
-  -- , (0x10006, ("access", parseAccess))
+  , (0x10006, ("access", parseAccess))
   -- , (0x10007, ("truncate", parseTruncate))
   -- , (0x10008, ("ftruncate", parseFtruncate))
   , (0x10009, ("unlink", parseUnlink))
