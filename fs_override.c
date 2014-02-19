@@ -167,13 +167,6 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
 
 #define CREATION_FLAGS (O_CREAT | O_EXCL)
 
-void open_readwrite(void)
-{
-    LOG("What can we do with read-write files?");
-    /* TODO: Allow them, but only if they do not already exist? */
-    abort();
-}
-
 static void await_go(void)
 {
     char buf[16];
@@ -189,12 +182,14 @@ static mode_t open_common(const char *path, int flags, va_list args)
 
     DEFINE_MSG(msg, open);
     SAFE_STRCPY(msg.args.path, path);
-    if(O_RDWR == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
-        open_readwrite();
-    } else if(O_WRONLY == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
+    switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {
+    case O_RDWR:
+    case O_WRONLY:
         msg.args.flags |= FLAG_WRITE;
-    } else if(O_RDONLY == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
-    } else {
+        break;
+    case O_RDONLY:
+        break;
+    default:
         LOG("invalid open mode?!");
         ASSERT(0);
     }
@@ -249,14 +244,12 @@ static void fopen_common(const char *path, const char *mode)
     SAFE_STRCPY(msg.args.path, path);
     switch(mode[0]) {
     case 'r':
-        if(mode[1] == '+') open_readwrite();
+        if(mode[1] == '+') {
+            msg.args.flags |= FLAG_WRITE;
+        }
         break;
     case 'w':
-        // w+ not a problem: no reading of previous content possible
-        msg.args.flags |= FLAG_WRITE;
-        break;
     case 'a':
-        if(mode[1] == '+') open_readwrite();
         msg.args.flags |= FLAG_WRITE;
         break;
     default:

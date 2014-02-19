@@ -73,7 +73,6 @@ showFunc (Chown path uid gid) = unwords ["chown:", show path, show uid, show gid
 mAX_PATH :: Int
 mAX_PATH = 256
 
-
 getPath :: Get FilePath
 getPath = BS8.unpack . truncateAt 0 <$> getByteString mAX_PATH
 
