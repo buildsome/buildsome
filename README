@@ -5,5 +5,18 @@ main thread -> withAsync
     connection thread -> need(async)
       slave execution
 
-Receiving stuff in the connection server, send to slave thread that awaits process execution completion?
-Or just specifically kill a slave when handling on its behalf failed?
+RW files:
+
+* Sandbox all /tmp files so only same process sees them
+
+* Delete all output files before executing cmd, so they are safe to
+  open r+w
+
+* Notify open for W when opening for R+W
+
+* If unspecified output file is opened (for R+W), it will thus error
+  on the master side
+
+Deletions:
+
+* Deletes should always be of explicitly declared output files.
