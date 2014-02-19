@@ -147,7 +147,7 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
     ret_type rc = real(__VA_ARGS__);                \
     return rc;
 
-#define DEFINE_MSG(name)                        \
+#define DEFINE_MSG(msg, name)                        \
     struct {                                    \
         enum func func;                         \
         struct func_##name args;                \
@@ -175,7 +175,7 @@ static mode_t open_common(const char *path, int flags, va_list args)
     bool creation = flags & CREATION_FLAGS;
     mode_t mode = creation ? va_arg(args, mode_t) : 0;
 
-    DEFINE_MSG(open);
+    DEFINE_MSG(msg, open);
     SAFE_STRCPY(msg.args.path, path);
     if(O_RDWR == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
         open_readwrite();
@@ -231,7 +231,7 @@ DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
 
 static void fopen_common(const char *path, const char *mode)
 {
-    DEFINE_MSG(open);
+    DEFINE_MSG(msg, open);
     SAFE_STRCPY(msg.args.path, path);
     switch(mode[0]) {
     case 'r':
@@ -273,7 +273,7 @@ DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *mode))
 /* Ditto open(W) */
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
-    DEFINE_MSG(creat);
+    DEFINE_MSG(msg, creat);
     SAFE_STRCPY(msg.args.path, path);
     msg.args.mode = mode;
     send_connection(PS(msg));
@@ -290,7 +290,7 @@ static void send_connection_await(const char *msg, size_t size)
 /* Depends on the full path */
 DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 {
-    DEFINE_MSG(stat);
+    DEFINE_MSG(msg, stat);
     SAFE_STRCPY(msg.args.path, path);
     send_connection_await(PS(msg));
     CALL_REAL(int, stat, path, buf);
@@ -299,7 +299,7 @@ DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 /* Depends on the full direct path */
 DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 {
-    DEFINE_MSG(lstat);
+    DEFINE_MSG(msg, lstat);
     SAFE_STRCPY(msg.args.path, path);
     send_connection(PS(msg));
     await_go();
@@ -315,7 +315,7 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *name))
 /* Depends on the full path */
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
-    DEFINE_MSG(access);
+    DEFINE_MSG(msg, access);
     SAFE_STRCPY(msg.args.path, path);
     msg.args.mode = mode;
     send_connection(PS(msg));
@@ -332,7 +332,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 /* Outputs the full path */
 DEFINE_WRAPPER(int, unlink, (const char *path))
 {
-    DEFINE_MSG(unlink);
+    DEFINE_MSG(msg, unlink);
     SAFE_STRCPY(msg.args.path, path);
     send_connection(PS(msg));
     CALL_REAL(int, unlink, path);
@@ -341,7 +341,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
 /* Outputs both full paths */
 DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 {
-    DEFINE_MSG(rename);
+    DEFINE_MSG(msg, rename);
     SAFE_STRCPY(msg.args.oldpath, oldpath);
     SAFE_STRCPY(msg.args.newpath, newpath);
     send_connection(PS(msg));
