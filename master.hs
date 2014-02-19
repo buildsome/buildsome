@@ -1,5 +1,6 @@
 {-# OPTIONS -Wall -O2 #-}
 import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.Async
 import Control.Concurrent.MVar
 import Control.Monad
 import Data.IORef
@@ -7,14 +8,16 @@ import Data.Map (Map)
 import Data.Set (Set)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
-import Lib.Process (Process, makeProcess, waitProcess)
+import Lib.Process (getOutputs)
 import Lib.Sock (recvLoop_, unixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Directory (canonicalizePath)
 import System.Environment (getProgName)
+import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
 import System.Process
+import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -28,7 +31,7 @@ type Pid = Int
 data Slave = Slave
   { _slaveId :: SlaveId
   , _slaveCmd :: String
-  , slaveProcess :: Process
+  , slaveExecution :: Async ()
   }
 
 data BuildStep = BuildStep
@@ -46,7 +49,7 @@ data MasterServer = MasterServer
   }
 
 slaveWait :: Slave -> IO ()
-slaveWait = waitProcess . slaveProcess
+slaveWait = wait . slaveExecution
 
 sendGo :: Socket -> IO ()
 sendGo conn = do
@@ -121,22 +124,30 @@ startServer buildSteps ldPreloadPath = do
 makeSlaveForRepPath :: MasterServer -> SlaveId -> FilePath -> String -> IO Slave
 makeSlaveForRepPath masterServer slaveId outPath cmd = do
   newSlaveMVar <- newEmptyMVar
-  getSlave <-
-    atomicModifyIORef (masterSlaveByRepPath masterServer) $
-    \oldSlaveMap ->
-    case M.lookup outPath oldSlaveMap of
-    Nothing -> (M.insert outPath newSlaveMVar oldSlaveMap, spawnSlave newSlaveMVar)
-    Just slaveMVar ->
-      ( oldSlaveMap
-      , putStrLn ("Slave for " ++ outPath ++ "(" ++ cmd ++ ") already running") >> readMVar slaveMVar
-      )
-  getSlave
+  E.mask_ $ do
+    getSlave <-
+      atomicModifyIORef (masterSlaveByRepPath masterServer) $
+      \oldSlaveMap ->
+      case M.lookup outPath oldSlaveMap of
+      Nothing -> (M.insert outPath newSlaveMVar oldSlaveMap, spawnSlave newSlaveMVar)
+      Just slaveMVar ->
+        ( oldSlaveMap
+        , putStrLn ("Slave for " ++ outPath ++ "(" ++ cmd ++ ") already running") >> readMVar slaveMVar
+        )
+    getSlave
   where
     spawnSlave mvar = do
       putStrLn $ unwords ["Spawning slave ", show slaveId, show cmd]
       atomicModifyIORef_ (masterSlaveIds masterServer) $ S.insert slaveId
-      process <- makeProcess (ShellCommand cmd) ["HOME", "PATH"] envs
-      let slave = Slave slaveId cmd process
+      execution <- async $ do
+        (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) ["HOME", "PATH"] envs
+        putStrLn $ concat [show cmd, " completed: ", show exitCode]
+        putStrLn "STDOUT:" >> BS.putStr stdout
+        putStrLn "STDERR:" >> BS.putStr stderr
+        case exitCode of
+          ExitFailure {} -> fail $ concat [show cmd, " failed!"]
+          _ -> return ()
+      let slave = Slave slaveId cmd execution
       putMVar mvar slave
       return slave
     envs =

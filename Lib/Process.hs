@@ -1,30 +1,35 @@
-module Lib.Process (Process, makeProcess, waitProcess) where
+module Lib.Process (getOutputs) where
 
 import Control.Concurrent.Async
 import Control.Monad
+import Data.Foldable (traverse_)
 import System.Environment (getEnv, getProgName)
 import System.Exit (ExitCode)
+import System.IO (Handle, hClose)
 import System.Process
+import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS
-import qualified System.IO as IO
 
 import Debug.TraceUtils
 
 type Env = [(String, String)]
 
-data Process = Process
-  { _processCmd :: CmdSpec
-  , _stdoutReader :: Async BS.ByteString
-  , _stderrReader :: Async BS.ByteString
-  , _exitCodeReader :: Async ExitCode
-  }
+-- | Create a process, and kill it when leaving the given code section
+withProcess :: CreateProcess -> ((Maybe Handle, Maybe Handle, Maybe Handle, ProcessHandle) -> IO a) -> IO a
+withProcess params body =
+  E.bracket (createProcess params) terminate body
+  where
+    terminate (mStdin, mStdout, mStderr, processHandle) = do
+      (traverse_ . traverse_) hClose [mStdin, mStdout, mStderr]
+      terminateProcess processHandle
 
-makeProcess :: CmdSpec -> [String] -> Env -> IO Process
-makeProcess cmd inheritedEnvs envs = do
+-- | Get the outputs of a process with a given environment spec
+getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, BS.ByteString, BS.ByteString)
+getOutputs cmd inheritedEnvs envs = do
   oldEnvs <- forM inheritedEnvs $ \name -> do
     val <- getEnv name
     return (name, val)
-  (Just stdinHandle, Just stdoutHandle, Just stderrHandle, process) <- createProcess CreateProcess
+  (Just stdinHandle, Just stdoutHandle, Just stderrHandle, processHandle) <- createProcess CreateProcess
     { cwd = Nothing
     , cmdspec = cmd
     , env = Just (traceId "envs" (oldEnvs ++ envs))
@@ -35,27 +40,11 @@ makeProcess cmd inheritedEnvs envs = do
     , create_group = True
 --    , delegate_ctlc = True
     }
-  IO.hClose stdinHandle
-
-  stdoutReader <- async (BS.hGetContents stdoutHandle)
-  stderrReader <- async (BS.hGetContents stderrHandle)
-  exitCodeReader <- async (waitForProcess process)
-
-  return $ Process cmd stdoutReader stderrReader exitCodeReader
-
-waitProcess :: Process -> IO ()
-waitProcess (Process _cmd stdoutReader stderrReader exitCodeReader) = do
-  stdout <- wait stdoutReader
-  stderr <- wait stderrReader
-  exitCode <- wait exitCodeReader
-
-  putStrLn $ "ExitCode: " ++ show exitCode
-  when (not (BS.null stdout)) $ do
-    putStrLn "STDOUT:"
-    BS.putStr stdout
-    putStrLn ""
-  when (not (BS.null stderr)) $ do
-    putStrLn "STDERR:"
-    BS.putStr stderr
-    putStrLn ""
+  hClose stdinHandle
+  withAsync (BS.hGetContents stdoutHandle) $ \stdoutReader ->
+    withAsync (BS.hGetContents stderrHandle) $ \stderrReader -> do
+      exitCode <- waitForProcess processHandle
+      stdout <- wait stdoutReader
+      stderr <- wait stderrReader
+      return (exitCode, stdout, stderr)
 
