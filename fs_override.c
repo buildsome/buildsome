@@ -175,17 +175,35 @@ static void await_go(void)
     ASSERT(!strncmp(buf, "GO", 2));
 }
 
-static mode_t open_common(const char *path, int flags, va_list args)
+static void notify_open(const char *path, bool is_write, bool is_create, mode_t mode)
 {
-    bool creation = flags & CREATION_FLAGS;
-    mode_t mode = creation ? va_arg(args, mode_t) : 0;
-
     DEFINE_MSG(msg, open);
     SAFE_STRCPY(msg.args.path, path);
+    if(is_write) {
+        msg.args.flags |= FLAG_WRITE;
+        if(is_create) {
+            msg.args.flags |= FLAG_CREATE;
+        }
+    } else {
+        ASSERT(!is_create);
+    }
+    msg.args.mode = mode;
+    send_connection(PS(msg));
+    if(!is_write) {
+        await_go();
+    }
+}
+
+static mode_t open_common(const char *path, int flags, va_list args)
+{
+    bool is_write = false;
+    bool is_create = flags & CREATION_FLAGS;
+    mode_t mode = is_create ? va_arg(args, mode_t) : 0;
+
     switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {
     case O_RDWR:
     case O_WRONLY:
-        msg.args.flags |= FLAG_WRITE;
+        is_write = true;
         break;
     case O_RDONLY:
         break;
@@ -193,15 +211,7 @@ static mode_t open_common(const char *path, int flags, va_list args)
         LOG("invalid open mode?!");
         ASSERT(0);
     }
-    if(creation) {
-        msg.args.flags |= FLAG_CREATE;
-    }
-    msg.args.mode = mode;
-    send_connection(PS(msg));
-    if(!(msg.args.flags & FLAG_WRITE)) {
-        ASSERT(!(msg.args.flags & FLAG_CREATE));
-        await_go();
-    }
+    notify_open(path, is_write, is_create, mode);
     return mode;
 }
 
@@ -240,27 +250,21 @@ DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
 
 static void fopen_common(const char *path, const char *mode)
 {
-    DEFINE_MSG(msg, open);
-    SAFE_STRCPY(msg.args.path, path);
+    bool is_write = false, is_create = false;
     switch(mode[0]) {
     case 'r':
-        if(mode[1] == '+') {
-            msg.args.flags |= FLAG_WRITE;
-        }
+        if(mode[1] == '+') is_write = true;
         break;
     case 'w':
     case 'a':
-        msg.args.flags |= FLAG_WRITE;
+        is_create = true;
+        is_write = true;
         break;
     default:
         LOG("Invalid fopen mode?!");
         ASSERT(0);
     }
-    send_connection(PS(msg));
-    if(!(msg.args.flags & FLAG_WRITE)) {
-        ASSERT(!(msg.args.flags & FLAG_CREATE));
-        await_go();
-    }
+    notify_open(path, is_write, is_create, 0666);
 }
 
 /* Ditto open */
