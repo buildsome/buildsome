@@ -31,6 +31,8 @@ showCreationMode (Create x) = "(CREATE:" ++ showOct x "" ++ ")"
 
 data Func
   = Open FilePath OpenMode CreationMode
+  | Stat FilePath
+  | LStat FilePath
   | Creat FilePath Word32
   | Rename FilePath FilePath
   | Unlink FilePath
@@ -38,16 +40,13 @@ data Func
   deriving (Show)
 
 showFunc :: Func -> String
-showFunc (Open path mode creation) =
-  "open:" ++ showOpenMode mode ++ show path ++ showCreationMode creation
-showFunc (Creat path perms) =
-  concat ["create:", show path, " ", showOct perms ""]
-showFunc (Rename old new) =
-  concat ["rename:", show old, "->", show new]
-showFunc (Unlink path) =
-  concat ["unlink:", show path]
-showFunc (Access path mode) =
-  concat ["access:", show path, " ", show mode]
+showFunc (Open path mode creation) = "open:" ++ showOpenMode mode ++ show path ++ showCreationMode creation
+showFunc (Stat path) = "stat:" ++ show path
+showFunc (LStat path) = "lstat:" ++ show path
+showFunc (Creat path perms) = concat ["create:", show path, " ", showOct perms ""]
+showFunc (Rename old new) = concat ["rename:", show old, "->", show new]
+showFunc (Unlink path) = concat ["unlink:", show path]
+showFunc (Access path mode) = concat ["access:", show path, " ", show mode]
 
 mAX_PATH :: Int
 mAX_PATH = 256
@@ -77,30 +76,18 @@ parseOpen = mkOpen <$> getPath <*> getWord32le <*> getWord32le
       | 0 /= flags .&. fLAG_CREATE = Create mode
       | otherwise = NoCreate
 
-parseRename :: Get Func
-parseRename = Rename <$> getPath <*> getPath
-
-parseUnlink :: Get Func
-parseUnlink = Unlink <$> getPath
-
-parseCreat :: Get Func
-parseCreat = Creat <$> getPath <*> getWord32le
-
-parseAccess :: Get Func
-parseAccess = Access <$> getPath <*> getWord32le
-
 funcs :: IntMap (String, Get Func)
 funcs =
   M.fromList
   [ (0x10000, ("open", parseOpen))
-  , (0x10001, ("creat", parseCreat))
-  -- , (0x10002, ("stat", parseStat))
-  -- , (0x10003, ("lstat", parseLstat))
+  , (0x10001, ("creat", Creat <$> getPath <*> getWord32le))
+  , (0x10002, ("stat", Stat <$> getPath))
+  , (0x10003, ("lstat", LStat <$> getPath))
   -- , (0x10004, ("opendir", parseOpendir))
-  , (0x10005, ("access", parseAccess))
+  , (0x10005, ("access", Access <$> getPath <*> getWord32le))
   -- , (0x10006, ("truncate", parseTruncate))
-  , (0x10007, ("unlink", parseUnlink))
-  , (0x10008, ("rename", parseRename))
+  , (0x10007, ("unlink", Unlink <$> getPath))
+  , (0x10008, ("rename", Rename <$> getPath <*> getPath))
   -- , (0x10009, ("chmod", parseChmod))
   -- , (0x1000A, ("readlink", parseReadlink))
   -- , (0x1000B, ("mknod", parseMknod))

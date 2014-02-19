@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include <sys/syscall.h>
 
+#define SAFE_STRCPY(dest, src)      strlcpy(dest, src, sizeof (dest))
+
 #define MAX_FRAME_SIZE 8192
 
 #define PREFIX "EFBUILD_"
@@ -174,7 +176,7 @@ static mode_t open_common(const char *path, int flags, va_list args)
     mode_t mode = creation ? va_arg(args, mode_t) : 0;
 
     DEFINE_MSG(open);
-    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    SAFE_STRCPY(msg.args.path, path);
     if(O_RDWR == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
         open_readwrite();
     } else if(O_WRONLY == (flags & (O_RDONLY | O_RDWR | O_WRONLY))) {
@@ -230,7 +232,7 @@ DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
 static void fopen_common(const char *path, const char *mode)
 {
     DEFINE_MSG(open);
-    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    SAFE_STRCPY(msg.args.path, path);
     switch(mode[0]) {
     case 'r':
         if(mode[1] == '+') open_readwrite();
@@ -272,24 +274,35 @@ DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *mode))
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
     DEFINE_MSG(creat);
-    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    SAFE_STRCPY(msg.args.path, path);
     msg.args.mode = mode;
     send_connection(PS(msg));
 
     CALL_REAL(int, creat, path, mode);
 }
 
-/* No need to wrap fstat because "fd" was opened so is considered an input */
+static void send_connection_await(const char *msg, size_t size)
+{
+    send_connection(msg, size);
+    await_go();
+}
 
 /* Depends on the full path */
 DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 {
+    DEFINE_MSG(stat);
+    SAFE_STRCPY(msg.args.path, path);
+    send_connection_await(PS(msg));
     CALL_REAL(int, stat, path, buf);
 }
 
 /* Depends on the full direct path */
 DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 {
+    DEFINE_MSG(lstat);
+    SAFE_STRCPY(msg.args.path, path);
+    send_connection(PS(msg));
+    await_go();
     CALL_REAL(int, lstat, path, buf);
 }
 
@@ -303,7 +316,7 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *name))
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
     DEFINE_MSG(access);
-    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    SAFE_STRCPY(msg.args.path, path);
     msg.args.mode = mode;
     send_connection(PS(msg));
     await_go();
@@ -320,7 +333,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 DEFINE_WRAPPER(int, unlink, (const char *path))
 {
     DEFINE_MSG(unlink);
-    strlcpy(msg.args.path, path, sizeof msg.args.path);
+    SAFE_STRCPY(msg.args.path, path);
     send_connection(PS(msg));
     CALL_REAL(int, unlink, path);
 }
@@ -329,8 +342,8 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
 DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 {
     DEFINE_MSG(rename);
-    strlcpy(msg.args.oldpath, oldpath, sizeof msg.args.oldpath);
-    strlcpy(msg.args.newpath, newpath, sizeof msg.args.newpath);
+    SAFE_STRCPY(msg.args.oldpath, oldpath);
+    SAFE_STRCPY(msg.args.newpath, newpath);
     send_connection(PS(msg));
 
     CALL_REAL(int, rename, oldpath, newpath);
