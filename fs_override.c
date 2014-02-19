@@ -196,6 +196,16 @@ static mode_t open_common(const char *path, int flags, va_list args)
     return mode;
 }
 
+/* Full direct path refers to both the [in]existence of a file, its stat and
+ * content */
+/* Full path refers to the full direct path and any dereferences of
+ * symlinks from it */
+
+/* All outputs to the full path also output (non-exclusively) to the
+ * containing directory */
+
+/* For read: Depends on the full path */
+/* For write: Outputs the full path */
 DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
 {
     va_list args;
@@ -206,6 +216,7 @@ DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
     CALL_REAL(int, open, path, flags, mode);
 }
 
+/* Ditto open */
 DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
 {
     va_list args;
@@ -243,18 +254,21 @@ static void fopen_common(const char *path, const char *mode)
     }
 }
 
+/* Ditto open */
 DEFINE_WRAPPER(FILE *, fopen, (const char *path, const char *mode))
 {
     fopen_common(path, mode);
     CALL_REAL(FILE *, fopen, path, mode);
 }
 
+/* Ditto open */
 DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *mode))
 {
     fopen_common(path, mode);
     CALL_REAL(FILE *, fopen64, path, mode);
 }
 
+/* Ditto open(W) */
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
     DEFINE_MSG(creat);
@@ -267,21 +281,25 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 
 /* No need to wrap fstat because "fd" was opened so is considered an input */
 
+/* Depends on the full path */
 DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 {
     CALL_REAL(int, stat, path, buf);
 }
 
+/* Depends on the full direct path */
 DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 {
     CALL_REAL(int, lstat, path, buf);
 }
 
+/* Depends on the full path */
 DEFINE_WRAPPER(DIR *, opendir, (const char *name))
 {
     CALL_REAL(DIR *, opendir, name);
 }
 
+/* Depends on the full path */
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
     DEFINE_MSG(access);
@@ -292,11 +310,13 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
     CALL_REAL(int, access, path, mode);
 }
 
+/* Outputs the full path */
 DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
     CALL_REAL(int, truncate, path, length);
 }
 
+/* Outputs the full path */
 DEFINE_WRAPPER(int, unlink, (const char *path))
 {
     DEFINE_MSG(unlink);
@@ -305,6 +325,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
     CALL_REAL(int, unlink, path);
 }
 
+/* Outputs both full paths */
 DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 {
     DEFINE_MSG(rename);
@@ -315,41 +336,53 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
     CALL_REAL(int, rename, oldpath, newpath);
 }
 
+/* Outputs the full path */
 DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
 {
     CALL_REAL(int, chmod, path, mode);
 }
 
+/* Depends on the full direct path */
 DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
     CALL_REAL(ssize_t, readlink, path, buf, bufsiz);
 }
 
+/* Outputs the full path, must be deleted aftewards? */
 DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
 {
     CALL_REAL(int, mknod, path, mode, dev);
 }
 
+/* Outputs the full path */
 DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
 {
     CALL_REAL(int, mkdir, path, mode);
 }
 
+/* Outputs the full path */
 DEFINE_WRAPPER(int, rmdir, (const char *path))
 {
     CALL_REAL(int, rmdir, path);
 }
 
+/* Outputs the full linkpath, input the target (to make the symlink,
+ * you don't depend on the target, but whoever made the symlink
+ * depended on it so is going to use it, thus it makes sense to just
+ * depend on the target too) */
 DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
 {
     CALL_REAL(int, symlink, linkpath, target);
 }
 
+/* Inputs the full oldpath, outputs the full newpath (treated like a
+ * read/write copy) */
 DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
 {
     CALL_REAL(int, link, oldpath, newpath);
 }
 
+/* Outputs the full path */
 DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
 {
     CALL_REAL(int, chown, path, owner, group);
