@@ -154,8 +154,8 @@ getLdPreloadPath = do
 
 exampleBuildSteps :: [BuildStep]
 exampleBuildSteps =
-  [ BuildStep ["example/a"] "gcc -o example/a example/a.o -g -Wall >/tmp/out.linkage 2>/tmp/err.linkage"
-  , BuildStep ["example/a.o"] "gcc -c -o example/a.o example/a.c -g -Wall >/tmp/out.compile 2>/tmp/err.compile"
+  [ BuildStep ["example/a"] "gcc -o example/a example/a.o -g -Wall"
+  , BuildStep ["example/a.o"] "gcc -c -o example/a.o example/a.c -g -Wall"
   ]
 
 nextJobId :: MasterServer -> IO Int
