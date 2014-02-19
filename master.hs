@@ -105,15 +105,25 @@ serve masterServer conn = do
       case msg of
         Protocol.Open path Protocol.OpenWriteMode _ -> verifyLegalOutput path
         Protocol.Open path _ (Protocol.Create _) -> verifyLegalOutput path
+        Protocol.Creat path _ -> verifyLegalOutput path
+        Protocol.Rename a b -> verifyLegalOutput a >> verifyLegalOutput b
+        Protocol.Unlink path -> verifyLegalOutput path
+        Protocol.Truncate path _ -> verifyLegalOutput path
+        Protocol.Chmod path _ -> verifyLegalOutput path
+        Protocol.Chown path _ _ -> verifyLegalOutput path
+        Protocol.MkNod path _ _ -> verifyLegalOutput path -- TODO: Special mkNod handling?
+        Protocol.MkDir path _ -> verifyLegalOutput path
+        Protocol.RmDir path -> verifyLegalOutput path
+
+        Protocol.SymLink target linkPath -> verifyLegalOutput linkPath >> pauseToBuild target
+        Protocol.Link src dest -> verifyLegalOutput dest >> pauseToBuild src
+
         Protocol.Open path Protocol.OpenReadMode _creationMode -> pauseToBuild path
         Protocol.Access path _mode -> pauseToBuild path
         Protocol.Stat path -> pauseToBuild path
         Protocol.LStat path -> pauseToBuild path
         Protocol.OpenDir path -> pauseToBuild path
         Protocol.ReadLink path -> pauseToBuild path
-        Protocol.SymLink target _linkPath -> pauseToBuild target
-        Protocol.Link src _dest -> pauseToBuild src
-        _ -> return ()
 
 toBuildMap :: [BuildStep] -> Map FilePath (FilePath, BuildStep)
 toBuildMap buildSteps =
