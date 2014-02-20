@@ -27,6 +27,7 @@ import qualified Control.Exception as E
 import qualified Data.Attoparsec.ByteString.Char8 as P
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
+import qualified Lib.AsyncContext as AsyncContext
 import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
@@ -166,7 +167,7 @@ withServer parallelCount targets ldPreloadPath body = do
   semaphore <- MSem.new parallelCount
   let
     (buildMap, childrenMap) = toBuildMap targets
-    server =
+    masterServer =
       MasterServer
       { masterRunningCmds = runningCmds
       , masterSlaveByRepPath = slaveMapByRepPath
@@ -178,23 +179,12 @@ withServer parallelCount targets ldPreloadPath body = do
       , masterSemaphore = semaphore
       }
 
-  withUnixSeqPacketListener serverFilename $ \listener -> do
-    connections <- newIORef M.empty
-    let
-      addConnection i connAsync = atomicModifyIORef_ connections $ M.insert i connAsync
-      deleteConnection i = atomicModifyIORef_ connections $ M.delete i
-      serverLoop = forM_ [(1 :: Int)..] $ \i -> do
+  withUnixSeqPacketListener serverFilename $ \listener ->
+    AsyncContext.new $ \ctx -> do
+      _ <- AsyncContext.spawn ctx $ forever $ do
         (conn, _srcAddr) <- Sock.accept listener
-        -- TODO: This never frees the memory for each of the connection
-        -- servers, even when they die. Best to maintain an explicit set
-        -- of connections, and iterate to kill them when killing the
-        -- server
-        connAsync <-
-          async $ serve server conn `E.finally` deleteConnection i
-        addConnection i connAsync
-      cancelConnections = traverse_ cancel =<< readIORef connections
-    withAsync (serverLoop `E.finally` cancelConnections) $
-      \_serverLoop -> body server
+        AsyncContext.spawn ctx $ serve masterServer conn
+      body masterServer
 
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
