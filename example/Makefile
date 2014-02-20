@@ -1,3 +1,5 @@
+all: example/a example/subdir.list
+
 example/a: example/a.o
 	gcc -o example/a example/a.o -g -Wall
 

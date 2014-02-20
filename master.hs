@@ -310,7 +310,7 @@ main = do
   makefile <- parseGivenMakefile
   let buildSteps = map buildStepFromTarget (makefileTargets makefile)
   ldPreloadPath <- getLdPreloadPath
-  withServer 1 buildSteps ldPreloadPath $ \masterServer -> do
+  withServer 2 buildSteps ldPreloadPath $ \masterServer -> do
     case buildSteps of
       [] -> putStrLn "Empty makefile, done nothing..."
       (buildStep:_) -> need masterServer "First target in Makefile" $ take 1 (buildStepOutputs buildStep)
