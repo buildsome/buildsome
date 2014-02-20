@@ -1,4 +1,4 @@
-example/a:
+example/a: example/a.o
 	gcc -o example/a example/a.o -g -Wall
 
 example/a.o:

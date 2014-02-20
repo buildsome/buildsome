@@ -37,6 +37,7 @@ type CmdId = BS.ByteString
 
 data BuildStep = BuildStep
   { buildStepOutputs :: [FilePath]
+  , buildStepInputHints :: [FilePath]
   , buildStepCmds :: [String]
   }
 
@@ -111,7 +112,7 @@ serve masterServer conn = do
       recvLoop_ 8192 (handleMsg cmd slave . Protocol.parseMsg) conn
     handleMsg cmd slave msg = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
-      let BuildStep outputPaths _cmds = slaveBuildStep slave
+      let outputPaths = buildStepOutputs (slaveBuildStep slave)
           reason = Protocol.showFunc msg ++ " done by " ++ show cmd
           pauseToBuild path = needAndGo masterServer reason path conn
           verifyLegalOutput fullPath = do
@@ -219,7 +220,10 @@ need masterServer reason paths = do
   slaves <- concat <$> mapM mkSlaves paths
   traverse_ slaveWait slaves
   where
-    mkSlave nuancedReason = makeSlaveForRepPath masterServer nuancedReason
+    mkSlave nuancedReason (outPathRep, buildStep) = do
+      need masterServer ("Hint from: " ++ show outPathRep)
+        (buildStepInputHints buildStep)
+      makeSlaveForRepPath masterServer nuancedReason outPathRep buildStep
     mkSlaves path = do
       mSlave <-
         traverse (mkSlave reason) $
@@ -228,8 +232,8 @@ need masterServer reason paths = do
       childSlaves <- traverse (mkSlave (reason ++ "(Container directory)")) children
       return (maybeToList mSlave ++ childSlaves)
 
-makeSlaveForRepPath :: MasterServer -> Reason -> (FilePath, BuildStep) -> IO Slave
-makeSlaveForRepPath masterServer reason (outPathRep, buildStep) = do
+makeSlaveForRepPath :: MasterServer -> Reason -> FilePath -> BuildStep -> IO Slave
+makeSlaveForRepPath masterServer reason outPathRep buildStep = do
   newSlaveMVar <- newEmptyMVar
   E.mask $ \restoreMask -> do
     getSlave <-
@@ -282,10 +286,10 @@ shellCmdVerify inheritEnvs newEnvs cmd = do
         BS.putStr bs
 
 buildStepFromTarget :: Target -> BuildStep
-buildStepFromTarget (Target outputPaths _inputHints cmds) =
+buildStepFromTarget (Target outputPaths inputHints cmds) =
   BuildStep
   { buildStepOutputs = outputPaths
--- TODO:  , buildStepInputHints = inputHints
+  , buildStepInputHints = inputHints
   , buildStepCmds = cmds
   }
 
