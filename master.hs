@@ -13,7 +13,7 @@ import Data.Maybe (maybeToList)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
-import Lib.Process (getOutputs)
+import Lib.Process (getOutputs, Env)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Directory (canonicalizePath, makeRelativeToCurrentDirectory)
@@ -31,21 +31,20 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 
 type Reason = String
-type SlaveId = BS.ByteString
+type CmdId = BS.ByteString
 
 data BuildStep = BuildStep
   { buildStepOutputs :: [FilePath]
-  , buildStepCmd :: String
+  , buildStepCmds :: [String]
   }
 
 data Slave = Slave
-  { _slaveIdentifier :: SlaveId
-  , slaveBuildStep :: BuildStep
+  { slaveBuildStep :: BuildStep
   , slaveExecution :: Async ()
   }
 
 data MasterServer = MasterServer
-  { masterSlaveBySlaveId :: IORef (Map SlaveId (MVar Slave))
+  { masterRunningCmds :: IORef (Map CmdId (String, MVar Slave))
   , masterSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
   , masterAddress :: FilePath -- unix socket server
   , masterLdPreloadPath :: FilePath
@@ -65,8 +64,8 @@ sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 localSemSignal :: MSem Int -> IO a -> IO a
 localSemSignal sem = E.bracket_ (MSem.signal sem) (MSem.wait sem)
 
-needAndGo :: MasterServer -> Reason -> String -> FilePath -> Socket -> IO ()
-needAndGo masterServer reason _cmd path conn = do
+needAndGo :: MasterServer -> Reason -> FilePath -> Socket -> IO ()
+needAndGo masterServer reason path conn = do
   -- Temporarily paused, so we can temporarily release semaphore
   localSemSignal (masterSemaphore masterServer) $ do
 --    putStrLn $ unwords ["-", show reason, show cmd]
@@ -85,34 +84,34 @@ serve masterServer conn = do
   helloLine <- SockBS.recv conn 1024
   case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
     Nothing -> fail $ "Bad connection started with: " ++ show helloLine
-    Just pidSlaveId -> do
-      buildStepOfSlaveId <- readIORef (masterSlaveBySlaveId masterServer)
-      case M.lookup slaveId buildStepOfSlaveId of
+    Just pidCmdId -> do
+      runningCmds <- readIORef (masterRunningCmds masterServer)
+      case M.lookup cmdId runningCmds of
         Nothing -> do
-          let slaveIds = M.keys buildStepOfSlaveId
-          fail $ "Bad slave id: " ++ show slaveId ++ " mismatches all: " ++ show slaveIds
-        Just slaveMVar -> do
+          let cmdIds = M.keys runningCmds
+          fail $ "Bad slave id: " ++ show cmdId ++ " mismatches all: " ++ show cmdIds
+        Just (cmd, slaveMVar) -> do
           slave <- readMVar slaveMVar
           -- putStrLn $ concat
-          --   [ "Got connection from ", BS.unpack slaveId
+          --   [ "Got connection from ", BS.unpack cmdId
           --   , " (", show (buildStepCmd (slaveBuildStep slave)), show pid, ":", show tid, ")"
           --   ]
-          handleSlaveConnection slave
+          handleSlaveConnection cmd slave
             `E.catch` \e@E.SomeException{} -> cancelWith (slaveExecution slave) e
       where
-        [_pidStr, _tidStr, slaveId] = BS.split ':' pidSlaveId
+        [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
         -- getPid :: BS.ByteString -> Int
         -- getPid = read . BS.unpack
         -- pid = getPid pidStr
         -- tid = getPid tidStr
   where
-    handleSlaveConnection slave =
-      recvLoop_ 8192 (handleMsg slave . Protocol.parseMsg) conn
-    handleMsg slave msg = do
+    handleSlaveConnection cmd slave =
+      recvLoop_ 8192 (handleMsg cmd slave . Protocol.parseMsg) conn
+    handleMsg cmd slave msg = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
-      let BuildStep outputPaths cmd = slaveBuildStep slave
+      let BuildStep outputPaths _cmds = slaveBuildStep slave
           reason = Protocol.showFunc msg ++ " done by " ++ show cmd
-          pauseToBuild path = needAndGo masterServer reason cmd path conn
+          pauseToBuild path = needAndGo masterServer reason path conn
           verifyLegalOutput fullPath = do
             path <- makeRelativeToCurrentDirectory fullPath
             when (path `notElem` outputPaths &&
@@ -166,7 +165,7 @@ toBuildMap buildSteps = (buildMap, childrenMap)
 
 withServer :: Int -> [BuildStep] -> FilePath -> (MasterServer -> IO a) -> IO a
 withServer parallelCount buildSteps ldPreloadPath body = do
-  buildStepOfSlaveId <- newIORef M.empty
+  runningCmds <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
@@ -176,7 +175,7 @@ withServer parallelCount buildSteps ldPreloadPath body = do
     (buildMap, childrenMap) = toBuildMap buildSteps
     server =
       MasterServer
-      { masterSlaveBySlaveId = buildStepOfSlaveId
+      { masterRunningCmds = runningCmds
       , masterSlaveByRepPath = slaveMapByRepPath
       , masterAddress = serverFilename
       , masterLdPreloadPath = ldPreloadPath
@@ -211,11 +210,11 @@ getLdPreloadPath = do
 
 exampleBuildSteps :: [BuildStep]
 exampleBuildSteps =
-  [ BuildStep ["example/a"] "gcc -o example/a example/a.o -g -Wall"
-  , BuildStep ["example/a.o"] "gcc -c -o example/a.o example/a.c -g -Wall"
-  , BuildStep ["example/auto.h"] "python example/generate.py"
-  , BuildStep ["example/subdir.list"] "ls -l example/subdir > example/subdir.list"
-  , BuildStep ["example/subdir/a"] "echo hi > example/subdir/a"
+  [ BuildStep ["example/a"] ["gcc -o example/a example/a.o -g -Wall"]
+  , BuildStep ["example/a.o"] ["gcc -c -o example/a.o example/a.c -g -Wall"]
+  , BuildStep ["example/auto.h"] ["python example/generate.py"]
+  , BuildStep ["example/subdir.list"] ["ls -l example/subdir > example/subdir.list"]
+  , BuildStep ["example/subdir/a"] ["echo hi > example/subdir/a"]
   ]
 
 nextJobId :: MasterServer -> IO Int
@@ -238,49 +237,56 @@ need masterServer reason paths = do
 
 makeSlaveForRepPath :: MasterServer -> Reason -> (FilePath, BuildStep) -> IO Slave
 makeSlaveForRepPath masterServer reason (outPathRep, buildStep) = do
-  jobId <- nextJobId masterServer
-  let slaveId = BS.pack ("job" ++ show jobId)
   newSlaveMVar <- newEmptyMVar
   E.mask $ \restoreMask -> do
     getSlave <-
       atomicModifyIORef (masterSlaveByRepPath masterServer) $
       \oldSlaveMap ->
       case M.lookup outPathRep oldSlaveMap of
-      Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave slaveId restoreMask newSlaveMVar)
+      Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave restoreMask newSlaveMVar)
       Just slaveMVar ->
         ( oldSlaveMap
         , do
-            putStrLn $ concat [reason, ": Slave for ", outPathRep, "(", cmd, ") already spawned"]
+            putStrLn $ concat [reason, ": Slave for ", outPathRep, show (take 1 cmds), " already spawned"]
             readMVar slaveMVar
         )
     getSlave
   where
-    cmd = buildStepCmd buildStep
+    cmds = buildStepCmds buildStep
+    spawnSlave restoreMask mvar = do
+      execution <-
+        async . restoreMask . MSem.with (masterSemaphore masterServer) $
+        mapM_ (runCmd mvar) cmds
+      let slave = Slave buildStep execution
+      putMVar mvar slave
+      return slave
+    runCmd mvar cmd = do
+      cmdIdNum <- nextJobId masterServer
+      let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
+      putStrLn $ concat ["{ ", show cmdId, " ", show cmd, ": ", reason]
+      atomicModifyIORef_ (masterRunningCmds masterServer) $ M.insert cmdId (cmd, mvar)
+      shellCmdVerify ["HOME", "PATH"] (envs cmdId) cmd
+      putStrLn $ concat ["} ", show cmdId, " ", show cmd]
+    envs cmdId =
+        [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
+        , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
+        , ("EFBUILD_CMD_ID", BS.unpack cmdId)
+        ]
+
+shellCmdVerify :: [String] -> Env -> String -> IO ()
+shellCmdVerify inheritEnvs newEnvs cmd = do
+  (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) inheritEnvs newEnvs
+  showOutput "STDOUT" stdout
+  showOutput "STDERR" stderr
+  case exitCode of
+    ExitFailure {} -> fail $ concat [show cmd, " failed!"]
+    _ -> return ()
+  where
     showOutput name bs
       | BS.null bs = return ()
       | otherwise = do
         putStrLn (name ++ ":")
         BS.putStr bs
-
-    spawnSlave slaveId restoreMask mvar = do
-      atomicModifyIORef_ (masterSlaveBySlaveId masterServer) $ M.insert slaveId mvar
-      execution <- async . restoreMask . MSem.with (masterSemaphore masterServer) $ do
-        putStrLn $ concat ["{ ", show slaveId, " ", show cmd, ": ", reason]
-        (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) ["HOME", "PATH"] (envs slaveId)
-        putStrLn $ concat ["} ", show slaveId, " ", show cmd]
-        showOutput "STDOUT" stdout
-        showOutput "STDERR" stderr
-        case exitCode of
-          ExitFailure {} -> fail $ concat [show cmd, " failed!"]
-          _ -> return ()
-      let slave = Slave slaveId buildStep execution
-      putMVar mvar slave
-      return slave
-    envs slaveId =
-        [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
-        , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
-        , ("EFBUILD_SLAVE_ID", BS.unpack slaveId)
-        ]
 
 main :: IO ()
 main = do

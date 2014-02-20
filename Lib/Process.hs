@@ -1,4 +1,4 @@
-module Lib.Process (getOutputs) where
+module Lib.Process (getOutputs, Env) where
 
 import Control.Concurrent.Async
 import Control.Monad

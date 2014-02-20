@@ -41,7 +41,7 @@ static int connect_master(void)
     char *env_sockaddr = getenv(PREFIX "MASTER_UNIX_SOCKADDR");
     ASSERT(env_sockaddr);
 
-    char *env_slave_id = getenv(PREFIX "SLAVE_ID");
+    char *env_slave_id = getenv(PREFIX "CMD_ID");
     ASSERT(env_slave_id);
 
     struct sockaddr_un addr = {
