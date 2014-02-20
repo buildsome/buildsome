@@ -1,12 +1,16 @@
 {-# OPTIONS -Wall -O2 #-}
+import Control.Applicative ((<$>))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async
+import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
 import Control.Monad
 import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Map (Map)
+import Data.Maybe (maybeToList)
+import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Process (getOutputs)
@@ -18,6 +22,7 @@ import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
 import System.Process
+import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
@@ -33,7 +38,7 @@ data BuildStep = BuildStep
   }
 
 data Slave = Slave
-  { _slaveId :: SlaveId
+  { slaveIdentifier :: SlaveId
   , slaveBuildStep :: BuildStep
   , slaveExecution :: Async ()
   }
@@ -46,6 +51,7 @@ data MasterServer = MasterServer
   , masterBuildMap :: Map FilePath (FilePath, BuildStep) -- output paths -> min(representative) path and original spec
   , masterChildrenMap :: Map FilePath [(FilePath, BuildStep)] -- parent/dir paths -> all build steps that build directly into it
   , masterCurJobId :: IORef Int
+  , masterSemaphore :: MSem Int
   }
 
 slaveWait :: Slave -> IO ()
@@ -54,9 +60,17 @@ slaveWait = wait . slaveExecution
 sendGo :: Socket -> IO ()
 sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 
-needAndGo :: MasterServer -> FilePath -> Socket -> IO ()
-needAndGo masterServer path conn = do
-  need masterServer path
+-- | Opposite of MSem.with
+localSemSignal :: MSem Int -> IO a -> IO a
+localSemSignal sem = E.bracket_ (MSem.signal sem) (MSem.wait sem)
+
+needAndGo :: MasterServer -> SlaveId -> String -> FilePath -> Socket -> IO ()
+needAndGo masterServer _slaveId _cmd path conn = do
+  -- Temporarily paused, so we can temporarily release semaphore
+  localSemSignal (masterSemaphore masterServer) $ do
+--    putStrLn $ unwords ["-", show slaveId, show cmd]
+    need masterServer [path]
+--  putStrLn $ unwords ["+", show slaveId, show cmd]
   sendGo conn
 
 allowedUnspecifiedOutput :: FilePath -> Bool
@@ -96,7 +110,7 @@ serve masterServer conn = do
     handleMsg slave msg = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
       let BuildStep outputPaths cmd = slaveBuildStep slave
-          pauseToBuild path = needAndGo masterServer path conn
+          pauseToBuild path = needAndGo masterServer (slaveIdentifier slave) cmd path conn
           verifyLegalOutput fullPath = do
             path <- makeRelativeToCurrentDirectory fullPath
             when (path `notElem` outputPaths &&
@@ -148,13 +162,14 @@ toBuildMap buildSteps = (buildMap, childrenMap)
       [ (outputPath, pair buildStep)
       | (outputPath, buildStep) <- outputs ]
 
-withServer :: [BuildStep] -> FilePath -> (MasterServer -> IO a) -> IO a
-withServer buildSteps ldPreloadPath body = do
+withServer :: Int -> [BuildStep] -> FilePath -> (MasterServer -> IO a) -> IO a
+withServer parallelCount buildSteps ldPreloadPath body = do
   buildStepOfSlaveId <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
   curJobId <- newIORef 0
+  semaphore <- MSem.new parallelCount
   let
     (buildMap, childrenMap) = toBuildMap buildSteps
     server =
@@ -166,6 +181,7 @@ withServer buildSteps ldPreloadPath body = do
       , masterBuildMap = buildMap
       , masterChildrenMap = childrenMap
       , masterCurJobId = curJobId
+      , masterSemaphore = semaphore
       }
 
   withUnixSeqPacketListener serverFilename $ \listener -> do
@@ -204,31 +220,34 @@ nextJobId :: MasterServer -> IO Int
 nextJobId masterServer =
   atomicModifyIORef (masterCurJobId masterServer) $ \oldJobId -> (oldJobId+1, oldJobId)
 
-need :: MasterServer -> FilePath -> IO ()
-need masterServer path = do
-  traverse_ mkSlave $ M.lookup path (masterBuildMap masterServer)
-  let children = M.findWithDefault [] path (masterChildrenMap masterServer)
-  traverse_ mkSlave children
+need :: MasterServer -> [FilePath] -> IO ()
+need masterServer paths = do
+  slaves <- concat <$> mapM mkSlaves paths
+  traverse_ slaveWait slaves
   where
     mkSlave = makeSlaveForRepPath masterServer
+    mkSlaves path = do
+      mSlave <- traverse mkSlave $ M.lookup path (masterBuildMap masterServer)
+      let children = M.findWithDefault [] path (masterChildrenMap masterServer)
+      childSlaves <- traverse mkSlave children
+      return (maybeToList mSlave ++ childSlaves)
 
-makeSlaveForRepPath :: MasterServer -> (FilePath, BuildStep) -> IO ()
+makeSlaveForRepPath :: MasterServer -> (FilePath, BuildStep) -> IO Slave
 makeSlaveForRepPath masterServer (outPathRep, buildStep) = do
   jobId <- nextJobId masterServer
   let slaveId = BS.pack ("job" ++ show jobId)
   newSlaveMVar <- newEmptyMVar
-  slave <- E.mask $ \restore -> do
+  E.mask $ \restoreMask -> do
     getSlave <-
       atomicModifyIORef (masterSlaveByRepPath masterServer) $
       \oldSlaveMap ->
       case M.lookup outPathRep oldSlaveMap of
-      Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave slaveId restore newSlaveMVar)
+      Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave slaveId restoreMask newSlaveMVar)
       Just slaveMVar ->
         ( oldSlaveMap
         , putStrLn ("Slave for " ++ outPathRep ++ "(" ++ cmd ++ ") already spawned") >> readMVar slaveMVar
         )
     getSlave
-  slaveWait slave
   where
     cmd = buildStepCmd buildStep
     showOutput name bs
@@ -237,12 +256,12 @@ makeSlaveForRepPath masterServer (outPathRep, buildStep) = do
         putStrLn (name ++ ":")
         BS.putStr bs
 
-    spawnSlave slaveId restore mvar = do
-      putStrLn $ unwords [show cmd, "spawning as", show slaveId]
+    spawnSlave slaveId restoreMask mvar = do
       atomicModifyIORef_ (masterSlaveBySlaveId masterServer) $ M.insert slaveId mvar
-      execution <- async . restore $ do
+      execution <- async . restoreMask . MSem.with (masterSemaphore masterServer) $ do
+        putStrLn $ unwords ["{", show slaveId, show cmd]
         (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) ["HOME", "PATH"] (envs slaveId)
-        putStrLn $ concat [show cmd, " completed"]
+        putStrLn $ unwords ["}", show slaveId, show cmd]
         showOutput "STDOUT" stdout
         showOutput "STDERR" stderr
         case exitCode of
@@ -260,7 +279,6 @@ makeSlaveForRepPath masterServer (outPathRep, buildStep) = do
 main :: IO ()
 main = do
   ldPreloadPath <- getLdPreloadPath
-  withServer exampleBuildSteps ldPreloadPath $ \masterServer -> do
-    need masterServer "example/a"
-    need masterServer "example/subdir.list"
+  withServer 2 exampleBuildSteps ldPreloadPath $ \masterServer -> do
+    need masterServer ["example/a", "example/subdir.list"]
     threadDelay 100000
