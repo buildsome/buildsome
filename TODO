@@ -1,0 +1,22 @@
+* Local database in sqlite?
+
+  * TABLE MTimeContents:
+
+    path    mtime    sha1
+
+    TABLE ExecutionLogCmds:
+
+    ID cmdline
+
+    TABLE ExecutionLogInputs
+    ID outputpath (many) inputpaths
+    
+
+* Need to have the semaphore wait scheduler prefer waiters that are
+  being waited for by many dependents, over waiters that just want to
+  spawn new commands.  i.e: Prefer to finish stuff than start stuff
+
+  * There are only 2 interesting priorities: Normal (needed by hints),
+    FSHook (needed by a memory-consuming process). We could have more
+    fine grained priorities by measuring how much resources are held
+    in memory.
