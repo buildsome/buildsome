@@ -35,14 +35,8 @@ import qualified Network.Socket.ByteString as SockBS
 type Reason = String
 type CmdId = BS.ByteString
 
-data BuildStep = BuildStep
-  { buildStepOutputs :: [FilePath]
-  , buildStepInputHints :: [FilePath]
-  , buildStepCmds :: [String]
-  }
-
 data Slave = Slave
-  { slaveBuildStep :: BuildStep
+  { slaveTarget :: Target
   , slaveExecution :: Async ()
   }
 
@@ -51,8 +45,8 @@ data MasterServer = MasterServer
   , masterSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
   , masterAddress :: FilePath -- unix socket server
   , masterLdPreloadPath :: FilePath
-  , masterBuildMap :: Map FilePath (FilePath, BuildStep) -- output paths -> min(representative) path and original spec
-  , masterChildrenMap :: Map FilePath [(FilePath, BuildStep)] -- parent/dir paths -> all build steps that build directly into it
+  , masterBuildMap :: Map FilePath (FilePath, Target) -- output paths -> min(representative) path and original spec
+  , masterChildrenMap :: Map FilePath [(FilePath, Target)] -- parent/dir paths -> all build steps that build directly into it
   , masterCurJobId :: IORef Int
   , masterSemaphore :: MSem Int -- ^ Restricts parallelism
   }
@@ -112,7 +106,7 @@ serve masterServer conn = do
       recvLoop_ 8192 (handleMsg cmd slave . Protocol.parseMsg) conn
     handleMsg cmd slave msg = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
-      let outputPaths = buildStepOutputs (slaveBuildStep slave)
+      let outputPaths = targetOutputPaths (slaveTarget slave)
           reason = Protocol.showFunc msg ++ " done by " ++ show cmd
           pauseToBuild path = needAndGo masterServer reason path conn
           verifyLegalOutput fullPath = do
@@ -145,29 +139,29 @@ serve masterServer conn = do
         Protocol.ReadLink path -> pauseToBuild path
 
 toBuildMap ::
-  [BuildStep] ->
-  ( Map FilePath (FilePath, BuildStep)
-  , Map FilePath [(FilePath, BuildStep)]
+  [Target] ->
+  ( Map FilePath (FilePath, Target)
+  , Map FilePath [(FilePath, Target)]
   )
-toBuildMap buildSteps = (buildMap, childrenMap)
+toBuildMap targets = (buildMap, childrenMap)
   where
     outputs =
-      [ (outputPath, buildStep)
-      | buildStep <- buildSteps
-      , outputPath <- buildStepOutputs buildStep
+      [ (outputPath, target)
+      | target <- targets
+      , outputPath <- targetOutputPaths target
       ]
-    pair buildStep = (minimum (buildStepOutputs buildStep), buildStep)
+    pair target = (minimum (targetOutputPaths target), target)
     childrenMap =
       M.fromListWith (++)
-      [ (takeDirectory outputPath, [pair buildStep])
-      | (outputPath, buildStep) <- outputs ]
+      [ (takeDirectory outputPath, [pair target])
+      | (outputPath, target) <- outputs ]
     buildMap =
       M.fromListWith (error "Overlapping output paths")
-      [ (outputPath, pair buildStep)
-      | (outputPath, buildStep) <- outputs ]
+      [ (outputPath, pair target)
+      | (outputPath, target) <- outputs ]
 
-withServer :: Int -> [BuildStep] -> FilePath -> (MasterServer -> IO a) -> IO a
-withServer parallelCount buildSteps ldPreloadPath body = do
+withServer :: Int -> [Target] -> FilePath -> (MasterServer -> IO a) -> IO a
+withServer parallelCount targets ldPreloadPath body = do
   runningCmds <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   masterPid <- getProcessID
@@ -175,7 +169,7 @@ withServer parallelCount buildSteps ldPreloadPath body = do
   curJobId <- newIORef 0
   semaphore <- MSem.new parallelCount
   let
-    (buildMap, childrenMap) = toBuildMap buildSteps
+    (buildMap, childrenMap) = toBuildMap targets
     server =
       MasterServer
       { masterRunningCmds = runningCmds
@@ -220,10 +214,10 @@ need masterServer reason paths = do
   slaves <- concat <$> mapM mkSlaves paths
   traverse_ slaveWait slaves
   where
-    mkSlave nuancedReason (outPathRep, buildStep) = do
+    mkSlave nuancedReason (outPathRep, target) = do
       need masterServer ("Hint from: " ++ show outPathRep)
-        (buildStepInputHints buildStep)
-      makeSlaveForRepPath masterServer nuancedReason outPathRep buildStep
+        (targetInputHints target)
+      makeSlaveForRepPath masterServer nuancedReason outPathRep target
     mkSlaves path = do
       mSlave <-
         traverse (mkSlave reason) $
@@ -232,8 +226,8 @@ need masterServer reason paths = do
       childSlaves <- traverse (mkSlave (reason ++ "(Container directory)")) children
       return (maybeToList mSlave ++ childSlaves)
 
-makeSlaveForRepPath :: MasterServer -> Reason -> FilePath -> BuildStep -> IO Slave
-makeSlaveForRepPath masterServer reason outPathRep buildStep = do
+makeSlaveForRepPath :: MasterServer -> Reason -> FilePath -> Target -> IO Slave
+makeSlaveForRepPath masterServer reason outPathRep target = do
   newSlaveMVar <- newEmptyMVar
   E.mask $ \restoreMask -> do
     getSlave <-
@@ -249,12 +243,12 @@ makeSlaveForRepPath masterServer reason outPathRep buildStep = do
         )
     getSlave
   where
-    cmds = buildStepCmds buildStep
+    cmds = targetCmds target
     spawnSlave restoreMask mvar = do
       execution <-
         async . restoreMask . MSem.with (masterSemaphore masterServer) $
         mapM_ (runCmd mvar) cmds
-      let slave = Slave buildStep execution
+      let slave = Slave target execution
       putMVar mvar slave
       return slave
     runCmd mvar cmd = do
@@ -285,14 +279,6 @@ shellCmdVerify inheritEnvs newEnvs cmd = do
         putStrLn (name ++ ":")
         BS.putStr bs
 
-buildStepFromTarget :: Target -> BuildStep
-buildStepFromTarget (Target outputPaths inputHints cmds) =
-  BuildStep
-  { buildStepOutputs = outputPaths
-  , buildStepInputHints = inputHints
-  , buildStepCmds = cmds
-  }
-
 parseGivenMakefile :: IO Makefile
 parseGivenMakefile = do
   progName <- getProgName
@@ -308,12 +294,12 @@ parseGivenMakefile = do
 main :: IO ()
 main = do
   makefile <- parseGivenMakefile
-  let buildSteps = map buildStepFromTarget (makefileTargets makefile)
+  let targets = makefileTargets makefile
   ldPreloadPath <- getLdPreloadPath
-  withServer 2 buildSteps ldPreloadPath $ \masterServer -> do
-    case buildSteps of
+  withServer 2 targets ldPreloadPath $ \masterServer -> do
+    case targets of
       [] -> putStrLn "Empty makefile, done nothing..."
-      (buildStep:_) -> need masterServer "First target in Makefile" $ take 1 (buildStepOutputs buildStep)
+      (target:_) -> need masterServer "First target in Makefile" $ take 1 (targetOutputPaths target)
     -- Yucky way to try and guarantee that listener is done receiving
     -- all connections (may arrive even after ExitSuccess(?))
 
