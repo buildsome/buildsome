@@ -92,7 +92,7 @@ serve masterServer conn = do
           --   [ "Got connection from ", BS.unpack cmdId
           --   , " (", show pid, ":", show tid, ")"
           --   ]
-          handleSlaveConnection cmd slave
+          handleSlaveConnection masterServer conn cmd slave
             `E.catch` \e@E.SomeException{} -> cancelWith (slaveExecution slave) e
       where
         [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
@@ -100,13 +100,15 @@ serve masterServer conn = do
         -- getPid = read . BS.unpack
         -- pid = getPid pidStr
         -- tid = getPid tidStr
+
+handleSlaveConnection :: Show a => MasterServer -> Socket -> a -> Slave -> IO ()
+handleSlaveConnection masterServer conn cmd slave = do
+  -- This lets us know for sure that by the time the slave dies,
+  -- we've seen its connection
+  sendGo conn
+  recvLoop_ 8192 (handleMsg . Protocol.parseMsg) conn
   where
-    handleSlaveConnection cmd slave = do
-      -- This lets us know for sure that by the time the slave dies,
-      -- we've seen its connection
-      sendGo conn
-      recvLoop_ 8192 (handleMsg cmd slave . Protocol.parseMsg) conn
-    handleMsg cmd slave msg = do
+    handleMsg msg = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
       let outputPaths = targetOutputPaths (slaveTarget slave)
           reason = Protocol.showFunc msg ++ " done by " ++ show cmd
