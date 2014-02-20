@@ -1,16 +1,15 @@
-* Local database in sqlite?
+* (UNIQUE_KEY(Path), mtime, chash) -- path queries/updates
 
-  * TABLE MTimeContents:
+  * When to GC this? When the path is deleted
 
-    path    mtime    sha1
+* Delete outputs when they are no longer defined by the Makefile,
+  regardless of whether they're in the build now?
 
-    TABLE ExecutionLogCmds:
+  * What about dynamically generated outputs?
 
-    ID cmdline
+* Execution log: (UNIQUE_KEY(CMD), [(InputFileName, InputCHash)], [(OutputFileName, OutputCHash)])
 
-    TABLE ExecutionLogInputs
-    ID outputpath (many) inputpaths
-    
+----------------------
 
 * Need to have the semaphore wait scheduler prefer waiters that are
   being waited for by many dependents, over waiters that just want to

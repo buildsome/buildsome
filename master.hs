@@ -13,15 +13,13 @@ import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Makefile (Makefile(..), Target(..), makefileParser)
-import Lib.Process (getOutputs, Env)
+import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Directory (canonicalizePath, makeRelativeToCurrentDirectory)
 import System.Environment (getProgName, getArgs)
-import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
-import System.Process
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Data.Attoparsec.ByteString.Char8 as P
@@ -249,21 +247,6 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
         , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
         , ("EFBUILD_CMD_ID", BS.unpack cmdId)
         ]
-
-shellCmdVerify :: [String] -> Env -> String -> IO ()
-shellCmdVerify inheritEnvs newEnvs cmd = do
-  (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) inheritEnvs newEnvs
-  showOutput "STDOUT" stdout
-  showOutput "STDERR" stderr
-  case exitCode of
-    ExitFailure {} -> fail $ concat [show cmd, " failed!"]
-    _ -> return ()
-  where
-    showOutput name bs
-      | BS.null bs = return ()
-      | otherwise = do
-        putStrLn (name ++ ":")
-        BS.putStr bs
 
 parseGivenMakefile :: IO Makefile
 parseGivenMakefile = do
