@@ -13,17 +13,19 @@ import Data.Maybe (maybeToList)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
+import Lib.Makefile (Makefile(..), Target(..), makefileParser)
 import Lib.Process (getOutputs, Env)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import System.Directory (canonicalizePath, makeRelativeToCurrentDirectory)
-import System.Environment (getProgName)
+import System.Environment (getProgName, getArgs)
 import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
 import System.Process
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
+import qualified Data.Attoparsec.ByteString.Char8 as P
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
 import qualified Lib.Protocol as Protocol
@@ -68,9 +70,9 @@ needAndGo :: MasterServer -> Reason -> FilePath -> Socket -> IO ()
 needAndGo masterServer reason path conn = do
   -- Temporarily paused, so we can temporarily release semaphore
   localSemSignal (masterSemaphore masterServer) $ do
---    putStrLn $ unwords ["-", show reason, show cmd]
+--    putStrLn $ unwords ["-", show reason]
     need masterServer reason [path]
---  putStrLn $ unwords ["+", show reason, show cmd]
+--  putStrLn $ unwords ["+", show reason]
   sendGo conn
 
 allowedUnspecifiedOutput :: FilePath -> Bool
@@ -94,7 +96,7 @@ serve masterServer conn = do
           slave <- readMVar slaveMVar
           -- putStrLn $ concat
           --   [ "Got connection from ", BS.unpack cmdId
-          --   , " (", show (buildStepCmd (slaveBuildStep slave)), show pid, ":", show tid, ")"
+          --   , " (", show pid, ":", show tid, ")"
           --   ]
           handleSlaveConnection cmd slave
             `E.catch` \e@E.SomeException{} -> cancelWith (slaveExecution slave) e
@@ -208,15 +210,6 @@ getLdPreloadPath = do
   progName <- getProgName
   canonicalizePath (takeDirectory progName </> "fs_override.so")
 
-exampleBuildSteps :: [BuildStep]
-exampleBuildSteps =
-  [ BuildStep ["example/a"] ["gcc -o example/a example/a.o -g -Wall"]
-  , BuildStep ["example/a.o"] ["gcc -c -o example/a.o example/a.c -g -Wall"]
-  , BuildStep ["example/auto.h"] ["python example/generate.py"]
-  , BuildStep ["example/subdir.list"] ["ls -l example/subdir > example/subdir.list"]
-  , BuildStep ["example/subdir/a"] ["echo hi > example/subdir/a"]
-  ]
-
 nextJobId :: MasterServer -> IO Int
 nextJobId masterServer =
   atomicModifyIORef (masterCurJobId masterServer) $ \oldJobId -> (oldJobId+1, oldJobId)
@@ -288,9 +281,39 @@ shellCmdVerify inheritEnvs newEnvs cmd = do
         putStrLn (name ++ ":")
         BS.putStr bs
 
+buildStepFromTarget :: Target -> BuildStep
+buildStepFromTarget (Target outputPaths _inputHints cmds) =
+  BuildStep
+  { buildStepOutputs = outputPaths
+-- TODO:  , buildStepInputHints = inputHints
+  , buildStepCmds = cmds
+  }
+
+parseGivenMakefile :: IO Makefile
+parseGivenMakefile = do
+  progName <- getProgName
+  args <- getArgs
+  case args of
+    [makefileName] -> do
+      parseResult <- P.parseOnly makefileParser <$> BS.readFile makefileName
+      case parseResult of
+        Left err -> fail $ "Makefile parse error: " ++ err
+        Right makefile -> return makefile
+    _ -> fail $ "Usage: " ++ progName ++ " <makefilepath>"
+
 main :: IO ()
 main = do
+  makefile <- parseGivenMakefile
+  let buildSteps = map buildStepFromTarget (makefileTargets makefile)
   ldPreloadPath <- getLdPreloadPath
-  withServer 1 exampleBuildSteps ldPreloadPath $ \masterServer -> do
-    need masterServer "Top-level requested" ["example/a", "example/subdir.list"]
+  withServer 1 buildSteps ldPreloadPath $ \masterServer -> do
+    case buildSteps of
+      [] -> putStrLn "Empty makefile, done nothing..."
+      (buildStep:_) -> need masterServer "First target in Makefile" $ take 1 (buildStepOutputs buildStep)
+    -- Yucky way to try and guarantee that listener is done receiving
+    -- all connections (may arrive even after ExitSuccess(?))
+
+    -- TODO: Can use a round-trip from C side for the first call, that
+    -- guarantees that exit() implies all connections already exist so
+    -- here we can wait for all connections to die!
     threadDelay 100000

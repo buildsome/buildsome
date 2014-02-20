@@ -1,7 +1,7 @@
 module Lib.Makefile
   ( Target(..)
   , Makefile(..)
-  , makefile
+  , makefileParser
   ) where
 
 import Control.Applicative
@@ -9,13 +9,13 @@ import qualified Data.Attoparsec.ByteString.Char8 as P
 import qualified Data.ByteString.Char8 as BS
 
 data Target = Target
-  { outputPaths :: [FilePath]
-  , inputHints :: [FilePath]
-  , cmds :: [String]
+  { targetOutputPaths :: [FilePath]
+  , targetInputHints :: [FilePath]
+  , targetCmds :: [String]
   } deriving (Show)
 
 newtype Makefile = Makefile
-  { targets :: [Target] }
+  { makefileTargets :: [Target] }
   deriving (Show)
 
 isSeparator :: Char -> Bool
@@ -44,11 +44,11 @@ target = do
   cmdLines <- filter (not . BS.null) <$> many cmdLine
   let unpack = map BS.unpack
   return Target
-    { outputPaths = unpack outputPaths
-    , inputHints = unpack inputPaths
-    , cmds = unpack cmdLines
+    { targetOutputPaths = unpack outputPaths
+    , targetInputHints = unpack inputPaths
+    , targetCmds = unpack cmdLines
     }
 
-makefile :: P.Parser Makefile
-makefile =
+makefileParser :: P.Parser Makefile
+makefileParser =
   (Makefile <$> many target) <* P.endOfInput
