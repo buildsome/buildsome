@@ -92,46 +92,54 @@ serve masterServer conn = do
       where
         [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
 
+maxMsgSize :: Int
+maxMsgSize = 8192
+
 handleSlaveConnection :: Show a => MasterServer -> Socket -> a -> Slave -> IO ()
 handleSlaveConnection masterServer conn cmd slave = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   sendGo conn
-  recvLoop_ 8192 (handleMsg . Protocol.parseMsg) conn
+  recvLoop_ maxMsgSize
+    (handleSlaveMsg masterServer conn cmd slave .
+     Protocol.parseMsg) conn
+
+handleSlaveMsg ::
+  Show a =>
+  MasterServer -> Socket -> a -> Slave -> Protocol.Func -> IO ()
+handleSlaveMsg masterServer conn cmd slave msg =
+  case msg of
+  Protocol.Open path Protocol.OpenWriteMode _ -> verifyLegalOutput path
+  Protocol.Open path _ (Protocol.Create _) -> verifyLegalOutput path
+  Protocol.Creat path _ -> verifyLegalOutput path
+  Protocol.Rename a b -> verifyLegalOutput a >> verifyLegalOutput b
+  Protocol.Unlink path -> verifyLegalOutput path
+  Protocol.Truncate path _ -> verifyLegalOutput path
+  Protocol.Chmod path _ -> verifyLegalOutput path
+  Protocol.Chown path _ _ -> verifyLegalOutput path
+  Protocol.MkNod path _ _ -> verifyLegalOutput path -- TODO: Special mkNod handling?
+  Protocol.MkDir path _ -> verifyLegalOutput path
+  Protocol.RmDir path -> verifyLegalOutput path
+
+  Protocol.SymLink target linkPath -> verifyLegalOutput linkPath >> pauseToBuild target
+  Protocol.Link src dest -> verifyLegalOutput dest >> pauseToBuild src
+
+  Protocol.Open path Protocol.OpenReadMode _creationMode -> pauseToBuild path
+  Protocol.Access path _mode -> pauseToBuild path
+  Protocol.Stat path -> pauseToBuild path
+  Protocol.LStat path -> pauseToBuild path
+  Protocol.OpenDir path -> pauseToBuild path
+  Protocol.ReadLink path -> pauseToBuild path
   where
-    handleMsg msg = do
-      -- putStrLn $ "Got " ++ Protocol.showFunc msg
-      let outputPaths = targetOutputPaths (slaveTarget slave)
-          reason = Protocol.showFunc msg ++ " done by " ++ show cmd
-          pauseToBuild path = needAndGo masterServer reason path conn
-          verifyLegalOutput fullPath = do
-            path <- makeRelativeToCurrentDirectory fullPath
-            when (path `notElem` outputPaths &&
-                  not (allowedUnspecifiedOutput path)) $
-              fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
-                            , " (", show outputPaths, ")" ]
-      case msg of
-        Protocol.Open path Protocol.OpenWriteMode _ -> verifyLegalOutput path
-        Protocol.Open path _ (Protocol.Create _) -> verifyLegalOutput path
-        Protocol.Creat path _ -> verifyLegalOutput path
-        Protocol.Rename a b -> verifyLegalOutput a >> verifyLegalOutput b
-        Protocol.Unlink path -> verifyLegalOutput path
-        Protocol.Truncate path _ -> verifyLegalOutput path
-        Protocol.Chmod path _ -> verifyLegalOutput path
-        Protocol.Chown path _ _ -> verifyLegalOutput path
-        Protocol.MkNod path _ _ -> verifyLegalOutput path -- TODO: Special mkNod handling?
-        Protocol.MkDir path _ -> verifyLegalOutput path
-        Protocol.RmDir path -> verifyLegalOutput path
-
-        Protocol.SymLink target linkPath -> verifyLegalOutput linkPath >> pauseToBuild target
-        Protocol.Link src dest -> verifyLegalOutput dest >> pauseToBuild src
-
-        Protocol.Open path Protocol.OpenReadMode _creationMode -> pauseToBuild path
-        Protocol.Access path _mode -> pauseToBuild path
-        Protocol.Stat path -> pauseToBuild path
-        Protocol.LStat path -> pauseToBuild path
-        Protocol.OpenDir path -> pauseToBuild path
-        Protocol.ReadLink path -> pauseToBuild path
+    outputPaths = targetOutputPaths (slaveTarget slave)
+    reason = Protocol.showFunc msg ++ " done by " ++ show cmd
+    pauseToBuild path = needAndGo masterServer reason path conn
+    verifyLegalOutput fullPath = do
+      path <- makeRelativeToCurrentDirectory fullPath
+      when (path `notElem` outputPaths &&
+            not (allowedUnspecifiedOutput path)) $
+        fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
+                      , " (", show outputPaths, ")" ]
 
 toBuildMap ::
   [Target] ->
