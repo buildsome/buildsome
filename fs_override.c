@@ -68,12 +68,15 @@ static __thread struct {
     int connection_fd;
 } thread_state = {-1, -1};
 
+static void await_go(void);
+
 static int connection(void)
 {
     pid_t pid = getpid();
     if(pid != thread_state.pid) {
         thread_state.connection_fd = connect_master();
         thread_state.pid = pid;
+        await_go();
     }
     return thread_state.connection_fd;
 }

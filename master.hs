@@ -1,6 +1,5 @@
 {-# OPTIONS -Wall -O2 #-}
 import Control.Applicative ((<$>))
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
@@ -102,7 +101,10 @@ serve masterServer conn = do
         -- pid = getPid pidStr
         -- tid = getPid tidStr
   where
-    handleSlaveConnection cmd slave =
+    handleSlaveConnection cmd slave = do
+      -- This lets us know for sure that by the time the slave dies,
+      -- we've seen its connection
+      sendGo conn
       recvLoop_ 8192 (handleMsg cmd slave . Protocol.parseMsg) conn
     handleMsg cmd slave msg = do
       -- putStrLn $ "Got " ++ Protocol.showFunc msg
@@ -300,10 +302,3 @@ main = do
     case targets of
       [] -> putStrLn "Empty makefile, done nothing..."
       (target:_) -> need masterServer "First target in Makefile" $ take 1 (targetOutputPaths target)
-    -- Yucky way to try and guarantee that listener is done receiving
-    -- all connections (may arrive even after ExitSuccess(?))
-
-    -- TODO: Can use a round-trip from C side for the first call, that
-    -- guarantees that exit() implies all connections already exist so
-    -- here we can wait for all connections to die!
-    threadDelay 100000
