@@ -88,18 +88,10 @@ serve masterServer conn = do
           fail $ "Bad slave id: " ++ show cmdId ++ " mismatches all: " ++ show cmdIds
         Just (cmd, slaveMVar) -> do
           slave <- readMVar slaveMVar
-          -- putStrLn $ concat
-          --   [ "Got connection from ", BS.unpack cmdId
-          --   , " (", show pid, ":", show tid, ")"
-          --   ]
           handleSlaveConnection masterServer conn cmd slave
             `E.catch` \e@E.SomeException{} -> cancelWith (slaveExecution slave) e
       where
         [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
-        -- getPid :: BS.ByteString -> Int
-        -- getPid = read . BS.unpack
-        -- pid = getPid pidStr
-        -- tid = getPid tidStr
 
 handleSlaveConnection :: Show a => MasterServer -> Socket -> a -> Slave -> IO ()
 handleSlaveConnection masterServer conn cmd slave = do
