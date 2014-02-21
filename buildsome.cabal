@@ -4,21 +4,42 @@
 name:                buildsome
 version:             0.1.0.0
 synopsis:            Buildsome: The awesome build system
--- description:
+description:         An automatic dependency discovery build system
+                     with a no-false-negative guarantee, speculative
+                     parallelism, and distributed caching of build
+                     outputs
 license:             AllRightsReserved
 license-file:        LICENSE
 author:              Eyal Lotem
 maintainer:          eyal.lotem@gmail.com
--- copyright:
+copyright:           Elastifile (2014)
 category:            Development
 build-type:          Simple
 extra-source-files:  README
 cabal-version:       >=1.10
 
 executable buildsome
-  main-is: Src/master.hs
-  other-modules: 
-  -- other-extensions:
-  build-depends:       base >=4.6 && <4.7, binary >=0.5 && <0.6, containers >=0.5 && <0.6, bytestring >=0.10 && <0.11, network >=2.4 && <2.5, directory >=1.2 && <1.3, async >=2.0 && <2.1, process >=1.1 && <1.2, attoparsec >=0.11 && <0.12
-  -- hs-source-dirs:
+  hs-source-dirs:    Src/
+  main-is:           Buildsome.hs
+  ghc-options:       -threaded
+  other-modules:     Lib.AsyncContext
+               ,     Lib.ByteString
+               ,     Lib.IORef
+               ,     Lib.Makefile
+               ,     Lib.Process
+               ,     Lib.Protocol
+               ,     Lib.Sock
+
+  build-depends:     base >=4.6 && <4.7
+               ,     binary >=0.5 && <0.6
+               ,     containers >=0.5 && <0.6
+               ,     bytestring >=0.10 && <0.11
+               ,     network >=2.4 && <2.5
+               ,     directory >=1.2 && <1.3
+               ,     async >=2.0 && <2.1
+               ,     process >=1.1 && <1.2
+               ,     attoparsec >=0.11 && <0.12
+               ,     SafeSemaphore >= 0.10 && < 0.11
+               ,     unix >= 2.6 && < 2.7
+               ,     filepath >= 1.3 && < 1.4
   default-language:    Haskell2010

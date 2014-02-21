@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include "a.h"
-#include "auto.h"
+#include "out/auto.h"
 
 int main() {
     printf("0x%X\n", f());

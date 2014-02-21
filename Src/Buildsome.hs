@@ -36,6 +36,7 @@ type CmdId = BS.ByteString
 data Slave = Slave
   { slaveTarget :: Target
   , slaveExecution :: Async ()
+  , slaveActiveConnections :: IORef [MVar ()]
   }
 
 data MasterServer = MasterServer
@@ -88,7 +89,6 @@ serve masterServer conn = do
         Just (cmd, slaveMVar) -> do
           slave <- readMVar slaveMVar
           handleSlaveConnection masterServer conn cmd slave
-            `E.catch` \e@E.SomeException{} -> cancelWith (slaveExecution slave) e
       where
         [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
 
@@ -99,10 +99,17 @@ handleSlaveConnection :: Show a => MasterServer -> Socket -> a -> Slave -> IO ()
 handleSlaveConnection masterServer conn cmd slave = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
-  sendGo conn
-  recvLoop_ maxMsgSize
-    (handleSlaveMsg masterServer conn cmd slave .
-     Protocol.parseMsg) conn
+  connFinishedMVar <- newEmptyMVar
+  atomicModifyIORef_ (slaveActiveConnections slave) (connFinishedMVar:)
+  protect connFinishedMVar $ do
+    sendGo conn
+    recvLoop_ maxMsgSize
+      (handleSlaveMsg masterServer conn cmd slave .
+       Protocol.parseMsg) conn
+  where
+    protect mvar act =
+      (act >> putMVar mvar ()) `E.catch` errHandler
+    errHandler e@E.SomeException{} = cancelWith (slaveExecution slave) e
 
 handleSlaveMsg ::
   Show a =>
@@ -137,7 +144,7 @@ handleSlaveMsg masterServer conn cmd slave msg =
     verifyLegalOutput fullPath = do
       path <- makeRelativeToCurrentDirectory fullPath
       when (path `notElem` outputPaths &&
-            not (allowedUnspecifiedOutput path)) $
+            not (allowedUnspecifiedOutput path)) $ do
         fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
                       , " (", show outputPaths, ")" ]
 
@@ -237,10 +244,13 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
   where
     cmds = targetCmds target
     spawnSlave restoreMask mvar = do
-      execution <-
-        async . restoreMask . MSem.with (masterSemaphore masterServer) $
+      activeConnections <- newIORef []
+      execution <- async . restoreMask . MSem.with (masterSemaphore masterServer) $ do
         mapM_ (runCmd mvar) cmds
-      let slave = Slave target execution
+        -- Give all connections a chance to complete and perhaps fail
+        -- this execution:
+        mapM_ readMVar =<< readIORef activeConnections
+      let slave = Slave target execution activeConnections
       putMVar mvar slave
       return slave
     runCmd mvar cmd = do

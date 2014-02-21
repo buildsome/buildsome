@@ -1,16 +1,16 @@
-all: example/a example/subdir.list
+all: example/out/a example/out/subdir.list
 
-example/a: example/a.o
-	gcc -o example/a example/a.o -g -Wall
+example/out/a: example/out/a.o
+	gcc -o example/out/a example/out/a.o -g -Wall
 
-example/a.o:
-	gcc -c -o example/a.o example/a.c -g -Wall
+example/out/a.o:
+	gcc -c -o example/out/a.o example/a.c -g -Wall
 
-example/auto.h:
+example/out/auto.h:
 	python example/generate.py
 
-example/subdir.list:
-	ls -l example/subdir > example/subdir.list
+example/out/subdir.list:
+	ls -l example/subdir > example/out/subdir.list
 
 example/subdir/a:
 	echo hi > example/subdir/a
