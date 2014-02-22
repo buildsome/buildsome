@@ -172,36 +172,33 @@ toBuildMap targets = (buildMap, childrenMap)
       [ (outputPath, pair target)
       | (outputPath, target) <- outputs ]
 
-withServer :: Int -> [Target] -> FilePath -> (MasterServer -> IO a) -> IO a
-withServer parallelCount targets ldPreloadPath body = do
+withServer :: Sophia.Db -> Int -> [Target] -> FilePath -> (MasterServer -> IO a) -> IO a
+withServer db parallelCount targets ldPreloadPath body = do
   runningCmds <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
   curJobId <- newIORef 0
   semaphore <- MSem.new parallelCount
-  Sophia.withEnv $ \env -> do
-    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation "build.db"
-    Sophia.withDb env $ \db -> do
-      let masterServer =
-            MasterServer
-            { masterRunningCmds = runningCmds
-            , masterSlaveByRepPath = slaveMapByRepPath
-            , masterAddress = serverFilename
-            , masterLdPreloadPath = ldPreloadPath
-            , masterBuildMap = buildMap
-            , masterChildrenMap = childrenMap
-            , masterCurJobId = curJobId
-            , masterSemaphore = semaphore
-            , masterDb = db
-            }
+  let masterServer =
+        MasterServer
+        { masterRunningCmds = runningCmds
+        , masterSlaveByRepPath = slaveMapByRepPath
+        , masterAddress = serverFilename
+        , masterLdPreloadPath = ldPreloadPath
+        , masterBuildMap = buildMap
+        , masterChildrenMap = childrenMap
+        , masterCurJobId = curJobId
+        , masterSemaphore = semaphore
+        , masterDb = db
+        }
 
-      withUnixSeqPacketListener serverFilename $ \listener ->
-        AsyncContext.new $ \ctx -> do
-          _ <- AsyncContext.spawn ctx $ forever $ do
-            (conn, _srcAddr) <- Sock.accept listener
-            AsyncContext.spawn ctx $ serve masterServer conn
-          body masterServer
+  withUnixSeqPacketListener serverFilename $ \listener ->
+    AsyncContext.new $ \ctx -> do
+      _ <- AsyncContext.spawn ctx $ forever $ do
+        (conn, _srcAddr) <- Sock.accept listener
+        AsyncContext.spawn ctx $ serve masterServer conn
+      body masterServer
   where
     (buildMap, childrenMap) = toBuildMap targets
 
@@ -272,24 +269,40 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
         , ("EFBUILD_CMD_ID", BS.unpack cmdId)
         ]
 
-parseGivenMakefile :: IO Makefile
-parseGivenMakefile = do
+parseCmdArgs :: IO (FilePath, FilePath)
+parseCmdArgs = do
   progName <- getProgName
   args <- getArgs
-  case args of
-    [makefileName] -> do
-      parseResult <- P.parseOnly makefileParser <$> BS.readFile makefileName
-      case parseResult of
-        Left err -> fail $ "Makefile parse error: " ++ err
-        Right makefile -> return makefile
+  makefileName <-
+    case args of
+    [makefileName] -> return makefileName
     _ -> fail $ "Usage: " ++ progName ++ " <makefilepath>"
+  return (makefileName, takeDirectory makefileName </> "build.db")
+
+parseMakefile :: FilePath -> IO Makefile
+parseMakefile makefileName = do
+  parseResult <- P.parseOnly makefileParser <$> BS.readFile makefileName
+  case parseResult of
+    Left err -> fail $ "Makefile parse error: " ++ err
+    Right makefile -> return makefile
+
+withDb :: FilePath -> (Sophia.Db -> IO a) -> IO a
+withDb dbFileName body = do
+  Sophia.withEnv $ \env -> do
+    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation dbFileName
+    Sophia.withDb env $ \db ->
+      body db
 
 main :: IO ()
 main = do
-  makefile <- parseGivenMakefile
-  let targets = makefileTargets makefile
-  ldPreloadPath <- getLdPreloadPath
-  withServer 2 targets ldPreloadPath $ \masterServer -> do
-    case targets of
+  (makefileName, buildDbFilename) <- parseCmdArgs
+  makefile <- parseMakefile makefileName
+  withDb buildDbFilename $ \db -> do
+    let targets = makefileTargets makefile
+    ldPreloadPath <- getLdPreloadPath
+    withServer db 2 targets ldPreloadPath $ \masterServer ->
+      case targets of
       [] -> putStrLn "Empty makefile, done nothing..."
-      (target:_) -> need masterServer "First target in Makefile" $ take 1 (targetOutputPaths target)
+      (target:_) ->
+        need masterServer "First target in Makefile" $
+        take 1 (targetOutputPaths target)
