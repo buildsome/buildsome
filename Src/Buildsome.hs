@@ -262,10 +262,10 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
     runCmd mvar cmd = do
       cmdIdNum <- nextJobId masterServer
       let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
-      putStrLn $ concat ["{ ", show cmdId, " ", show cmd, ": ", reason]
+      putStrLn $ concat ["{ ", show cmd, ": ", reason]
       atomicModifyIORef_ (masterRunningCmds masterServer) $ M.insert cmdId (cmd, mvar)
       shellCmdVerify ["HOME", "PATH"] (envs cmdId) cmd
-      putStrLn $ concat ["} ", show cmdId, " ", show cmd]
+      putStrLn $ concat ["} ", show cmd]
     envs cmdId =
         [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
         , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
