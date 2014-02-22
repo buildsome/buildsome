@@ -67,10 +67,8 @@ localSemSignal sem = E.bracket_ (MSem.signal sem) (MSem.wait sem)
 needAndGo :: MasterServer -> Reason -> FilePath -> Socket -> IO ()
 needAndGo masterServer reason path conn = do
   -- Temporarily paused, so we can temporarily release semaphore
-  localSemSignal (masterSemaphore masterServer) $ do
---    putStrLn $ unwords ["-", show reason]
+  localSemSignal (masterSemaphore masterServer) $
     need masterServer reason [path]
---  putStrLn $ unwords ["+", show reason]
   sendGo conn
 
 allowedUnspecifiedOutput :: FilePath -> Bool
