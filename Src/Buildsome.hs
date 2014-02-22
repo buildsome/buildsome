@@ -150,7 +150,7 @@ handleSlaveMsg masterServer conn cmd slave msg =
       when (path `notElem` outputPaths &&
             not (allowedUnspecifiedOutput path)) $ do
         fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
-                      , " (", show outputPaths, ")" ]
+                      , ", allowed outputs: ", show outputPaths ]
 
 toBuildMap ::
   [Target] ->
