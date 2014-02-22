@@ -4,6 +4,7 @@ import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
 import Control.Monad
+import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf)
@@ -27,12 +28,13 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
 import qualified Database.Sophia as Sophia
 import qualified Lib.AsyncContext as AsyncContext
+import qualified Lib.Process as Process
 import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 
 type Reason = String
-type CmdId = BS.ByteString
+type CmdId = ByteString
 
 data Slave = Slave
   { slaveTarget :: Target
@@ -248,11 +250,13 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
     cmds = targetCmds target
     spawnSlave restoreMask mvar = do
       activeConnections <- newIORef []
-      execution <- async . restoreMask . MSem.with (masterSemaphore masterServer) $ do
-        mapM_ (runCmd mvar) cmds
-        -- Give all connections a chance to complete and perhaps fail
-        -- this execution:
-        mapM_ readMVar =<< readIORef activeConnections
+      execution <-
+        async . restoreMask .
+        MSem.with (masterSemaphore masterServer) $ do
+          mapM_ (runCmd mvar) cmds
+          -- Give all connections a chance to complete and perhaps fail
+          -- this execution:
+          mapM_ readMVar =<< readIORef activeConnections
       let slave = Slave target execution activeConnections
       putMVar mvar slave
       return slave
@@ -261,13 +265,15 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
       let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
       putStrLn $ concat ["{ ", show cmd, ": ", reason]
       atomicModifyIORef_ (masterRunningCmds masterServer) $ M.insert cmdId (cmd, mvar)
-      shellCmdVerify ["HOME", "PATH"] (envs cmdId) cmd
+      shellCmdVerify ["HOME", "PATH"] (mkEnvVars masterServer cmdId) cmd
       putStrLn $ concat ["} ", show cmd]
-    envs cmdId =
-        [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
-        , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
-        , ("EFBUILD_CMD_ID", BS.unpack cmdId)
-        ]
+
+mkEnvVars :: MasterServer -> ByteString -> Process.Env
+mkEnvVars masterServer cmdId =
+    [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
+    , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
+    , ("EFBUILD_CMD_ID", BS.unpack cmdId)
+    ]
 
 parseCmdArgs :: IO (FilePath, FilePath)
 parseCmdArgs = do
