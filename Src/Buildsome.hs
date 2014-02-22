@@ -25,6 +25,7 @@ import qualified Control.Exception as E
 import qualified Data.Attoparsec.ByteString.Char8 as P
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map as M
+import qualified Database.Sophia as Sophia
 import qualified Lib.AsyncContext as AsyncContext
 import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
@@ -48,6 +49,7 @@ data MasterServer = MasterServer
   , masterChildrenMap :: Map FilePath [(FilePath, Target)] -- parent/dir paths -> all build steps that build directly into it
   , masterCurJobId :: IORef Int
   , masterSemaphore :: MSem Int -- ^ Restricts parallelism
+  , masterDb :: Sophia.Db
   }
 
 slaveWait :: Slave -> IO ()
@@ -178,26 +180,30 @@ withServer parallelCount targets ldPreloadPath body = do
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
   curJobId <- newIORef 0
   semaphore <- MSem.new parallelCount
-  let
-    (buildMap, childrenMap) = toBuildMap targets
-    masterServer =
-      MasterServer
-      { masterRunningCmds = runningCmds
-      , masterSlaveByRepPath = slaveMapByRepPath
-      , masterAddress = serverFilename
-      , masterLdPreloadPath = ldPreloadPath
-      , masterBuildMap = buildMap
-      , masterChildrenMap = childrenMap
-      , masterCurJobId = curJobId
-      , masterSemaphore = semaphore
-      }
+  Sophia.withEnv $ \env -> do
+    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation "build.db"
+    Sophia.withDb env $ \db -> do
+      let masterServer =
+            MasterServer
+            { masterRunningCmds = runningCmds
+            , masterSlaveByRepPath = slaveMapByRepPath
+            , masterAddress = serverFilename
+            , masterLdPreloadPath = ldPreloadPath
+            , masterBuildMap = buildMap
+            , masterChildrenMap = childrenMap
+            , masterCurJobId = curJobId
+            , masterSemaphore = semaphore
+            , masterDb = db
+            }
 
-  withUnixSeqPacketListener serverFilename $ \listener ->
-    AsyncContext.new $ \ctx -> do
-      _ <- AsyncContext.spawn ctx $ forever $ do
-        (conn, _srcAddr) <- Sock.accept listener
-        AsyncContext.spawn ctx $ serve masterServer conn
-      body masterServer
+      withUnixSeqPacketListener serverFilename $ \listener ->
+        AsyncContext.new $ \ctx -> do
+          _ <- AsyncContext.spawn ctx $ forever $ do
+            (conn, _srcAddr) <- Sock.accept listener
+            AsyncContext.spawn ctx $ serve masterServer conn
+          body masterServer
+  where
+    (buildMap, childrenMap) = toBuildMap targets
 
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
