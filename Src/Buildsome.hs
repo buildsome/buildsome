@@ -239,34 +239,30 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
       \oldSlaveMap ->
       case M.lookup outPathRep oldSlaveMap of
       Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave restoreMask newSlaveMVar)
-      Just slaveMVar ->
-        ( oldSlaveMap
-        , do
-            putStrLn $ concat [reason, ": Slave for ", outPathRep, show (take 1 cmds), " already spawned"]
-            readMVar slaveMVar
-        )
+      Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
     getSlave
   where
-    cmds = targetCmds target
     spawnSlave restoreMask mvar = do
       activeConnections <- newIORef []
       execution <-
         async . restoreMask .
         MSem.with (masterSemaphore masterServer) $ do
-          mapM_ (runCmd mvar) cmds
+          mapM_ (runCmd masterServer reason mvar) $ targetCmds target
           -- Give all connections a chance to complete and perhaps fail
           -- this execution:
           mapM_ readMVar =<< readIORef activeConnections
       let slave = Slave target execution activeConnections
       putMVar mvar slave
       return slave
-    runCmd mvar cmd = do
-      cmdIdNum <- nextJobId masterServer
-      let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
-      putStrLn $ concat ["{ ", show cmd, ": ", reason]
-      atomicModifyIORef_ (masterRunningCmds masterServer) $ M.insert cmdId (cmd, mvar)
-      shellCmdVerify ["HOME", "PATH"] (mkEnvVars masterServer cmdId) cmd
-      putStrLn $ concat ["} ", show cmd]
+
+runCmd :: MasterServer -> [Char] -> MVar Slave -> String -> IO ()
+runCmd masterServer reason mvar cmd = do
+  cmdIdNum <- nextJobId masterServer
+  let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
+  putStrLn $ concat ["{ ", show cmd, ": ", reason]
+  atomicModifyIORef_ (masterRunningCmds masterServer) $ M.insert cmdId (cmd, mvar)
+  shellCmdVerify ["HOME", "PATH"] (mkEnvVars masterServer cmdId) cmd
+  putStrLn $ concat ["} ", show cmd]
 
 mkEnvVars :: MasterServer -> ByteString -> Process.Env
 mkEnvVars masterServer cmdId =
