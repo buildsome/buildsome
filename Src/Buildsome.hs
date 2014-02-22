@@ -244,13 +244,12 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
   where
     spawnSlave restoreMask mvar = do
       activeConnections <- newIORef []
-      execution <-
-        async . restoreMask .
+      execution <- async . restoreMask $ do
         MSem.with (masterSemaphore masterServer) $ do
           mapM_ (runCmd masterServer reason mvar) $ targetCmds target
           -- Give all connections a chance to complete and perhaps fail
           -- this execution:
-          mapM_ readMVar =<< readIORef activeConnections
+        mapM_ readMVar =<< readIORef activeConnections
       let slave = Slave target execution activeConnections
       putMVar mvar slave
       return slave
