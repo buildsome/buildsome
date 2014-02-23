@@ -39,6 +39,9 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
 
+-- TODO: Replace Maybe content hash with some descriptor of what the
+-- kind of file it is
+
 type Reason = String
 type CmdId = ByteString
 
@@ -166,7 +169,10 @@ handleSlaveMsg buildsome conn cmd slave msg =
 
     -- I/O
     Protocol.SymLink target linkPath -> reportOutput linkPath >> reportInput target
-    Protocol.Link src dest -> reportOutput dest >> reportInput src
+    Protocol.Link src dest ->
+      fail $ unwords ["Hard links not supported:", show src, "->", show dest]
+      -- TODO: Record the fact it's a link
+      --reportOutput dest >> reportInput src
 
     -- inputs
     Protocol.Open path Protocol.OpenReadMode _creationMode -> reportInput path
@@ -287,6 +293,24 @@ verifyOutputList buildsome actualOutputs target = do
     specifiedOutputs = S.fromList (targetOutputPaths target)
     unusedOutputs = specifiedOutputs `S.difference` actualOutputs
 
+summarizeFileWithStat :: FilePath -> Maybe FileStatus -> IO (Maybe ByteString)
+summarizeFileWithStat path oldMStat = do
+  mContentHash <-
+    case oldMStat of
+    Just stat | isRegularFile stat ->
+      (Just . MD5.hash <$> BS.readFile path)
+      `catchDoesNotExist` fail (show path ++ " deleted during build!")
+    _ -> return Nothing
+  -- Verify file did not change since we took its first mtime:
+  newMStat <- getMFileStatus path
+  when (not (compareMTimes oldMStat newMStat)) $ fail $
+    show path ++ " changed during build!"
+  return $ mContentHash
+  where
+    compareMTimes x y =
+      (modificationTime <$> x) ==
+      (modificationTime <$> y)
+
 makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
 makeSlaveForRepPath buildsome reason outPathRep target = do
   newSlaveMVar <- newEmptyMVar
@@ -312,7 +336,7 @@ makeSlaveForRepPath buildsome reason outPathRep target = do
         mapM_ readMVar =<< readIORef activeConnections
         inputsMStats <- readIORef slaveInputsRef
         actualOutputs <- readIORef slaveOutputsRef
-        _contentHashes <- M.traverseWithKey summarizeInput inputsMStats
+        _contentHashes <- M.traverseWithKey summarizeFileWithStat inputsMStats
         verifyOutputList buildsome actualOutputs target
         -- TODO: Save in db!
         return ()
@@ -324,24 +348,6 @@ buildHinted :: Buildsome -> Target -> IO ()
 buildHinted buildsome target =
   need buildsome ("Hint from " ++ show (take 1 (targetOutputPaths target)))
   (targetInputHints target)
-
-summarizeInput :: FilePath -> Maybe FileStatus -> IO (Maybe ByteString)
-summarizeInput path oldMStat = do
-  mContentHash <-
-    case oldMStat of
-    Just stat | isRegularFile stat ->
-      (Just . MD5.hash <$> BS.readFile path)
-      `catchDoesNotExist` fail (show path ++ " deleted during build!")
-    _ -> return Nothing
-  -- Verify file did not change since we took its first mtime:
-  newMStat <- getMFileStatus path
-  when (not (compareMTimes oldMStat newMStat)) $ fail $
-    show path ++ " changed during build!"
-  return $ mContentHash
-  where
-    compareMTimes x y =
-      (modificationTime <$> x) ==
-      (modificationTime <$> y)
 
 runCmd :: Buildsome -> [Char] -> MVar Slave -> String -> IO ()
 runCmd buildsome reason mvar cmd = do
