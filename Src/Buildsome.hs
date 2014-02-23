@@ -383,7 +383,7 @@ tryApplyExecutionLog buildsome target = do
           -- inputs changed, as it may build stuff that's no longer
           -- required:
           let reason =
-                "Previous Execution Log of " ++ show (targetOutputPaths target)
+                "Recorded dependency of " ++ show (targetOutputPaths target)
           liftIO $ do
             speculativeSlaves <- concat <$> mapM (makeSlaves buildsome reason) (M.keys inputsDescs)
             let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
