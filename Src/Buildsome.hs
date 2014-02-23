@@ -10,6 +10,7 @@ import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, maybeToList)
+import Data.Set (Set)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
@@ -29,6 +30,7 @@ import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.Attoparsec.ByteString.Char8 as P
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
 import qualified Lib.AsyncContext as AsyncContext
 import qualified Lib.Process as Process
@@ -46,6 +48,7 @@ data Slave = Slave
   , -- For each slave input, record modification time before input is
     -- used, to compare it after slave is done
     slaveInputs :: IORef (Map FilePath (Maybe FileStatus))
+  , slaveOutputs :: IORef (Set FilePath)
   , slaveActiveConnections :: IORef [MVar ()]
   }
 
@@ -151,6 +154,10 @@ recordInput slave path = do
     -- the final mtime to the oldest one
     M.insertWith (\_new old -> old) path mstat
 
+recordOutput :: Slave -> FilePath -> IO ()
+recordOutput slave path =
+  atomicModifyIORef'_ (slaveOutputs slave) $ S.insert path
+
 handleSlaveMsg ::
   Show a =>
   Buildsome -> Socket -> a -> Slave -> Protocol.Func -> IO ()
@@ -193,7 +200,7 @@ handleSlaveMsg buildSome conn cmd slave msg =
       unless (isValidOutput path) $ do
         fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
                       , ", allowed outputs: ", show outputPaths ]
-      -- TODO: recordOutput too so we can warn about unused specified outputs
+      recordOutput slave path
 
 toBuildMaps :: [Target] -> BuildMaps
 toBuildMaps targets = BuildMaps buildMap childrenMap
@@ -281,6 +288,7 @@ makeSlaveForRepPath buildSome reason outPathRep target = do
     spawnSlave restoreMask mvar = do
       activeConnections <- newIORef []
       slaveInputsRef <- newIORef M.empty
+      slaveOutputsRef <- newIORef S.empty
       execution <- async . restoreMask $ do
         withAllocatedParallelism buildSome $ do
           buildHinted buildSome target
@@ -289,10 +297,15 @@ makeSlaveForRepPath buildSome reason outPathRep target = do
           -- this execution:
         mapM_ readMVar =<< readIORef activeConnections
         inputsMStats <- readIORef slaveInputsRef
+        actualOutputs <- readIORef slaveOutputsRef
         _contentHashes <- M.traverseWithKey summarizeInput inputsMStats
+        let specifiedOutputs = S.fromList (targetOutputPaths target)
+            unusedOutputs = specifiedOutputs `S.difference` actualOutputs
+        unless (S.null unusedOutputs) $
+          putStrLn $ "WARNING: Unused outputs: " ++ show (S.toList unusedOutputs)
         -- TODO: Save these in db!
         return ()
-      let slave = Slave target execution slaveInputsRef activeConnections
+      let slave = Slave target execution slaveInputsRef slaveOutputsRef activeConnections
       putMVar mvar slave
       return slave
 
