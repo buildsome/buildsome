@@ -1,3 +1,9 @@
+* opendir in execution log needs to verify content or content hash of file list?
+  * currently it doesn't rerun opendir
+
+* Disallowed generated outputs should be blocked:
+  C-side can be given list of allowed outputs
+
 * Use mtime cache to see that outputs already match the execution log too
 
 * Local round-tripping on a TRIE is not a problem, so can start with a local build cache
