@@ -86,10 +86,10 @@ withAllocatedParallelism :: Buildsome -> IO a -> IO a
 withAllocatedParallelism = MSem.with . bsRestrictedParallelism
 
 needAndGo :: Buildsome -> Reason -> FilePath -> Socket -> IO ()
-needAndGo buildSome reason path conn = do
+needAndGo buildsome reason path conn = do
   -- Temporarily paused, so we can temporarily release parallelism
   -- semaphore
-  withReleasedParallelism buildSome $ need buildSome reason [path]
+  withReleasedParallelism buildsome $ need buildsome reason [path]
   sendGo conn
 
 allowedUnspecifiedOutput :: FilePath -> Bool
@@ -99,19 +99,19 @@ allowedUnspecifiedOutput path = or
   ]
 
 serve :: Buildsome -> Socket -> IO ()
-serve buildSome conn = do
+serve buildsome conn = do
   helloLine <- SockBS.recv conn 1024
   case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
     Nothing -> fail $ "Bad connection started with: " ++ show helloLine
     Just pidCmdId -> do
-      runningCmds <- readIORef (bsRunningCmds buildSome)
+      runningCmds <- readIORef (bsRunningCmds buildsome)
       case M.lookup cmdId runningCmds of
         Nothing -> do
           let cmdIds = M.keys runningCmds
           fail $ "Bad slave id: " ++ show cmdId ++ " mismatches all: " ++ show cmdIds
         Just (cmd, slaveMVar) -> do
           slave <- readMVar slaveMVar
-          handleSlaveConnection buildSome conn cmd slave
+          handleSlaveConnection buildsome conn cmd slave
       where
         [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
 
@@ -119,7 +119,7 @@ maxMsgSize :: Int
 maxMsgSize = 8192
 
 handleSlaveConnection :: Show a => Buildsome -> Socket -> a -> Slave -> IO ()
-handleSlaveConnection buildSome conn cmd slave = do
+handleSlaveConnection buildsome conn cmd slave = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   connFinishedMVar <- newEmptyMVar
@@ -127,7 +127,7 @@ handleSlaveConnection buildSome conn cmd slave = do
   protect connFinishedMVar $ do
     sendGo conn
     recvLoop_ maxMsgSize
-      (handleSlaveMsg buildSome conn cmd slave .
+      (handleSlaveMsg buildsome conn cmd slave .
        Protocol.parseMsg) conn
   where
     protect mvar act =
@@ -149,7 +149,7 @@ recordOutput slave path =
 handleSlaveMsg ::
   Show a =>
   Buildsome -> Socket -> a -> Slave -> Protocol.Func -> IO ()
-handleSlaveMsg buildSome conn cmd slave msg =
+handleSlaveMsg buildsome conn cmd slave msg =
   case msg of
     -- outputs
     Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
@@ -181,7 +181,7 @@ handleSlaveMsg buildSome conn cmd slave msg =
     isValidOutput path =
       path `elem` outputPaths || allowedUnspecifiedOutput path
     reportInput path = do
-      needAndGo buildSome reason path conn
+      needAndGo buildsome reason path conn
       unless (isValidOutput path) $ recordInput slave path
     reportOutput fullPath = do
       path <- Dir.makeRelativeToCurrentDirectory fullPath
@@ -218,7 +218,7 @@ withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath body 
   let serverFilename = "/tmp/efbuild-" ++ show bsPid
   curJobId <- newIORef 0
   semaphore <- MSem.new parallelism
-  let buildSome =
+  let buildsome =
         Buildsome
         { bsRunningCmds = runningCmds
         , bsSlaveByRepPath = slaveMapByRepPath
@@ -235,8 +235,8 @@ withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath body 
     AsyncContext.new $ \ctx -> do
       _ <- AsyncContext.spawn ctx $ forever $ do
         (conn, _srcAddr) <- Sock.accept listener
-        AsyncContext.spawn ctx $ serve buildSome conn
-      body buildSome
+        AsyncContext.spawn ctx $ serve buildsome conn
+      body buildsome
 
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
@@ -244,33 +244,33 @@ getLdPreloadPath = do
   Dir.canonicalizePath (takeDirectory progName </> "fs_override.so")
 
 nextJobId :: Buildsome -> IO Int
-nextJobId buildSome =
-  atomicModifyIORef (bsCurJobId buildSome) $ \oldJobId -> (oldJobId+1, oldJobId)
+nextJobId buildsome =
+  atomicModifyIORef (bsCurJobId buildsome) $ \oldJobId -> (oldJobId+1, oldJobId)
 
 need :: Buildsome -> Reason -> [FilePath] -> IO ()
-need buildSome reason paths = do
-  slaves <- concat <$> mapM (makeSlaves buildSome reason) paths
+need buildsome reason paths = do
+  slaves <- concat <$> mapM (makeSlaves buildsome reason) paths
   traverse_ slaveWait slaves
 
 makeSlaves :: Buildsome -> Reason -> FilePath -> IO [Slave]
-makeSlaves buildSome reason path = do
+makeSlaves buildsome reason path = do
   mSlave <-
     traverse (mkTargetSlave reason) $ M.lookup path buildMap
   childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) children
   return (maybeToList mSlave ++ childSlaves)
   where
     children = M.findWithDefault [] path childrenMap
-    BuildMaps buildMap childrenMap = bsBuildMaps buildSome
+    BuildMaps buildMap childrenMap = bsBuildMaps buildsome
     mkTargetSlave nuancedReason (outPathRep, target) =
-      makeSlaveForRepPath buildSome nuancedReason outPathRep target
+      makeSlaveForRepPath buildsome nuancedReason outPathRep target
 
 verifyOutputList :: Buildsome -> Set FilePath -> Target -> IO ()
-verifyOutputList buildSome actualOutputs target = do
+verifyOutputList buildsome actualOutputs target = do
   unless (S.null unusedOutputs) $
     putStrLn $ "WARNING: Unused outputs: " ++ show (S.toList unusedOutputs)
 
   unspecifiedOutputs <- filterM fileExists $ S.toList (actualOutputs `S.difference` specifiedOutputs)
-  case bsDeleteUnspecifiedOutput buildSome of
+  case bsDeleteUnspecifiedOutput buildsome of
     DeleteUnspecifiedOutputs ->
       forM_ unspecifiedOutputs $
       \out -> do
@@ -288,11 +288,11 @@ verifyOutputList buildSome actualOutputs target = do
     unusedOutputs = specifiedOutputs `S.difference` actualOutputs
 
 makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
-makeSlaveForRepPath buildSome reason outPathRep target = do
+makeSlaveForRepPath buildsome reason outPathRep target = do
   newSlaveMVar <- newEmptyMVar
   E.mask $ \restoreMask -> do
     getSlave <-
-      atomicModifyIORef (bsSlaveByRepPath buildSome) $
+      atomicModifyIORef (bsSlaveByRepPath buildsome) $
       \oldSlaveMap ->
       case M.lookup outPathRep oldSlaveMap of
       Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave restoreMask newSlaveMVar)
@@ -304,16 +304,16 @@ makeSlaveForRepPath buildSome reason outPathRep target = do
       slaveInputsRef <- newIORef M.empty
       slaveOutputsRef <- newIORef S.empty
       execution <- async . restoreMask $ do
-        withAllocatedParallelism buildSome $ do
-          buildHinted buildSome target
-          mapM_ (runCmd buildSome reason mvar) $ targetCmds target
+        withAllocatedParallelism buildsome $ do
+          buildHinted buildsome target
+          mapM_ (runCmd buildsome reason mvar) $ targetCmds target
           -- Give all connections a chance to complete and perhaps fail
           -- this execution:
         mapM_ readMVar =<< readIORef activeConnections
         inputsMStats <- readIORef slaveInputsRef
         actualOutputs <- readIORef slaveOutputsRef
         _contentHashes <- M.traverseWithKey summarizeInput inputsMStats
-        verifyOutputList buildSome actualOutputs target
+        verifyOutputList buildsome actualOutputs target
         -- TODO: Save in db!
         return ()
       let slave = Slave target execution slaveInputsRef slaveOutputsRef activeConnections
@@ -321,8 +321,8 @@ makeSlaveForRepPath buildSome reason outPathRep target = do
       return slave
 
 buildHinted :: Buildsome -> Target -> IO ()
-buildHinted buildSome target =
-  need buildSome ("Hint from " ++ show (take 1 (targetOutputPaths target)))
+buildHinted buildsome target =
+  need buildsome ("Hint from " ++ show (take 1 (targetOutputPaths target)))
   (targetInputHints target)
 
 summarizeInput :: FilePath -> Maybe FileStatus -> IO (Maybe ByteString)
@@ -344,18 +344,18 @@ summarizeInput path oldMStat = do
       (modificationTime <$> y)
 
 runCmd :: Buildsome -> [Char] -> MVar Slave -> String -> IO ()
-runCmd buildSome reason mvar cmd = do
-  cmdIdNum <- nextJobId buildSome
+runCmd buildsome reason mvar cmd = do
+  cmdIdNum <- nextJobId buildsome
   let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
   putStrLn $ concat ["{ ", show cmd, ": ", reason]
-  atomicModifyIORef_ (bsRunningCmds buildSome) $ M.insert cmdId (cmd, mvar)
-  shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildSome cmdId) cmd
+  atomicModifyIORef_ (bsRunningCmds buildsome) $ M.insert cmdId (cmd, mvar)
+  shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildsome cmdId) cmd
   putStrLn $ concat ["} ", show cmd]
 
 mkEnvVars :: Buildsome -> ByteString -> Process.Env
-mkEnvVars buildSome cmdId =
-    [ ("LD_PRELOAD", bsLdPreloadPath buildSome)
-    , ("EFBUILD_MASTER_UNIX_SOCKADDR", bsAddress buildSome)
+mkEnvVars buildsome cmdId =
+    [ ("LD_PRELOAD", bsLdPreloadPath buildsome)
+    , ("EFBUILD_MASTER_UNIX_SOCKADDR", bsAddress buildsome)
     , ("EFBUILD_CMD_ID", BS.unpack cmdId)
     ]
 
@@ -383,9 +383,9 @@ main = do
     let targets = makefileTargets makefile
     ldPreloadPath <- getLdPreloadPath
     withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath $
-      \buildSome ->
+      \buildsome ->
       case targets of
       [] -> putStrLn "Empty makefile, done nothing..."
       (target:_) ->
-        need buildSome "First target in Makefile" $
+        need buildsome "First target in Makefile" $
         take 1 (targetOutputPaths target)
