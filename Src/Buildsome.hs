@@ -5,7 +5,9 @@ import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
 import Control.Monad
-import Data.Binary (Binary, put)
+import Control.Monad.Trans.Either
+import Control.Monad.IO.Class (liftIO)
+import Data.Binary (Binary, get, put)
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
 import Data.IORef
@@ -15,7 +17,7 @@ import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Set (Set)
 import Data.Traversable (traverse)
 import GHC.Generics (Generic)
-import Lib.Binary (runPut)
+import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, catchDoesNotExist)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
@@ -51,8 +53,7 @@ data FileDesc
   | Directory -- files inside have their own FileDesc's
   | NoFile -- an unlinked/deleted file at a certain path is also a
            -- valid input or output of a build step
-  deriving (Generic)
-
+  deriving (Generic, Eq, Show)
 instance Binary FileDesc
 
 type Reason = String
@@ -338,25 +339,76 @@ fileDescOfMStat path oldMStat = do
       (modificationTime <$> x) ==
       (modificationTime <$> y)
 
+getFileDesc :: FilePath -> IO FileDesc
+getFileDesc path = fileDescOfMStat path =<< getMFileStatus path
+
 targetKey :: Target -> ByteString
 targetKey target =
   MD5.hash $ BS.pack (unlines (targetCmds target)) -- TODO: Canonicalize commands (whitespace/etc)
 
 data ExecutionLog = ExecutionLog
-  { _inputsContentHashes :: Map FilePath FileDesc
-  , _outputsContentHashes :: Map FilePath FileDesc
-  } deriving (Generic)
+  { _elInputsDescs :: Map FilePath FileDesc
+  , _elOutputsDescs :: Map FilePath FileDesc
+  } deriving (Generic, Show)
 instance Binary ExecutionLog
+
+setKey :: Binary a => Buildsome -> ByteString -> a -> IO ()
+setKey buildsome key val = Sophia.setValue (bsDb buildsome) key $ runPut $ put val
+
+getKey :: Binary a => Buildsome -> ByteString -> IO (Maybe a)
+getKey buildsome key = fmap (runGet get) <$> Sophia.getValue (bsDb buildsome) key
 
 saveExecutionLog :: Buildsome -> Target -> Map FilePath (Maybe FileStatus) -> Set FilePath -> IO ()
 saveExecutionLog buildsome target inputsMStats actualOutputs = do
   inputsDescs <- M.traverseWithKey fileDescOfMStat inputsMStats
   outputDescPairs <-
     forM (S.toList actualOutputs) $ \outPath -> do
-      fileDesc <- fileDescOfMStat outPath =<< getMFileStatus outPath
+      fileDesc <- getFileDesc outPath
       return (outPath, fileDesc)
   let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs)
-  Sophia.setValue (bsDb buildsome) (targetKey target) (runPut (put execLog))
+  setKey buildsome (targetKey target) execLog
+
+-- TODO: Remember the order of input files' access so can iterate here
+-- in order
+tryApplyExecutionLog :: Buildsome -> Target -> IO Bool
+tryApplyExecutionLog buildsome target = do
+  mExecutionLog <- getKey buildsome (targetKey target)
+  case mExecutionLog of
+    Nothing -> -- No previous execution log
+      return False
+    Just (ExecutionLog inputsDescs outputsDescs) -> do
+      res <-
+        runEitherT $ do
+          -- TODO: This is good for parallelism, but bad if the set of
+          -- inputs changed, as it may build stuff that's no longer
+          -- required:
+          let reason =
+                "Previous Execution Log of " ++ show (targetOutputPaths target)
+          liftIO $ do
+            speculativeSlaves <- concat <$> mapM (makeSlaves buildsome reason) (M.keys inputsDescs)
+            let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
+            hintedSlaves <- concat <$> mapM (makeSlaves buildsome hintReason) (targetInputHints target)
+            traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
+
+          verifyNoChange "input" inputsDescs
+          -- For now, we don't store the output files' content
+          -- anywhere besides the actual output files, so just verify
+          -- the output content is still correct
+          verifyNoChange "output" outputsDescs
+      case res of
+        Left (str, filePath, _oldDesc, _newDesc) -> do
+          putStrLn $ concat
+            ["Execution log did not match because ", str, ": ", show filePath, " changed"]
+          return False
+        Right () -> do
+          putStrLn $ "Execution log match for: " ++ show (targetOutputPaths target)
+          return True
+  where
+    verifyNoChange str descs =
+      forM_ (M.toList descs) $ \(filePath, oldDesc) -> do
+        newDesc <- liftIO $ getFileDesc filePath
+        when (oldDesc /= newDesc) $ left (str, filePath, oldDesc, newDesc) -- fail entire computation
+
 
 makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
 makeSlaveForRepPath buildsome reason outPathRep target = do
@@ -366,19 +418,25 @@ makeSlaveForRepPath buildsome reason outPathRep target = do
       atomicModifyIORef (bsSlaveByRepPath buildsome) $
       \oldSlaveMap ->
       case M.lookup outPathRep oldSlaveMap of
-      Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave restoreMask newSlaveMVar)
+      Nothing ->
+        ( M.insert outPathRep newSlaveMVar oldSlaveMap
+        , resultIntoMVar newSlaveMVar =<< spawnSlave restoreMask
+        )
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
     getSlave
   where
-    spawnSlave restoreMask mvar = do
-      execution <- async . restoreMask $ do
-        (inputs, outputs) <- withAllocatedParallelism buildsome $ do
-          buildHinted buildsome target
-          unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
-        saveExecutionLog buildsome target (M.unions inputs) (S.unions outputs)
-      let slave = Slave target execution
-      putMVar mvar slave
-      return slave
+    resultIntoMVar mvar x = putMVar mvar x >> return x
+    spawnSlave restoreMask = do
+      success <- tryApplyExecutionLog buildsome target
+      if success
+        then Slave target <$> async (return ())
+        else do
+          execution <- async . restoreMask $ do
+            (inputs, outputs) <- withAllocatedParallelism buildsome $ do
+              buildHinted buildsome target
+              unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
+            saveExecutionLog buildsome target (M.unions inputs) (S.unions outputs)
+          return $ Slave target execution
 
 buildHinted :: Buildsome -> Target -> IO ()
 buildHinted buildsome target =

@@ -48,4 +48,6 @@ executable buildsome
                ,     sophia >= 0.1 && < 0.2
                ,     cryptohash >= 0.11 && < 0.12
                ,     optparse-applicative >= 0.7 && < 0.8
+               ,     transformers >= 0.3 && < 0.3.1
+               ,     either >= 4.1 && < 4.2
   default-language:    Haskell2010

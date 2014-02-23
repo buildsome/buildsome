@@ -1,3 +1,5 @@
+* Use mtime cache to see that outputs already match the execution log too
+
 * Local round-tripping on a TRIE is not a problem, so can start with a local build cache
 
   * data Trie t = Final Output | Branch (InputPath, Map InputContent t)
