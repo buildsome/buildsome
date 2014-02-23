@@ -1,7 +1,6 @@
 module Opts (DeleteUnspecifiedOutputs(..), Opt(..), getOpt) where
 
 import Options.Applicative
-import Data.Char
 import Data.Monoid
 
 data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs

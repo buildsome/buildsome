@@ -2,24 +2,13 @@ module Lib.Process (shellCmdVerify, getOutputs, Env) where
 
 import Control.Concurrent.Async
 import Control.Monad
-import Data.Foldable (traverse_)
-import System.Environment (getEnv, getProgName)
+import System.Environment (getEnv)
 import System.Exit (ExitCode(..))
-import System.IO (Handle, hClose)
+import System.IO (hClose)
 import System.Process
-import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS
 
 type Env = [(String, String)]
-
--- | Create a process, and kill it when leaving the given code section
-withProcess :: CreateProcess -> ((Maybe Handle, Maybe Handle, Maybe Handle, ProcessHandle) -> IO a) -> IO a
-withProcess params body =
-  E.bracket (createProcess params) terminate body
-  where
-    terminate (mStdin, mStdout, mStderr, processHandle) = do
-      (traverse_ . traverse_) hClose [mStdin, mStdout, mStderr]
-      terminateProcess processHandle
 
 -- | Get the outputs of a process with a given environment spec
 getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, BS.ByteString, BS.ByteString)
