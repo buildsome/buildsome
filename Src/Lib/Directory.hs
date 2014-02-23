@@ -1,10 +1,15 @@
-module Lib.Directory (getMFileStatus, fileExists, catchDoesNotExist) where
+module Lib.Directory
+  ( getMFileStatus
+  , fileExists, catchDoesNotExist
+  , removeFileAllowNotExists
+  ) where
 
 import Control.Applicative ((<$>))
 import Data.Maybe (isJust)
 import System.IO.Error
 import System.Posix.Files (FileStatus, getFileStatus)
 import qualified Control.Exception as E
+import qualified System.Directory as Dir
 
 catchDoesNotExist :: IO a -> IO a -> IO a
 catchDoesNotExist act handler =
@@ -21,3 +26,6 @@ getMFileStatus path =
 
 fileExists :: FilePath -> IO Bool
 fileExists path = isJust <$> getMFileStatus path
+
+removeFileAllowNotExists :: FilePath -> IO ()
+removeFileAllowNotExists path = Dir.removeFile path `catchDoesNotExist` return ()

@@ -11,7 +11,7 @@ import Data.Binary (Binary, get, put)
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
 import Data.IORef
-import Data.List (isPrefixOf, isSuffixOf)
+import Data.List (isPrefixOf, isSuffixOf, partition)
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, maybeToList)
 import Data.Set (Set)
@@ -20,7 +20,7 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
-import Lib.Directory (getMFileStatus, fileExists, catchDoesNotExist)
+import Lib.Directory (getMFileStatus, fileExists, catchDoesNotExist, removeFileAllowNotExists)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), Target(..), makefileParser)
 import Lib.Process (shellCmdVerify)
@@ -290,35 +290,42 @@ makeSlaves buildsome reason path = do
     mkTargetSlave nuancedReason (outPathRep, target) =
       makeSlaveForRepPath buildsome nuancedReason outPathRep target
 
-verifyCmdOutputs :: Buildsome -> Set FilePath -> String -> Target -> IO ()
-verifyCmdOutputs buildsome actualOutputs cmd target = do
+-- Verify output of whole of slave (after all cmds)
+verifyTargetOutputs :: Set FilePath -> Target -> IO ()
+verifyTargetOutputs outputs target =
   unless (S.null unusedOutputs) $
-    putStrLn $ "WARNING: Unused outputs: " ++ show (S.toList unusedOutputs)
+  putStrLn $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
+  where
+    specifiedOutputs = S.fromList (targetOutputPaths target)
+    unusedOutputs = specifiedOutputs `S.difference` outputs
 
-  let illegalUnspecified = filter (not . isLegalOutput target) unspecifiedOutputs
-  unless (null illegalUnspecified) $ do
-    mapM_ Dir.removeFile illegalUnspecified
-    fail $ concat
-      [ show cmd, " wrote to unspecified output files: ", show illegalUnspecified
-      , ", allowed outputs: ", show (targetOutputPaths target) ]
-
-  existingUnspecifiedOutputs <- filterM fileExists unspecifiedOutputs
+-- Verify output of a single cmd
+verifyCmdOutputs :: Buildsome -> Set FilePath -> String -> Target -> IO ()
+verifyCmdOutputs buildsome outputs cmd target = do
+  existingLegalUnspecified <- filterM fileExists legalUnspecified
   case bsDeleteUnspecifiedOutput buildsome of
     DeleteUnspecifiedOutputs -> do
-      when (not (null existingUnspecifiedOutputs)) $
+      unless (null existingLegalUnspecified) $
         putStrLn $ concat
         [ "WARNING: Removing unspecified outputs: "
-        , show existingUnspecifiedOutputs, " from ", show cmd ]
-      mapM_ Dir.removeFile existingUnspecifiedOutputs
+        , show existingLegalUnspecified, " from ", show cmd ]
+      mapM_ Dir.removeFile existingLegalUnspecified
     DontDeleteUnspecifiedOutputs ->
-      when (not (null existingUnspecifiedOutputs)) $
+      unless (null existingLegalUnspecified) $
       putStrLn $ concat
       [ "WARNING: Keeping leaked unspecified outputs: "
-      , show existingUnspecifiedOutputs, " from ", show cmd ]
+      , show existingLegalUnspecified, " from ", show cmd ]
+
+  unless (null illegalUnspecified) $ do
+    mapM_ removeFileAllowNotExists illegalUnspecified
+    fail $ concat
+      [ show cmd, " wrote to unspecified output files: ", show illegalUnspecified
+      , ", allowed outputs: ", show specified ]
+
   where
-    unspecifiedOutputs = S.toList (actualOutputs `S.difference` specifiedOutputs)
-    specifiedOutputs = S.fromList (targetOutputPaths target)
-    unusedOutputs = specifiedOutputs `S.difference` actualOutputs
+    (legalUnspecified, illegalUnspecified) = partition (isLegalOutput target) unspecified
+    unspecified = S.toList (outputs `S.difference` S.fromList specified)
+    specified = targetOutputPaths target
 
 fileDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileDesc
 fileDescOfMStat path oldMStat = do
@@ -368,42 +375,66 @@ getKey :: Binary a => Buildsome -> ByteString -> IO (Maybe a)
 getKey buildsome key = fmap (runGet get) <$> Sophia.getValue (bsDb buildsome) key
 
 saveExecutionLog :: Buildsome -> Target -> Map FilePath (Maybe FileStatus) -> Set FilePath -> IO ()
-saveExecutionLog buildsome target inputsMStats actualOutputs = do
+saveExecutionLog buildsome target inputsMStats outputs = do
   inputsDescs <- M.traverseWithKey fileDescOfMStat inputsMStats
   outputDescPairs <-
-    forM (S.toList actualOutputs) $ \outPath -> do
+    forM (S.toList outputs) $ \outPath -> do
       fileDesc <- getFileDesc outPath
       return (outPath, fileDesc)
   let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs)
   setKey buildsome (targetKey target) execLog
 
+verifyLoggedOutputs :: Set FilePath -> Target -> IO ()
+verifyLoggedOutputs outputs target = do
+  unless (S.null missingOutputsSpec) $ fail $ concat $
+    [ show (targetCmds target), " outputs to ", show (S.toList missingOutputsSpec)
+    , " but output specification lists only ", show (targetOutputPaths target) ]
+  verifyTargetOutputs outputs target
+  where
+    missingOutputsSpec =
+      S.filter (not . allowedUnspecifiedOutput) $
+      outputs `S.difference` S.fromList (targetOutputPaths target)
+
+applyExecutionLog ::
+  Buildsome -> Target -> ExecutionLog ->
+  IO (Either (String, FilePath, FileDesc, FileDesc) ())
+applyExecutionLog buildsome target (ExecutionLog inputsDescs outputsDescs) = runEitherT $ do
+  -- TODO: verify targetOutputPaths includes the output paths, or
+  -- target was modified incorrectly in spec
+  liftIO waitForInputs
+
+  verifyNoChange "input" inputsDescs
+  -- For now, we don't store the output files' content
+  -- anywhere besides the actual output files, so just verify
+  -- the output content is still correct
+  verifyNoChange "output" outputsDescs
+
+  liftIO $ verifyLoggedOutputs (M.keysSet outputsDescs) target
+  where
+    waitForInputs = do
+      -- TODO: This is good for parallelism, but bad if the set of
+      -- inputs changed, as it may build stuff that's no longer
+      -- required:
+      let reason = "Recorded dependency of " ++ show (targetOutputPaths target)
+      speculativeSlaves <- concat <$> mapM (makeSlaves buildsome reason) (M.keys inputsDescs)
+      let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
+      hintedSlaves <- concat <$> mapM (makeSlaves buildsome hintReason) (targetInputHints target)
+      traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
+    verifyNoChange str descs =
+      forM_ (M.toList descs) $ \(filePath, oldDesc) -> do
+        newDesc <- liftIO $ getFileDesc filePath
+        when (oldDesc /= newDesc) $ left (str, filePath, oldDesc, newDesc) -- fail entire computation
+
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-tryApplyExecutionLog :: Buildsome -> Target -> IO Bool
-tryApplyExecutionLog buildsome target = do
+findApplyExecutionLog :: Buildsome -> Target -> IO Bool
+findApplyExecutionLog buildsome target = do
   mExecutionLog <- getKey buildsome (targetKey target)
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return False
-    Just (ExecutionLog inputsDescs outputsDescs) -> do
-      res <-
-        runEitherT $ do
-          -- TODO: This is good for parallelism, but bad if the set of
-          -- inputs changed, as it may build stuff that's no longer
-          -- required:
-          let reason =
-                "Recorded dependency of " ++ show (targetOutputPaths target)
-          liftIO $ do
-            speculativeSlaves <- concat <$> mapM (makeSlaves buildsome reason) (M.keys inputsDescs)
-            let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
-            hintedSlaves <- concat <$> mapM (makeSlaves buildsome hintReason) (targetInputHints target)
-            traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
-
-          verifyNoChange "input" inputsDescs
-          -- For now, we don't store the output files' content
-          -- anywhere besides the actual output files, so just verify
-          -- the output content is still correct
-          verifyNoChange "output" outputsDescs
+    Just executionLog -> do
+      res <- applyExecutionLog buildsome target executionLog
       case res of
         Left (str, filePath, _oldDesc, _newDesc) -> do
           putStrLn $ concat
@@ -412,11 +443,6 @@ tryApplyExecutionLog buildsome target = do
         Right () -> do
           putStrLn $ "Execution log match for: " ++ show (targetOutputPaths target)
           return True
-  where
-    verifyNoChange str descs =
-      forM_ (M.toList descs) $ \(filePath, oldDesc) -> do
-        newDesc <- liftIO $ getFileDesc filePath
-        when (oldDesc /= newDesc) $ left (str, filePath, oldDesc, newDesc) -- fail entire computation
 
 
 makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
@@ -436,15 +462,19 @@ makeSlaveForRepPath buildsome reason outPathRep target = do
   where
     resultIntoMVar mvar x = putMVar mvar x >> return x
     spawnSlave restoreMask = do
-      success <- tryApplyExecutionLog buildsome target
+      success <- findApplyExecutionLog buildsome target
       if success
         then Slave target <$> async (return ())
         else do
           execution <- async . restoreMask $ do
-            (inputs, outputs) <- withAllocatedParallelism buildsome $ do
+            mapM_ removeFileAllowNotExists $ targetOutputPaths target
+            (inputsLists, outputsLists) <- withAllocatedParallelism buildsome $ do
               buildHinted buildsome target
               unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
-            saveExecutionLog buildsome target (M.unions inputs) (S.unions outputs)
+            let inputs = M.unions inputsLists
+                outputs = S.unions outputsLists
+            verifyTargetOutputs outputs target
+            saveExecutionLog buildsome target inputs outputs
           return $ Slave target execution
 
 buildHinted :: Buildsome -> Target -> IO ()
@@ -473,11 +503,11 @@ runCmd buildsome target reason cmd = do
   -- this execution:
   mapM_ readMVar =<< readIORef activeConnections
 
-  actualOutputs <- readIORef outputsRef
-  verifyCmdOutputs buildsome actualOutputs cmd target
+  outputs <- readIORef outputsRef
+  verifyCmdOutputs buildsome outputs cmd target
 
   inputsMStats <- readIORef inputsRef
-  return (inputsMStats, actualOutputs)
+  return (inputsMStats, outputs)
 
 mkEnvVars :: Buildsome -> ByteString -> Process.Env
 mkEnvVars buildsome cmdId =
