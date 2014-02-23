@@ -61,7 +61,7 @@ data Buildsome = Buildsome
   , bsLdPreloadPath :: FilePath
   , bsBuildMaps :: BuildMaps
   , bsCurJobId :: IORef Int
-  , bsSemaphore :: MSem Int -- ^ Restricts parallelism
+  , bsRestrictedParallelism :: MSem Int
   , bsDb :: Sophia.Db
   }
 
@@ -75,11 +75,17 @@ sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 localSemSignal :: MSem Int -> IO a -> IO a
 localSemSignal sem = E.bracket_ (MSem.signal sem) (MSem.wait sem)
 
+withReleasedParallelism :: Buildsome -> IO a -> IO a
+withReleasedParallelism = localSemSignal . bsRestrictedParallelism
+
+withAllocatedParallelism :: Buildsome -> IO a -> IO a
+withAllocatedParallelism = MSem.with . bsRestrictedParallelism
+
 needAndGo :: Buildsome -> Reason -> FilePath -> Socket -> IO ()
 needAndGo buildSome reason path conn = do
-  -- Temporarily paused, so we can temporarily release semaphore
-  localSemSignal (bsSemaphore buildSome) $
-    need buildSome reason [path]
+  -- Temporarily paused, so we can temporarily release parallelism
+  -- semaphore
+  withReleasedParallelism buildSome $ need buildSome reason [path]
   sendGo conn
 
 allowedUnspecifiedOutput :: FilePath -> Bool
@@ -223,7 +229,7 @@ withBuildsome db parallelism targets ldPreloadPath body = do
         , bsLdPreloadPath = ldPreloadPath
         , bsBuildMaps = toBuildMaps targets
         , bsCurJobId = curJobId
-        , bsSemaphore = semaphore
+        , bsRestrictedParallelism = semaphore
         , bsDb = db
         }
 
@@ -276,7 +282,7 @@ makeSlaveForRepPath buildSome reason outPathRep target = do
       activeConnections <- newIORef []
       slaveInputsRef <- newIORef M.empty
       execution <- async . restoreMask $ do
-        MSem.with (bsSemaphore buildSome) $ do
+        withAllocatedParallelism buildSome $ do
           buildHinted buildSome target
           mapM_ (runCmd buildSome reason mvar) $ targetCmds target
           -- Give all connections a chance to complete and perhaps fail
