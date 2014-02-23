@@ -9,7 +9,7 @@ import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Map.Strict (Map)
-import Data.Maybe (maybeToList)
+import Data.Maybe (fromMaybe)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
@@ -247,20 +247,25 @@ nextJobId masterServer =
 
 need :: MasterServer -> Reason -> [FilePath] -> IO ()
 need masterServer reason paths = do
-  slaves <- concat <$> mapM mkSlaves paths
+  slaves <- concat <$> mapM (makeSlaves masterServer reason) paths
   traverse_ slaveWait slaves
+
+makeSlaves :: MasterServer -> Reason -> FilePath -> IO [Slave]
+makeSlaves masterServer reason path = do
+  mSlaves <-
+    traverse (mkTargetSlaves reason) $
+    M.lookup path (masterBuildMap masterServer)
+  let children = M.findWithDefault [] path (masterChildrenMap masterServer)
+  childSlaves <- concat <$> traverse (mkTargetSlaves (reason ++ "(Container directory)")) children
+  return (fromMaybe [] mSlaves ++ childSlaves)
   where
-    mkSlave nuancedReason (outPathRep, target) = do
-      need masterServer ("Hint from: " ++ show outPathRep)
+    mkTargetSlaves nuancedReason (outPathRep, target) = do
+      slaves <-
+        concat <$>
+        mapM (makeSlaves masterServer ("Hint from: " ++ show outPathRep))
         (targetInputHints target)
-      makeSlaveForRepPath masterServer nuancedReason outPathRep target
-    mkSlaves path = do
-      mSlave <-
-        traverse (mkSlave reason) $
-        M.lookup path (masterBuildMap masterServer)
-      let children = M.findWithDefault [] path (masterChildrenMap masterServer)
-      childSlaves <- traverse (mkSlave (reason ++ "(Container directory)")) children
-      return (maybeToList mSlave ++ childSlaves)
+      slave <- makeSlaveForRepPath masterServer nuancedReason outPathRep target
+      return $ slave : slaves
 
 makeSlaveForRepPath :: MasterServer -> Reason -> FilePath -> Target -> IO Slave
 makeSlaveForRepPath masterServer reason outPathRep target = do
