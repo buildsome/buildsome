@@ -22,7 +22,7 @@ import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Environment (getProgName)
 import System.FilePath (takeDirectory, (</>))
-import System.Posix.Files (FileStatus, isRegularFile, modificationTime)
+import System.Posix.Files (FileStatus, isRegularFile, isDirectory, isSymbolicLink, modificationTime, readSymbolicLink)
 import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
@@ -38,6 +38,15 @@ import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
+
+type ContentHash = ByteString
+
+data FileDesc
+  = RegularFile ContentHash
+  | Symlink FilePath
+  | Directory -- files inside have their own FileDesc's
+  | NoFile -- an unlinked/deleted file at a certain path is also a
+           -- valid input or output of a build step
 
 -- TODO: Replace Maybe content hash with some descriptor of what the
 -- kind of file it is
@@ -87,13 +96,6 @@ withReleasedParallelism = localSemSignal . bsRestrictedParallelism
 
 withAllocatedParallelism :: Buildsome -> IO a -> IO a
 withAllocatedParallelism = MSem.with . bsRestrictedParallelism
-
-needAndGo :: Buildsome -> Reason -> FilePath -> Socket -> IO ()
-needAndGo buildsome reason path conn = do
-  -- Temporarily paused, so we can temporarily release parallelism
-  -- semaphore
-  withReleasedParallelism buildsome $ need buildsome reason [path]
-  sendGo conn
 
 allowedUnspecifiedOutput :: FilePath -> Bool
 allowedUnspecifiedOutput path = or
@@ -149,6 +151,9 @@ recordOutput :: Slave -> FilePath -> IO ()
 recordOutput slave path =
   atomicModifyIORef'_ (slaveOutputs slave) $ S.insert path
 
+inputIgnored :: FilePath -> Bool
+inputIgnored path = "/dev" `isPrefixOf` path
+
 handleSlaveMsg ::
   Show a =>
   Buildsome -> Socket -> a -> Slave -> Protocol.Func -> IO ()
@@ -186,9 +191,14 @@ handleSlaveMsg buildsome conn cmd slave msg =
     reason = Protocol.showFunc msg ++ " done by " ++ show cmd
     isValidOutput path =
       path `elem` outputPaths || allowedUnspecifiedOutput path
-    reportInput path = do
-      needAndGo buildsome reason path conn
-      unless (isValidOutput path) $ recordInput slave path
+    reportInput path
+      | inputIgnored path = sendGo conn
+      | otherwise = do
+        -- Temporarily paused, so we can temporarily release parallelism
+        -- semaphore
+        withReleasedParallelism buildsome $ need buildsome reason [path]
+        sendGo conn
+        unless (isValidOutput path) $ recordInput slave path
     reportOutput fullPath = do
       path <- Dir.makeRelativeToCurrentDirectory fullPath
       unless (isValidOutput path) $ do
@@ -293,19 +303,29 @@ verifyOutputList buildsome actualOutputs target = do
     specifiedOutputs = S.fromList (targetOutputPaths target)
     unusedOutputs = specifiedOutputs `S.difference` actualOutputs
 
-summarizeFileWithStat :: FilePath -> Maybe FileStatus -> IO (Maybe ByteString)
-summarizeFileWithStat path oldMStat = do
+fileDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileDesc
+fileDescOfMStat path oldMStat = do
   mContentHash <-
     case oldMStat of
     Just stat | isRegularFile stat ->
-      (Just . MD5.hash <$> BS.readFile path)
-      `catchDoesNotExist` fail (show path ++ " deleted during build!")
+      Just . MD5.hash <$>
+      (BS.readFile path `catchDoesNotExist`
+       fail (show path ++ " deleted during build!"))
     _ -> return Nothing
   -- Verify file did not change since we took its first mtime:
   newMStat <- getMFileStatus path
   when (not (compareMTimes oldMStat newMStat)) $ fail $
     show path ++ " changed during build!"
-  return $ mContentHash
+  case newMStat of
+    Nothing -> return NoFile
+    Just stat
+      | isRegularFile stat ->
+        return . RegularFile $
+        fromMaybe (error ("File disappeared: " ++ show path))
+        mContentHash
+      | isDirectory stat -> return Directory
+      | isSymbolicLink stat -> Symlink <$> readSymbolicLink path
+      | otherwise -> fail $ "Unsupported file type: " ++ show path
   where
     compareMTimes x y =
       (modificationTime <$> x) ==
@@ -336,7 +356,7 @@ makeSlaveForRepPath buildsome reason outPathRep target = do
         mapM_ readMVar =<< readIORef activeConnections
         inputsMStats <- readIORef slaveInputsRef
         actualOutputs <- readIORef slaveOutputsRef
-        _contentHashes <- M.traverseWithKey summarizeFileWithStat inputsMStats
+        _contentHashes <- M.traverseWithKey fileDescOfMStat inputsMStats
         verifyOutputList buildsome actualOutputs target
         -- TODO: Save in db!
         return ()
