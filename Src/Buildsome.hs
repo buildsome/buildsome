@@ -49,13 +49,17 @@ data Slave = Slave
   , slaveActiveConnections :: IORef [MVar ()]
   }
 
+data BuildMaps = BuildMaps
+  { _bmBuildMap :: Map FilePath (FilePath, Target) -- output paths -> min(representative) path and original spec
+  , _bmChildrenMap :: Map FilePath [(FilePath, Target)] -- parent/dir paths -> all build steps that build directly into it
+  }
+
 data Buildsome = Buildsome
   { bsRunningCmds :: IORef (Map CmdId (String, MVar Slave))
   , bsSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
   , bsAddress :: FilePath -- unix socket server
   , bsLdPreloadPath :: FilePath
-  , bsBuildMap :: Map FilePath (FilePath, Target) -- output paths -> min(representative) path and original spec
-  , bsChildrenMap :: Map FilePath [(FilePath, Target)] -- parent/dir paths -> all build steps that build directly into it
+  , bsBuildMaps :: BuildMaps
   , bsCurJobId :: IORef Int
   , bsSemaphore :: MSem Int -- ^ Restricts parallelism
   , bsDb :: Sophia.Db
@@ -185,12 +189,8 @@ handleSlaveMsg buildSome conn cmd slave msg =
                       , ", allowed outputs: ", show outputPaths ]
       -- TODO: recordOutput too so we can warn about unused specified outputs
 
-toBuildMap ::
-  [Target] ->
-  ( Map FilePath (FilePath, Target)
-  , Map FilePath [(FilePath, Target)]
-  )
-toBuildMap targets = (buildMap, childrenMap)
+toBuildMaps :: [Target] -> BuildMaps
+toBuildMaps targets = BuildMaps buildMap childrenMap
   where
     outputs =
       [ (outputPath, target)
@@ -221,8 +221,7 @@ withBuildsome db parallelism targets ldPreloadPath body = do
         , bsSlaveByRepPath = slaveMapByRepPath
         , bsAddress = serverFilename
         , bsLdPreloadPath = ldPreloadPath
-        , bsBuildMap = buildMap
-        , bsChildrenMap = childrenMap
+        , bsBuildMaps = toBuildMaps targets
         , bsCurJobId = curJobId
         , bsSemaphore = semaphore
         , bsDb = db
@@ -234,8 +233,6 @@ withBuildsome db parallelism targets ldPreloadPath body = do
         (conn, _srcAddr) <- Sock.accept listener
         AsyncContext.spawn ctx $ serve buildSome conn
       body buildSome
-  where
-    (buildMap, childrenMap) = toBuildMap targets
 
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
@@ -254,12 +251,12 @@ need buildSome reason paths = do
 makeSlaves :: Buildsome -> Reason -> FilePath -> IO [Slave]
 makeSlaves buildSome reason path = do
   mSlave <-
-    traverse (mkTargetSlave reason) $
-    M.lookup path (bsBuildMap buildSome)
-  let children = M.findWithDefault [] path (bsChildrenMap buildSome)
+    traverse (mkTargetSlave reason) $ M.lookup path buildMap
   childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) children
   return (maybeToList mSlave ++ childSlaves)
   where
+    children = M.findWithDefault [] path childrenMap
+    BuildMaps buildMap childrenMap = bsBuildMaps buildSome
     mkTargetSlave nuancedReason (outPathRep, target) =
       makeSlaveForRepPath buildSome nuancedReason outPathRep target
 
