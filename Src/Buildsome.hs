@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 import Control.Applicative ((<$>))
+import Control.Concurrent (ThreadId, myThreadId)
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
@@ -58,13 +59,19 @@ type Reason = String
 type CmdId = ByteString
 
 data Slave = Slave
-  { slaveTarget :: Target
+  { _slaveTarget :: Target
   , slaveExecution :: Async ()
-  , -- For each slave input, record modification time before input is
-    -- used, to compare it after slave is done
-    slaveInputs :: IORef (Map FilePath (Maybe FileStatus))
-  , slaveOutputs :: IORef (Set FilePath)
-  , slaveActiveConnections :: IORef [MVar ()]
+  }
+
+data ExecutingCommand = ExecutingCommand
+  { ecCmd :: String
+  , ecThreadId :: ThreadId
+  , ecTarget :: Target
+  , -- For each input file, record modification time before input is
+    -- used, to compare it after cmd is done
+    ecInputs :: IORef (Map FilePath (Maybe FileStatus))
+  , ecOutputs :: IORef (Set FilePath)
+  , ecActiveConnections :: IORef [MVar ()]
   }
 
 data BuildMaps = BuildMaps
@@ -73,7 +80,7 @@ data BuildMaps = BuildMaps
   }
 
 data Buildsome = Buildsome
-  { bsRunningCmds :: IORef (Map CmdId (String, MVar Slave))
+  { bsRunningCmds :: IORef (Map CmdId ExecutingCommand)
   , bsSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
   , bsAddress :: FilePath -- unix socket server
   , bsLdPreloadPath :: FilePath
@@ -117,50 +124,47 @@ serve buildsome conn = do
         Nothing -> do
           let cmdIds = M.keys runningCmds
           fail $ "Bad slave id: " ++ show cmdId ++ " mismatches all: " ++ show cmdIds
-        Just (cmd, slaveMVar) -> do
-          slave <- readMVar slaveMVar
-          handleSlaveConnection buildsome conn cmd slave
+        Just executingCmd -> do
+          handleCmdConnection buildsome conn executingCmd
       where
         [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
 
 maxMsgSize :: Int
 maxMsgSize = 8192
 
-handleSlaveConnection :: Show a => Buildsome -> Socket -> a -> Slave -> IO ()
-handleSlaveConnection buildsome conn cmd slave = do
+handleCmdConnection :: Buildsome -> Socket -> ExecutingCommand -> IO ()
+handleCmdConnection buildsome conn ec = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   connFinishedMVar <- newEmptyMVar
-  atomicModifyIORef_ (slaveActiveConnections slave) (connFinishedMVar:)
+  atomicModifyIORef_ (ecActiveConnections ec) (connFinishedMVar:)
   protect connFinishedMVar $ do
     sendGo conn
     recvLoop_ maxMsgSize
-      (handleSlaveMsg buildsome conn cmd slave .
-       Protocol.parseMsg) conn
+      (handleCmdMsg buildsome conn ec . Protocol.parseMsg) conn
   where
     protect mvar act =
       (act >> putMVar mvar ()) `E.catch` errHandler
-    errHandler e@E.SomeException{} = cancelWith (slaveExecution slave) e
+    errHandler e@E.SomeException{} = E.throwTo (ecThreadId ec) e
 
-recordInput :: Slave -> FilePath -> IO ()
-recordInput slave path = do
+recordInput :: ExecutingCommand -> FilePath -> IO ()
+recordInput ec path = do
   mstat <- getMFileStatus path
-  atomicModifyIORef'_ (slaveInputs slave) $
+  atomicModifyIORef'_ (ecInputs ec) $
     -- Keep the older mtime in the map, and we'll eventually compare
     -- the final mtime to the oldest one
     M.insertWith (\_new old -> old) path mstat
 
-recordOutput :: Slave -> FilePath -> IO ()
-recordOutput slave path =
-  atomicModifyIORef'_ (slaveOutputs slave) $ S.insert path
+recordOutput :: ExecutingCommand -> FilePath -> IO ()
+recordOutput ec path =
+  atomicModifyIORef'_ (ecOutputs ec) $ S.insert path
 
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
 
-handleSlaveMsg ::
-  Show a =>
-  Buildsome -> Socket -> a -> Slave -> Protocol.Func -> IO ()
-handleSlaveMsg buildsome conn cmd slave msg =
+handleCmdMsg ::
+  Buildsome -> Socket -> ExecutingCommand -> Protocol.Func -> IO ()
+handleCmdMsg buildsome conn ec msg =
   case msg of
     -- outputs
     Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
@@ -190,8 +194,8 @@ handleSlaveMsg buildsome conn cmd slave msg =
     Protocol.OpenDir path -> reportInput path
     Protocol.ReadLink path -> reportInput path
   where
-    outputPaths = targetOutputPaths (slaveTarget slave)
-    reason = Protocol.showFunc msg ++ " done by " ++ show cmd
+    outputPaths = targetOutputPaths (ecTarget ec)
+    reason = Protocol.showFunc msg ++ " done by " ++ show (ecCmd ec)
     isValidOutput path =
       path `elem` outputPaths || allowedUnspecifiedOutput path
     reportInput path
@@ -201,13 +205,13 @@ handleSlaveMsg buildsome conn cmd slave msg =
         -- semaphore
         withReleasedParallelism buildsome $ need buildsome reason [path]
         sendGo conn
-        unless (isValidOutput path) $ recordInput slave path
+        unless (isValidOutput path) $ recordInput ec path
     reportOutput fullPath = do
       path <- Dir.makeRelativeToCurrentDirectory fullPath
       unless (isValidOutput path) $ do
-        fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
+        fail $ concat [ show (ecCmd ec), " wrote to an unspecified output file: ", show path
                       , ", allowed outputs: ", show outputPaths ]
-      recordOutput slave path
+      recordOutput ec path
 
 toBuildMaps :: [Target] -> BuildMaps
 toBuildMaps targets = BuildMaps buildMap childrenMap
@@ -367,21 +371,12 @@ makeSlaveForRepPath buildsome reason outPathRep target = do
     getSlave
   where
     spawnSlave restoreMask mvar = do
-      activeConnections <- newIORef []
-      slaveInputsRef <- newIORef M.empty
-      slaveOutputsRef <- newIORef S.empty
       execution <- async . restoreMask $ do
-        withAllocatedParallelism buildsome $ do
+        (inputs, outputs) <- withAllocatedParallelism buildsome $ do
           buildHinted buildsome target
-          mapM_ (runCmd buildsome reason mvar) $ targetCmds target
-          -- Give all connections a chance to complete and perhaps fail
-          -- this execution:
-        mapM_ readMVar =<< readIORef activeConnections
-        inputsMStats <- readIORef slaveInputsRef
-        actualOutputs <- readIORef slaveOutputsRef
-        verifyOutputList buildsome actualOutputs target
-        saveExecutionLog buildsome target inputsMStats actualOutputs
-      let slave = Slave target execution slaveInputsRef slaveOutputsRef activeConnections
+          unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
+        saveExecutionLog buildsome target (M.unions inputs) (S.unions outputs)
+      let slave = Slave target execution
       putMVar mvar slave
       return slave
 
@@ -390,14 +385,32 @@ buildHinted buildsome target =
   need buildsome ("Hint from " ++ show (take 1 (targetOutputPaths target)))
   (targetInputHints target)
 
-runCmd :: Buildsome -> [Char] -> MVar Slave -> String -> IO ()
-runCmd buildsome reason mvar cmd = do
+runCmd ::
+  Buildsome -> Target -> String -> String ->
+  IO (Map FilePath (Maybe FileStatus), Set FilePath)
+runCmd buildsome target reason cmd = do
+  inputsRef <- newIORef M.empty
+  outputsRef <- newIORef S.empty
+  activeConnections <- newIORef []
+
   cmdIdNum <- nextJobId buildsome
   let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
+  tid <- myThreadId
+  let ec = ExecutingCommand cmd tid target inputsRef outputsRef activeConnections
   putStrLn $ concat ["{ ", show cmd, ": ", reason]
-  atomicModifyIORef_ (bsRunningCmds buildsome) $ M.insert cmdId (cmd, mvar)
+  atomicModifyIORef_ (bsRunningCmds buildsome) $ M.insert cmdId ec
   shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildsome cmdId) cmd
   putStrLn $ concat ["} ", show cmd]
+
+  -- Give all connections a chance to complete and perhaps fail
+  -- this execution:
+  mapM_ readMVar =<< readIORef activeConnections
+
+  actualOutputs <- readIORef outputsRef
+  verifyOutputList buildsome actualOutputs target
+
+  inputsMStats <- readIORef inputsRef
+  return (inputsMStats, actualOutputs)
 
 mkEnvVars :: Buildsome -> ByteString -> Process.Env
 mkEnvVars buildsome cmdId =
