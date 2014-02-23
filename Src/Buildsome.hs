@@ -49,16 +49,16 @@ data Slave = Slave
   , slaveActiveConnections :: IORef [MVar ()]
   }
 
-data MasterServer = MasterServer
-  { masterRunningCmds :: IORef (Map CmdId (String, MVar Slave))
-  , masterSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
-  , masterAddress :: FilePath -- unix socket server
-  , masterLdPreloadPath :: FilePath
-  , masterBuildMap :: Map FilePath (FilePath, Target) -- output paths -> min(representative) path and original spec
-  , masterChildrenMap :: Map FilePath [(FilePath, Target)] -- parent/dir paths -> all build steps that build directly into it
-  , masterCurJobId :: IORef Int
-  , masterSemaphore :: MSem Int -- ^ Restricts parallelism
-  , masterDb :: Sophia.Db
+data Buildsome = Buildsome
+  { bsRunningCmds :: IORef (Map CmdId (String, MVar Slave))
+  , bsSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
+  , bsAddress :: FilePath -- unix socket server
+  , bsLdPreloadPath :: FilePath
+  , bsBuildMap :: Map FilePath (FilePath, Target) -- output paths -> min(representative) path and original spec
+  , bsChildrenMap :: Map FilePath [(FilePath, Target)] -- parent/dir paths -> all build steps that build directly into it
+  , bsCurJobId :: IORef Int
+  , bsSemaphore :: MSem Int -- ^ Restricts parallelism
+  , bsDb :: Sophia.Db
   }
 
 slaveWait :: Slave -> IO ()
@@ -71,11 +71,11 @@ sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 localSemSignal :: MSem Int -> IO a -> IO a
 localSemSignal sem = E.bracket_ (MSem.signal sem) (MSem.wait sem)
 
-needAndGo :: MasterServer -> Reason -> FilePath -> Socket -> IO ()
-needAndGo masterServer reason path conn = do
+needAndGo :: Buildsome -> Reason -> FilePath -> Socket -> IO ()
+needAndGo buildSome reason path conn = do
   -- Temporarily paused, so we can temporarily release semaphore
-  localSemSignal (masterSemaphore masterServer) $
-    need masterServer reason [path]
+  localSemSignal (bsSemaphore buildSome) $
+    need buildSome reason [path]
   sendGo conn
 
 allowedUnspecifiedOutput :: FilePath -> Bool
@@ -84,28 +84,28 @@ allowedUnspecifiedOutput path = or
   , ".pyc" `isSuffixOf` path
   ]
 
-serve :: MasterServer -> Socket -> IO ()
-serve masterServer conn = do
+serve :: Buildsome -> Socket -> IO ()
+serve buildSome conn = do
   helloLine <- SockBS.recv conn 1024
   case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
     Nothing -> fail $ "Bad connection started with: " ++ show helloLine
     Just pidCmdId -> do
-      runningCmds <- readIORef (masterRunningCmds masterServer)
+      runningCmds <- readIORef (bsRunningCmds buildSome)
       case M.lookup cmdId runningCmds of
         Nothing -> do
           let cmdIds = M.keys runningCmds
           fail $ "Bad slave id: " ++ show cmdId ++ " mismatches all: " ++ show cmdIds
         Just (cmd, slaveMVar) -> do
           slave <- readMVar slaveMVar
-          handleSlaveConnection masterServer conn cmd slave
+          handleSlaveConnection buildSome conn cmd slave
       where
         [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
 
 maxMsgSize :: Int
 maxMsgSize = 8192
 
-handleSlaveConnection :: Show a => MasterServer -> Socket -> a -> Slave -> IO ()
-handleSlaveConnection masterServer conn cmd slave = do
+handleSlaveConnection :: Show a => Buildsome -> Socket -> a -> Slave -> IO ()
+handleSlaveConnection buildSome conn cmd slave = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   connFinishedMVar <- newEmptyMVar
@@ -113,7 +113,7 @@ handleSlaveConnection masterServer conn cmd slave = do
   protect connFinishedMVar $ do
     sendGo conn
     recvLoop_ maxMsgSize
-      (handleSlaveMsg masterServer conn cmd slave .
+      (handleSlaveMsg buildSome conn cmd slave .
        Protocol.parseMsg) conn
   where
     protect mvar act =
@@ -143,8 +143,8 @@ recordInput slave path = do
 
 handleSlaveMsg ::
   Show a =>
-  MasterServer -> Socket -> a -> Slave -> Protocol.Func -> IO ()
-handleSlaveMsg masterServer conn cmd slave msg =
+  Buildsome -> Socket -> a -> Slave -> Protocol.Func -> IO ()
+handleSlaveMsg buildSome conn cmd slave msg =
   case msg of
     -- outputs
     Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
@@ -176,7 +176,7 @@ handleSlaveMsg masterServer conn cmd slave msg =
     isValidOutput path =
       path `elem` outputPaths || allowedUnspecifiedOutput path
     reportInput path = do
-      needAndGo masterServer reason path conn
+      needAndGo buildSome reason path conn
       unless (isValidOutput path) $ recordInput slave path
     reportOutput fullPath = do
       path <- Dir.makeRelativeToCurrentDirectory fullPath
@@ -207,33 +207,33 @@ toBuildMap targets = (buildMap, childrenMap)
       [ (outputPath, pair target)
       | (outputPath, target) <- outputs ]
 
-withServer :: Sophia.Db -> Int -> [Target] -> FilePath -> (MasterServer -> IO a) -> IO a
-withServer db parallelism targets ldPreloadPath body = do
+withBuildsome :: Sophia.Db -> Int -> [Target] -> FilePath -> (Buildsome -> IO a) -> IO a
+withBuildsome db parallelism targets ldPreloadPath body = do
   runningCmds <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
-  masterPid <- getProcessID
-  let serverFilename = "/tmp/efbuild-" ++ show masterPid
+  bsPid <- getProcessID
+  let serverFilename = "/tmp/efbuild-" ++ show bsPid
   curJobId <- newIORef 0
   semaphore <- MSem.new parallelism
-  let masterServer =
-        MasterServer
-        { masterRunningCmds = runningCmds
-        , masterSlaveByRepPath = slaveMapByRepPath
-        , masterAddress = serverFilename
-        , masterLdPreloadPath = ldPreloadPath
-        , masterBuildMap = buildMap
-        , masterChildrenMap = childrenMap
-        , masterCurJobId = curJobId
-        , masterSemaphore = semaphore
-        , masterDb = db
+  let buildSome =
+        Buildsome
+        { bsRunningCmds = runningCmds
+        , bsSlaveByRepPath = slaveMapByRepPath
+        , bsAddress = serverFilename
+        , bsLdPreloadPath = ldPreloadPath
+        , bsBuildMap = buildMap
+        , bsChildrenMap = childrenMap
+        , bsCurJobId = curJobId
+        , bsSemaphore = semaphore
+        , bsDb = db
         }
 
   withUnixSeqPacketListener serverFilename $ \listener ->
     AsyncContext.new $ \ctx -> do
       _ <- AsyncContext.spawn ctx $ forever $ do
         (conn, _srcAddr) <- Sock.accept listener
-        AsyncContext.spawn ctx $ serve masterServer conn
-      body masterServer
+        AsyncContext.spawn ctx $ serve buildSome conn
+      body buildSome
   where
     (buildMap, childrenMap) = toBuildMap targets
 
@@ -242,33 +242,33 @@ getLdPreloadPath = do
   progName <- getProgName
   Dir.canonicalizePath (takeDirectory progName </> "fs_override.so")
 
-nextJobId :: MasterServer -> IO Int
-nextJobId masterServer =
-  atomicModifyIORef (masterCurJobId masterServer) $ \oldJobId -> (oldJobId+1, oldJobId)
+nextJobId :: Buildsome -> IO Int
+nextJobId buildSome =
+  atomicModifyIORef (bsCurJobId buildSome) $ \oldJobId -> (oldJobId+1, oldJobId)
 
-need :: MasterServer -> Reason -> [FilePath] -> IO ()
-need masterServer reason paths = do
-  slaves <- concat <$> mapM (makeSlaves masterServer reason) paths
+need :: Buildsome -> Reason -> [FilePath] -> IO ()
+need buildSome reason paths = do
+  slaves <- concat <$> mapM (makeSlaves buildSome reason) paths
   traverse_ slaveWait slaves
 
-makeSlaves :: MasterServer -> Reason -> FilePath -> IO [Slave]
-makeSlaves masterServer reason path = do
+makeSlaves :: Buildsome -> Reason -> FilePath -> IO [Slave]
+makeSlaves buildSome reason path = do
   mSlave <-
     traverse (mkTargetSlave reason) $
-    M.lookup path (masterBuildMap masterServer)
-  let children = M.findWithDefault [] path (masterChildrenMap masterServer)
+    M.lookup path (bsBuildMap buildSome)
+  let children = M.findWithDefault [] path (bsChildrenMap buildSome)
   childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) children
   return (maybeToList mSlave ++ childSlaves)
   where
     mkTargetSlave nuancedReason (outPathRep, target) =
-      makeSlaveForRepPath masterServer nuancedReason outPathRep target
+      makeSlaveForRepPath buildSome nuancedReason outPathRep target
 
-makeSlaveForRepPath :: MasterServer -> Reason -> FilePath -> Target -> IO Slave
-makeSlaveForRepPath masterServer reason outPathRep target = do
+makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
+makeSlaveForRepPath buildSome reason outPathRep target = do
   newSlaveMVar <- newEmptyMVar
   E.mask $ \restoreMask -> do
     getSlave <-
-      atomicModifyIORef (masterSlaveByRepPath masterServer) $
+      atomicModifyIORef (bsSlaveByRepPath buildSome) $
       \oldSlaveMap ->
       case M.lookup outPathRep oldSlaveMap of
       Nothing -> (M.insert outPathRep newSlaveMVar oldSlaveMap, spawnSlave restoreMask newSlaveMVar)
@@ -279,9 +279,9 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
       activeConnections <- newIORef []
       slaveInputsRef <- newIORef M.empty
       execution <- async . restoreMask $ do
-        MSem.with (masterSemaphore masterServer) $ do
-          buildHinted masterServer target
-          mapM_ (runCmd masterServer reason mvar) $ targetCmds target
+        MSem.with (bsSemaphore buildSome) $ do
+          buildHinted buildSome target
+          mapM_ (runCmd buildSome reason mvar) $ targetCmds target
           -- Give all connections a chance to complete and perhaps fail
           -- this execution:
         mapM_ readMVar =<< readIORef activeConnections
@@ -293,9 +293,9 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
       putMVar mvar slave
       return slave
 
-buildHinted :: MasterServer -> Target -> IO ()
-buildHinted masterServer target =
-  need masterServer ("Hint from " ++ show (take 1 (targetOutputPaths target)))
+buildHinted :: Buildsome -> Target -> IO ()
+buildHinted buildSome target =
+  need buildSome ("Hint from " ++ show (take 1 (targetOutputPaths target)))
   (targetInputHints target)
 
 summarizeInput :: FilePath -> Maybe FileStatus -> IO (Maybe ByteString)
@@ -316,19 +316,19 @@ summarizeInput path oldMStat = do
       (modificationTime <$> x) ==
       (modificationTime <$> y)
 
-runCmd :: MasterServer -> [Char] -> MVar Slave -> String -> IO ()
-runCmd masterServer reason mvar cmd = do
-  cmdIdNum <- nextJobId masterServer
+runCmd :: Buildsome -> [Char] -> MVar Slave -> String -> IO ()
+runCmd buildSome reason mvar cmd = do
+  cmdIdNum <- nextJobId buildSome
   let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
   putStrLn $ concat ["{ ", show cmd, ": ", reason]
-  atomicModifyIORef_ (masterRunningCmds masterServer) $ M.insert cmdId (cmd, mvar)
-  shellCmdVerify ["HOME", "PATH"] (mkEnvVars masterServer cmdId) cmd
+  atomicModifyIORef_ (bsRunningCmds buildSome) $ M.insert cmdId (cmd, mvar)
+  shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildSome cmdId) cmd
   putStrLn $ concat ["} ", show cmd]
 
-mkEnvVars :: MasterServer -> ByteString -> Process.Env
-mkEnvVars masterServer cmdId =
-    [ ("LD_PRELOAD", masterLdPreloadPath masterServer)
-    , ("EFBUILD_MASTER_UNIX_SOCKADDR", masterAddress masterServer)
+mkEnvVars :: Buildsome -> ByteString -> Process.Env
+mkEnvVars buildSome cmdId =
+    [ ("LD_PRELOAD", bsLdPreloadPath buildSome)
+    , ("EFBUILD_MASTER_UNIX_SOCKADDR", bsAddress buildSome)
     , ("EFBUILD_CMD_ID", BS.unpack cmdId)
     ]
 
@@ -355,9 +355,9 @@ main = do
   withDb buildDbFilename $ \db -> do
     let targets = makefileTargets makefile
     ldPreloadPath <- getLdPreloadPath
-    withServer db parallelism targets ldPreloadPath $ \masterServer ->
+    withBuildsome db parallelism targets ldPreloadPath $ \buildSome ->
       case targets of
       [] -> putStrLn "Empty makefile, done nothing..."
       (target:_) ->
-        need masterServer "First target in Makefile" $
+        need buildSome "First target in Makefile" $
         take 1 (targetOutputPaths target)
