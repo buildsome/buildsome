@@ -1,4 +1,3 @@
-{-# OPTIONS -Wall -O2 #-}
 module Lib.Protocol
   ( parseMsg
   , OpenMode(..), showOpenMode

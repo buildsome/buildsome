@@ -7,13 +7,12 @@ import Control.Concurrent.Async
 import Control.Concurrent.MVar
 import Data.IORef
 import Data.IntMap (IntMap)
-import Lib.IORef (atomicModifyIORef'_)
 import qualified Control.Exception as E
 import qualified Data.IntMap as IntMap
 
 data AsyncContext = AsyncContext
-  { ctxNextName :: IORef Int
-  , ctxCancelActions :: MVar (IntMap (IO ()))
+  { _ctxNextName :: IORef Int
+  , _ctxCancelActions :: MVar (IntMap (IO ()))
   }
 
 new :: (AsyncContext -> IO a) -> IO a

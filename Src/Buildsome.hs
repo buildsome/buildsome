@@ -1,9 +1,10 @@
-{-# OPTIONS -Wall -O2 #-}
+{-# LANGUAGE DeriveGeneric #-}
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
 import Control.Monad
+import Data.Binary (Binary, put)
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
 import Data.IORef
@@ -12,6 +13,8 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Set (Set)
 import Data.Traversable (traverse)
+import GHC.Generics (Generic)
+import Lib.Binary (runPut)
 import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, catchDoesNotExist)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
@@ -47,9 +50,9 @@ data FileDesc
   | Directory -- files inside have their own FileDesc's
   | NoFile -- an unlinked/deleted file at a certain path is also a
            -- valid input or output of a build step
+  deriving (Generic)
 
--- TODO: Replace Maybe content hash with some descriptor of what the
--- kind of file it is
+instance Binary FileDesc
 
 type Reason = String
 type CmdId = ByteString
@@ -331,6 +334,26 @@ fileDescOfMStat path oldMStat = do
       (modificationTime <$> x) ==
       (modificationTime <$> y)
 
+targetKey :: Target -> ByteString
+targetKey target =
+  MD5.hash $ BS.pack (unlines (targetCmds target)) -- TODO: Canonicalize commands (whitespace/etc)
+
+data ExecutionLog = ExecutionLog
+  { _inputsContentHashes :: Map FilePath FileDesc
+  , _outputsContentHashes :: Map FilePath FileDesc
+  } deriving (Generic)
+instance Binary ExecutionLog
+
+saveExecutionLog :: Buildsome -> Target -> Map FilePath (Maybe FileStatus) -> Set FilePath -> IO ()
+saveExecutionLog buildsome target inputsMStats actualOutputs = do
+  inputsDescs <- M.traverseWithKey fileDescOfMStat inputsMStats
+  outputDescPairs <-
+    forM (S.toList actualOutputs) $ \outPath -> do
+      fileDesc <- fileDescOfMStat outPath =<< getMFileStatus outPath
+      return (outPath, fileDesc)
+  let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs)
+  Sophia.setValue (bsDb buildsome) (targetKey target) (runPut (put execLog))
+
 makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
 makeSlaveForRepPath buildsome reason outPathRep target = do
   newSlaveMVar <- newEmptyMVar
@@ -356,10 +379,8 @@ makeSlaveForRepPath buildsome reason outPathRep target = do
         mapM_ readMVar =<< readIORef activeConnections
         inputsMStats <- readIORef slaveInputsRef
         actualOutputs <- readIORef slaveOutputsRef
-        _contentHashes <- M.traverseWithKey fileDescOfMStat inputsMStats
         verifyOutputList buildsome actualOutputs target
-        -- TODO: Save in db!
-        return ()
+        saveExecutionLog buildsome target inputsMStats actualOutputs
       let slave = Slave target execution slaveInputsRef slaveOutputsRef activeConnections
       putMVar mvar slave
       return slave

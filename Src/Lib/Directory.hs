@@ -3,7 +3,7 @@ module Lib.Directory (getMFileStatus, fileExists, catchDoesNotExist) where
 import Control.Applicative ((<$>))
 import Data.Maybe (isJust)
 import System.IO.Error
-import System.Posix.Files (FileStatus, getFileStatus, isRegularFile, modificationTime)
+import System.Posix.Files (FileStatus, getFileStatus)
 import qualified Control.Exception as E
 
 catchDoesNotExist :: IO a -> IO a -> IO a

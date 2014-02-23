@@ -21,7 +21,7 @@ cabal-version:       >=1.10
 executable buildsome
   hs-source-dirs:    Src/
   main-is:           Buildsome.hs
-  ghc-options:       -threaded
+  ghc-options:       -threaded -Wall -O2
   other-modules:     Opts
                ,     Lib.AsyncContext
                ,     Lib.ByteString
@@ -31,9 +31,10 @@ executable buildsome
                ,     Lib.Protocol
                ,     Lib.Sock
                ,     Lib.Directory
+               ,     Lib.Binary
 
   build-depends:     base >=4.6 && <4.7
-               ,     binary >=0.5 && <0.6
+               ,     binary >=0.7 && <0.8
                ,     containers >=0.5 && <0.6
                ,     bytestring >=0.10 && <0.11
                ,     network >=2.4 && <2.5
