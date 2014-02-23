@@ -13,6 +13,7 @@ import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Set (Set)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
+import Lib.Directory (getMFileStatus, fileExists, catchDoesNotExist)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), Target(..), makefileParser)
 import Lib.Process (shellCmdVerify)
@@ -21,8 +22,7 @@ import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Environment (getProgName)
 import System.FilePath (takeDirectory, (</>))
-import System.IO.Error
-import System.Posix.Files (FileStatus, getFileStatus, isRegularFile, modificationTime)
+import System.Posix.Files (FileStatus, isRegularFile, modificationTime)
 import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
@@ -133,19 +133,6 @@ handleSlaveConnection buildSome conn cmd slave = do
     protect mvar act =
       (act >> putMVar mvar ()) `E.catch` errHandler
     errHandler e@E.SomeException{} = cancelWith (slaveExecution slave) e
-
-catchDoesNotExist :: IO a -> IO a -> IO a
-catchDoesNotExist act handler =
-  E.catchJust predicate act $ \() -> handler
-  where
-    predicate e
-      | isDoesNotExistErrorType (ioeGetErrorType e) = Just ()
-      | otherwise = Nothing
-
-getMFileStatus :: FilePath -> IO (Maybe FileStatus)
-getMFileStatus path =
-  (Just <$> getFileStatus path)
-  `catchDoesNotExist` return Nothing
 
 recordInput :: Slave -> FilePath -> IO ()
 recordInput slave path = do
@@ -276,9 +263,6 @@ makeSlaves buildSome reason path = do
     BuildMaps buildMap childrenMap = bsBuildMaps buildSome
     mkTargetSlave nuancedReason (outPathRep, target) =
       makeSlaveForRepPath buildSome nuancedReason outPathRep target
-
-fileExists :: FilePath -> IO Bool
-fileExists path = isJust <$> getMFileStatus path
 
 handleActualOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
 handleActualOutputs buildSome actualOutputs target = do
