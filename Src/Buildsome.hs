@@ -17,7 +17,8 @@ import Lib.Makefile (Makefile(..), Target(..), makefileParser)
 import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
-import System.Environment (getProgName, getArgs)
+import Opts (getOpt, Opt(..))
+import System.Environment (getProgName)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Error
 import System.Posix.Files (FileStatus, getFileStatus, isRegularFile, modificationTime)
@@ -207,13 +208,13 @@ toBuildMap targets = (buildMap, childrenMap)
       | (outputPath, target) <- outputs ]
 
 withServer :: Sophia.Db -> Int -> [Target] -> FilePath -> (MasterServer -> IO a) -> IO a
-withServer db parallelCount targets ldPreloadPath body = do
+withServer db parallelism targets ldPreloadPath body = do
   runningCmds <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   masterPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show masterPid
   curJobId <- newIORef 0
-  semaphore <- MSem.new parallelCount
+  semaphore <- MSem.new parallelism
   let masterServer =
         MasterServer
         { masterRunningCmds = runningCmds
@@ -330,16 +331,6 @@ mkEnvVars masterServer cmdId =
     , ("EFBUILD_CMD_ID", BS.unpack cmdId)
     ]
 
-parseCmdArgs :: IO (FilePath, FilePath)
-parseCmdArgs = do
-  progName <- getProgName
-  args <- getArgs
-  makefileName <-
-    case args of
-    [makefileName] -> return makefileName
-    _ -> fail $ "Usage: " ++ progName ++ " <makefilepath>"
-  return (makefileName, takeDirectory makefileName </> "build.db")
-
 parseMakefile :: FilePath -> IO Makefile
 parseMakefile makefileName = do
   parseResult <- P.parseOnly makefileParser <$> BS.readFile makefileName
@@ -356,12 +347,14 @@ withDb dbFileName body = do
 
 main :: IO ()
 main = do
-  (makefileName, buildDbFilename) <- parseCmdArgs
+  Opt makefileName mparallelism <- getOpt
+  let buildDbFilename = takeDirectory makefileName </> "build.db"
+      parallelism = fromMaybe 1 mparallelism
   makefile <- parseMakefile makefileName
   withDb buildDbFilename $ \db -> do
     let targets = makefileTargets makefile
     ldPreloadPath <- getLdPreloadPath
-    withServer db 4 targets ldPreloadPath $ \masterServer ->
+    withServer db parallelism targets ldPreloadPath $ \masterServer ->
       case targets of
       [] -> putStrLn "Empty makefile, done nothing..."
       (target:_) ->
