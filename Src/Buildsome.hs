@@ -13,7 +13,7 @@ import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, maybeToList, isJust)
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.Set (Set)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
@@ -290,8 +290,8 @@ makeSlaves buildsome reason path = do
     mkTargetSlave nuancedReason (outPathRep, target) =
       makeSlaveForRepPath buildsome nuancedReason outPathRep target
 
-verifyOutputList :: Buildsome -> Set FilePath -> Target -> IO ()
-verifyOutputList buildsome actualOutputs target = do
+verifyCmdOutputs :: Buildsome -> Set FilePath -> String -> Target -> IO ()
+verifyCmdOutputs buildsome actualOutputs cmd target = do
   unless (S.null unusedOutputs) $
     putStrLn $ "WARNING: Unused outputs: " ++ show (S.toList unusedOutputs)
 
@@ -299,23 +299,22 @@ verifyOutputList buildsome actualOutputs target = do
   unless (null illegalUnspecified) $ do
     mapM_ Dir.removeFile illegalUnspecified
     fail $ concat
-      [ show (targetCmds target), " wrote to unspecified output files: ", show illegalUnspecified
+      [ show cmd, " wrote to unspecified output files: ", show illegalUnspecified
       , ", allowed outputs: ", show (targetOutputPaths target) ]
 
   existingUnspecifiedOutputs <- filterM fileExists unspecifiedOutputs
   case bsDeleteUnspecifiedOutput buildsome of
-    DeleteUnspecifiedOutputs ->
-      forM_ existingUnspecifiedOutputs $
-      \out -> do
-        exists <- getMFileStatus out
-        when (isJust exists) $ do
-          putStrLn $ "Removing leaked/unspecified output: " ++ show out
-          Dir.removeFile out
+    DeleteUnspecifiedOutputs -> do
+      when (not (null existingUnspecifiedOutputs)) $
+        putStrLn $ concat
+        [ "WARNING: Removing unspecified outputs: "
+        , show existingUnspecifiedOutputs, " from ", show cmd ]
+      mapM_ Dir.removeFile existingUnspecifiedOutputs
     DontDeleteUnspecifiedOutputs ->
       when (not (null existingUnspecifiedOutputs)) $
       putStrLn $ concat
       [ "WARNING: Keeping leaked unspecified outputs: "
-      , show existingUnspecifiedOutputs ]
+      , show existingUnspecifiedOutputs, " from ", show cmd ]
   where
     unspecifiedOutputs = S.toList (actualOutputs `S.difference` specifiedOutputs)
     specifiedOutputs = S.fromList (targetOutputPaths target)
@@ -475,7 +474,7 @@ runCmd buildsome target reason cmd = do
   mapM_ readMVar =<< readIORef activeConnections
 
   actualOutputs <- readIORef outputsRef
-  verifyOutputList buildsome actualOutputs target
+  verifyCmdOutputs buildsome actualOutputs cmd target
 
   inputsMStats <- readIORef inputsRef
   return (inputsMStats, actualOutputs)
