@@ -264,8 +264,8 @@ makeSlaves buildSome reason path = do
     mkTargetSlave nuancedReason (outPathRep, target) =
       makeSlaveForRepPath buildSome nuancedReason outPathRep target
 
-handleActualOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
-handleActualOutputs buildSome actualOutputs target = do
+verifyOutputList :: Buildsome -> Set FilePath -> Target -> IO ()
+verifyOutputList buildSome actualOutputs target = do
   unless (S.null unusedOutputs) $
     putStrLn $ "WARNING: Unused outputs: " ++ show (S.toList unusedOutputs)
 
@@ -313,7 +313,7 @@ makeSlaveForRepPath buildSome reason outPathRep target = do
         inputsMStats <- readIORef slaveInputsRef
         actualOutputs <- readIORef slaveOutputsRef
         _contentHashes <- M.traverseWithKey summarizeInput inputsMStats
-        handleActualOutputs buildSome actualOutputs target
+        verifyOutputList buildSome actualOutputs target
         -- TODO: Save in db!
         return ()
       let slave = Slave target execution slaveInputsRef slaveOutputsRef activeConnections
