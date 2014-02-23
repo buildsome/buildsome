@@ -9,7 +9,7 @@ import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
@@ -253,20 +253,15 @@ need masterServer reason paths = do
 
 makeSlaves :: MasterServer -> Reason -> FilePath -> IO [Slave]
 makeSlaves masterServer reason path = do
-  mSlaves <-
-    traverse (mkTargetSlaves reason) $
+  mSlave <-
+    traverse (mkTargetSlave reason) $
     M.lookup path (masterBuildMap masterServer)
   let children = M.findWithDefault [] path (masterChildrenMap masterServer)
-  childSlaves <- concat <$> traverse (mkTargetSlaves (reason ++ "(Container directory)")) children
-  return (fromMaybe [] mSlaves ++ childSlaves)
+  childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) children
+  return (maybeToList mSlave ++ childSlaves)
   where
-    mkTargetSlaves nuancedReason (outPathRep, target) = do
-      slaves <-
-        concat <$>
-        mapM (makeSlaves masterServer ("Hint from: " ++ show outPathRep))
-        (targetInputHints target)
-      slave <- makeSlaveForRepPath masterServer nuancedReason outPathRep target
-      return $ slave : slaves
+    mkTargetSlave nuancedReason (outPathRep, target) =
+      makeSlaveForRepPath masterServer nuancedReason outPathRep target
 
 makeSlaveForRepPath :: MasterServer -> Reason -> FilePath -> Target -> IO Slave
 makeSlaveForRepPath masterServer reason outPathRep target = do
@@ -285,6 +280,7 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
       slaveInputsRef <- newIORef M.empty
       execution <- async . restoreMask $ do
         MSem.with (masterSemaphore masterServer) $ do
+          buildHinted masterServer target
           mapM_ (runCmd masterServer reason mvar) $ targetCmds target
           -- Give all connections a chance to complete and perhaps fail
           -- this execution:
@@ -296,6 +292,11 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
       let slave = Slave target execution slaveInputsRef activeConnections
       putMVar mvar slave
       return slave
+
+buildHinted :: MasterServer -> Target -> IO ()
+buildHinted masterServer target =
+  need masterServer ("Hint from " ++ show (take 1 (targetOutputPaths target)))
+  (targetInputHints target)
 
 summarizeInput :: FilePath -> Maybe FileStatus -> IO (Maybe ByteString)
 summarizeInput path oldMStat = do
