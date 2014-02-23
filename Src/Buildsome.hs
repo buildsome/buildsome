@@ -12,17 +12,19 @@ import Data.Map.Strict (Map)
 import Data.Maybe (maybeToList)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
-import Lib.IORef (atomicModifyIORef_)
+import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), Target(..), makefileParser)
 import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
-import System.Directory (canonicalizePath, makeRelativeToCurrentDirectory)
 import System.Environment (getProgName, getArgs)
 import System.FilePath (takeDirectory, (</>))
+import System.IO.Error
+import System.Posix.Files (FileStatus, getFileStatus, isRegularFile, modificationTime)
 import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
+import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.Attoparsec.ByteString.Char8 as P
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
@@ -32,6 +34,7 @@ import qualified Lib.Process as Process
 import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
+import qualified System.Directory as Dir
 
 type Reason = String
 type CmdId = ByteString
@@ -39,6 +42,9 @@ type CmdId = ByteString
 data Slave = Slave
   { slaveTarget :: Target
   , slaveExecution :: Async ()
+  , -- For each slave input, record modification time before input is
+    -- used, to compare it after slave is done
+    slaveInputs :: IORef (Map FilePath (Maybe FileStatus))
   , slaveActiveConnections :: IORef [MVar ()]
   }
 
@@ -113,42 +119,70 @@ handleSlaveConnection masterServer conn cmd slave = do
       (act >> putMVar mvar ()) `E.catch` errHandler
     errHandler e@E.SomeException{} = cancelWith (slaveExecution slave) e
 
+catchDoesNotExist :: IO a -> IO a -> IO a
+catchDoesNotExist act handler =
+  E.catchJust predicate act $ \() -> handler
+  where
+    predicate e
+      | isDoesNotExistErrorType (ioeGetErrorType e) = Just ()
+      | otherwise = Nothing
+
+getMFileStatus :: FilePath -> IO (Maybe FileStatus)
+getMFileStatus path =
+  (Just <$> getFileStatus path)
+  `catchDoesNotExist` return Nothing
+
+recordInput :: Slave -> FilePath -> IO ()
+recordInput slave path = do
+  mstat <- getMFileStatus path
+  atomicModifyIORef'_ (slaveInputs slave) $
+    -- Keep the older mtime in the map, and we'll eventually compare
+    -- the final mtime to the oldest one
+    M.insertWith (\_new old -> old) path mstat
+
 handleSlaveMsg ::
   Show a =>
   MasterServer -> Socket -> a -> Slave -> Protocol.Func -> IO ()
 handleSlaveMsg masterServer conn cmd slave msg =
   case msg of
-  Protocol.Open path Protocol.OpenWriteMode _ -> verifyLegalOutput path
-  Protocol.Open path _ (Protocol.Create _) -> verifyLegalOutput path
-  Protocol.Creat path _ -> verifyLegalOutput path
-  Protocol.Rename a b -> verifyLegalOutput a >> verifyLegalOutput b
-  Protocol.Unlink path -> verifyLegalOutput path
-  Protocol.Truncate path _ -> verifyLegalOutput path
-  Protocol.Chmod path _ -> verifyLegalOutput path
-  Protocol.Chown path _ _ -> verifyLegalOutput path
-  Protocol.MkNod path _ _ -> verifyLegalOutput path -- TODO: Special mkNod handling?
-  Protocol.MkDir path _ -> verifyLegalOutput path
-  Protocol.RmDir path -> verifyLegalOutput path
+    -- outputs
+    Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
+    Protocol.Open path _ (Protocol.Create _) -> reportOutput path
+    Protocol.Creat path _ -> reportOutput path
+    Protocol.Rename a b -> reportOutput a >> reportOutput b
+    Protocol.Unlink path -> reportOutput path
+    Protocol.Truncate path _ -> reportOutput path
+    Protocol.Chmod path _ -> reportOutput path
+    Protocol.Chown path _ _ -> reportOutput path
+    Protocol.MkNod path _ _ -> reportOutput path -- TODO: Special mkNod handling?
+    Protocol.MkDir path _ -> reportOutput path
+    Protocol.RmDir path -> reportOutput path
 
-  Protocol.SymLink target linkPath -> verifyLegalOutput linkPath >> pauseToBuild target
-  Protocol.Link src dest -> verifyLegalOutput dest >> pauseToBuild src
+    -- I/O
+    Protocol.SymLink target linkPath -> reportOutput linkPath >> reportInput target
+    Protocol.Link src dest -> reportOutput dest >> reportInput src
 
-  Protocol.Open path Protocol.OpenReadMode _creationMode -> pauseToBuild path
-  Protocol.Access path _mode -> pauseToBuild path
-  Protocol.Stat path -> pauseToBuild path
-  Protocol.LStat path -> pauseToBuild path
-  Protocol.OpenDir path -> pauseToBuild path
-  Protocol.ReadLink path -> pauseToBuild path
+    -- inputs
+    Protocol.Open path Protocol.OpenReadMode _creationMode -> reportInput path
+    Protocol.Access path _mode -> reportInput path
+    Protocol.Stat path -> reportInput path
+    Protocol.LStat path -> reportInput path
+    Protocol.OpenDir path -> reportInput path
+    Protocol.ReadLink path -> reportInput path
   where
     outputPaths = targetOutputPaths (slaveTarget slave)
     reason = Protocol.showFunc msg ++ " done by " ++ show cmd
-    pauseToBuild path = needAndGo masterServer reason path conn
-    verifyLegalOutput fullPath = do
-      path <- makeRelativeToCurrentDirectory fullPath
-      when (path `notElem` outputPaths &&
-            not (allowedUnspecifiedOutput path)) $ do
+    isValidOutput path =
+      path `elem` outputPaths || allowedUnspecifiedOutput path
+    reportInput path = do
+      needAndGo masterServer reason path conn
+      unless (isValidOutput path) $ recordInput slave path
+    reportOutput fullPath = do
+      path <- Dir.makeRelativeToCurrentDirectory fullPath
+      unless (isValidOutput path) $ do
         fail $ concat [ show cmd, " wrote to an unspecified output file: ", show path
                       , ", allowed outputs: ", show outputPaths ]
+      -- TODO: recordOutput too so we can warn about unused specified outputs
 
 toBuildMap ::
   [Target] ->
@@ -205,7 +239,7 @@ withServer db parallelCount targets ldPreloadPath body = do
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
   progName <- getProgName
-  canonicalizePath (takeDirectory progName </> "fs_override.so")
+  Dir.canonicalizePath (takeDirectory progName </> "fs_override.so")
 
 nextJobId :: MasterServer -> IO Int
 nextJobId masterServer =
@@ -242,15 +276,38 @@ makeSlaveForRepPath masterServer reason outPathRep target = do
   where
     spawnSlave restoreMask mvar = do
       activeConnections <- newIORef []
+      slaveInputsRef <- newIORef M.empty
       execution <- async . restoreMask $ do
         MSem.with (masterSemaphore masterServer) $ do
           mapM_ (runCmd masterServer reason mvar) $ targetCmds target
           -- Give all connections a chance to complete and perhaps fail
           -- this execution:
         mapM_ readMVar =<< readIORef activeConnections
-      let slave = Slave target execution activeConnections
+        inputsMStats <- readIORef slaveInputsRef
+        _contentHashes <- M.traverseWithKey summarizeInput inputsMStats
+        -- TODO: Save these in db!
+        return ()
+      let slave = Slave target execution slaveInputsRef activeConnections
       putMVar mvar slave
       return slave
+
+summarizeInput :: FilePath -> Maybe FileStatus -> IO (Maybe ByteString)
+summarizeInput path oldMStat = do
+  mContentHash <-
+    case oldMStat of
+    Just stat | isRegularFile stat ->
+      (Just . MD5.hash <$> BS.readFile path)
+      `catchDoesNotExist` fail (show path ++ " deleted during build!")
+    _ -> return Nothing
+  -- Verify file did not change since we took its first mtime:
+  newMStat <- getMFileStatus path
+  when (not (compareMTimes oldMStat newMStat)) $ fail $
+    show path ++ " changed during build!"
+  return $ mContentHash
+  where
+    compareMTimes x y =
+      (modificationTime <$> x) ==
+      (modificationTime <$> y)
 
 runCmd :: MasterServer -> [Char] -> MVar Slave -> String -> IO ()
 runCmd masterServer reason mvar cmd = do
@@ -299,7 +356,7 @@ main = do
   withDb buildDbFilename $ \db -> do
     let targets = makefileTargets makefile
     ldPreloadPath <- getLdPreloadPath
-    withServer db 2 targets ldPreloadPath $ \masterServer ->
+    withServer db 4 targets ldPreloadPath $ \masterServer ->
       case targets of
       [] -> putStrLn "Empty makefile, done nothing..."
       (target:_) ->
