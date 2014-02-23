@@ -1,12 +1,12 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric, DeriveDataTypeable #-}
 import Control.Applicative ((<$>))
 import Control.Concurrent (ThreadId, myThreadId)
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
 import Control.Monad
-import Control.Monad.Trans.Either
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Either
 import Data.Binary (Binary, get, put)
 import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
@@ -16,6 +16,7 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Set (Set)
 import Data.Traversable (traverse)
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
@@ -114,6 +115,11 @@ allowedUnspecifiedOutput path = or
   , ".pyc" `isSuffixOf` path
   ]
 
+isLegalOutput :: Target -> FilePath -> Bool
+isLegalOutput target path =
+  path `elem` targetOutputPaths target ||
+  allowedUnspecifiedOutput path
+
 serve :: Buildsome -> Socket -> IO ()
 serve buildsome conn = do
   helloLine <- SockBS.recv conn 1024
@@ -144,9 +150,7 @@ handleCmdConnection buildsome conn ec = do
     recvLoop_ maxMsgSize
       (handleCmdMsg buildsome conn ec . Protocol.parseMsg) conn
   where
-    protect mvar act =
-      (act >> putMVar mvar ()) `E.catch` errHandler
-    errHandler e@E.SomeException{} = E.throwTo (ecThreadId ec) e
+    protect mvar act = act `E.finally` putMVar mvar ()
 
 recordInput :: ExecutingCommand -> FilePath -> IO ()
 recordInput ec path = do
@@ -162,6 +166,10 @@ recordOutput ec path =
 
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
+
+data InvalidCmdOperation = InvalidCmdOperation String
+  deriving (Show, Typeable)
+instance E.Exception InvalidCmdOperation
 
 handleCmdMsg ::
   Buildsome -> Socket -> ExecutingCommand -> Protocol.Func -> IO ()
@@ -183,7 +191,7 @@ handleCmdMsg buildsome conn ec msg =
     -- I/O
     Protocol.SymLink target linkPath -> reportOutput linkPath >> reportInput target
     Protocol.Link src dest ->
-      fail $ unwords ["Hard links not supported:", show src, "->", show dest]
+      failCmd $ unwords ["Hard links not supported:", show src, "->", show dest]
       -- TODO: Record the fact it's a link
       --reportOutput dest >> reportInput src
 
@@ -195,10 +203,8 @@ handleCmdMsg buildsome conn ec msg =
     Protocol.OpenDir path -> reportInput path
     Protocol.ReadLink path -> reportInput path
   where
-    outputPaths = targetOutputPaths (ecTarget ec)
+    failCmd = E.throwTo (ecThreadId ec) . InvalidCmdOperation
     reason = Protocol.showFunc msg ++ " done by " ++ show (ecCmd ec)
-    isValidOutput path =
-      path `elem` outputPaths || allowedUnspecifiedOutput path
     reportInput path
       | inputIgnored path = sendGo conn
       | otherwise = do
@@ -206,13 +212,9 @@ handleCmdMsg buildsome conn ec msg =
         -- semaphore
         withReleasedParallelism buildsome $ need buildsome reason [path]
         sendGo conn
-        unless (isValidOutput path) $ recordInput ec path
-    reportOutput fullPath = do
-      path <- Dir.makeRelativeToCurrentDirectory fullPath
-      unless (isValidOutput path) $ do
-        fail $ concat [ show (ecCmd ec), " wrote to an unspecified output file: ", show path
-                      , ", allowed outputs: ", show outputPaths ]
-      recordOutput ec path
+        unless (isLegalOutput (ecTarget ec) path) $ recordInput ec path
+    reportOutput fullPath =
+      recordOutput ec =<< Dir.makeRelativeToCurrentDirectory fullPath
 
 toBuildMaps :: [Target] -> BuildMaps
 toBuildMaps targets = BuildMaps buildMap childrenMap
@@ -293,21 +295,29 @@ verifyOutputList buildsome actualOutputs target = do
   unless (S.null unusedOutputs) $
     putStrLn $ "WARNING: Unused outputs: " ++ show (S.toList unusedOutputs)
 
-  unspecifiedOutputs <- filterM fileExists $ S.toList (actualOutputs `S.difference` specifiedOutputs)
+  let illegalUnspecified = filter (not . isLegalOutput target) unspecifiedOutputs
+  unless (null illegalUnspecified) $ do
+    mapM_ Dir.removeFile illegalUnspecified
+    fail $ concat
+      [ show (targetCmds target), " wrote to unspecified output files: ", show illegalUnspecified
+      , ", allowed outputs: ", show (targetOutputPaths target) ]
+
+  existingUnspecifiedOutputs <- filterM fileExists unspecifiedOutputs
   case bsDeleteUnspecifiedOutput buildsome of
     DeleteUnspecifiedOutputs ->
-      forM_ unspecifiedOutputs $
+      forM_ existingUnspecifiedOutputs $
       \out -> do
         exists <- getMFileStatus out
         when (isJust exists) $ do
           putStrLn $ "Removing leaked/unspecified output: " ++ show out
           Dir.removeFile out
     DontDeleteUnspecifiedOutputs ->
-      when (not (null unspecifiedOutputs)) $
+      when (not (null existingUnspecifiedOutputs)) $
       putStrLn $ concat
       [ "WARNING: Keeping leaked unspecified outputs: "
-      , show unspecifiedOutputs ]
+      , show existingUnspecifiedOutputs ]
   where
+    unspecifiedOutputs = S.toList (actualOutputs `S.difference` specifiedOutputs)
     specifiedOutputs = S.fromList (targetOutputPaths target)
     unusedOutputs = specifiedOutputs `S.difference` actualOutputs
 
