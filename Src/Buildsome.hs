@@ -8,7 +8,7 @@ import Data.ByteString (ByteString)
 import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf)
-import Data.Map (Map)
+import Data.Map.Strict (Map)
 import Data.Maybe (maybeToList)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
@@ -25,7 +25,7 @@ import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Data.Attoparsec.ByteString.Char8 as P
 import qualified Data.ByteString.Char8 as BS
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Database.Sophia as Sophia
 import qualified Lib.AsyncContext as AsyncContext
 import qualified Lib.Process as Process
