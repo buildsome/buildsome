@@ -9,7 +9,7 @@ import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, maybeToList)
+import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Set (Set)
 import Data.Traversable (traverse)
 import Lib.ByteString (unprefixed)
@@ -18,7 +18,7 @@ import Lib.Makefile (Makefile(..), Target(..), makefileParser)
 import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
-import Opts (getOpt, Opt(..))
+import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Environment (getProgName)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Error
@@ -62,6 +62,7 @@ data Buildsome = Buildsome
   , bsSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
   , bsAddress :: FilePath -- unix socket server
   , bsLdPreloadPath :: FilePath
+  , bsDeleteUnspecifiedOutput :: DeleteUnspecifiedOutputs
   , bsBuildMaps :: BuildMaps
   , bsCurJobId :: IORef Int
   , bsRestrictedParallelism :: MSem Int
@@ -220,8 +221,10 @@ toBuildMaps targets = BuildMaps buildMap childrenMap
       [ (outputPath, pair target)
       | (outputPath, target) <- outputs ]
 
-withBuildsome :: Sophia.Db -> Int -> [Target] -> FilePath -> (Buildsome -> IO a) -> IO a
-withBuildsome db parallelism targets ldPreloadPath body = do
+withBuildsome ::
+  Sophia.Db -> Int -> [Target] -> DeleteUnspecifiedOutputs ->
+  FilePath -> (Buildsome -> IO a) -> IO a
+withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath body = do
   runningCmds <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   bsPid <- getProcessID
@@ -236,6 +239,7 @@ withBuildsome db parallelism targets ldPreloadPath body = do
         , bsLdPreloadPath = ldPreloadPath
         , bsBuildMaps = toBuildMaps targets
         , bsCurJobId = curJobId
+        , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
         , bsRestrictedParallelism = semaphore
         , bsDb = db
         }
@@ -273,6 +277,32 @@ makeSlaves buildSome reason path = do
     mkTargetSlave nuancedReason (outPathRep, target) =
       makeSlaveForRepPath buildSome nuancedReason outPathRep target
 
+fileExists :: FilePath -> IO Bool
+fileExists path = isJust <$> getMFileStatus path
+
+handleActualOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
+handleActualOutputs buildSome actualOutputs target = do
+  unless (S.null unusedOutputs) $
+    putStrLn $ "WARNING: Unused outputs: " ++ show (S.toList unusedOutputs)
+
+  unspecifiedOutputs <- filterM fileExists $ S.toList (actualOutputs `S.difference` specifiedOutputs)
+  case bsDeleteUnspecifiedOutput buildSome of
+    DeleteUnspecifiedOutputs ->
+      forM_ unspecifiedOutputs $
+      \out -> do
+        exists <- getMFileStatus out
+        when (isJust exists) $ do
+          putStrLn $ "Removing leaked/unspecified output: " ++ show out
+          Dir.removeFile out
+    DontDeleteUnspecifiedOutputs ->
+      when (not (null unspecifiedOutputs)) $
+      putStrLn $ concat
+      [ "WARNING: Keeping leaked unspecified outputs: "
+      , show unspecifiedOutputs ]
+  where
+    specifiedOutputs = S.fromList (targetOutputPaths target)
+    unusedOutputs = specifiedOutputs `S.difference` actualOutputs
+
 makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
 makeSlaveForRepPath buildSome reason outPathRep target = do
   newSlaveMVar <- newEmptyMVar
@@ -299,11 +329,8 @@ makeSlaveForRepPath buildSome reason outPathRep target = do
         inputsMStats <- readIORef slaveInputsRef
         actualOutputs <- readIORef slaveOutputsRef
         _contentHashes <- M.traverseWithKey summarizeInput inputsMStats
-        let specifiedOutputs = S.fromList (targetOutputPaths target)
-            unusedOutputs = specifiedOutputs `S.difference` actualOutputs
-        unless (S.null unusedOutputs) $
-          putStrLn $ "WARNING: Unused outputs: " ++ show (S.toList unusedOutputs)
-        -- TODO: Save these in db!
+        handleActualOutputs buildSome actualOutputs target
+        -- TODO: Save in db!
         return ()
       let slave = Slave target execution slaveInputsRef slaveOutputsRef activeConnections
       putMVar mvar slave
@@ -364,14 +391,15 @@ withDb dbFileName body = do
 
 main :: IO ()
 main = do
-  Opt makefileName mparallelism <- getOpt
+  Opt makefileName mparallelism deleteUnspecifiedOutput <- getOpt
   let buildDbFilename = takeDirectory makefileName </> "build.db"
       parallelism = fromMaybe 1 mparallelism
   makefile <- parseMakefile makefileName
   withDb buildDbFilename $ \db -> do
     let targets = makefileTargets makefile
     ldPreloadPath <- getLdPreloadPath
-    withBuildsome db parallelism targets ldPreloadPath $ \buildSome ->
+    withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath $
+      \buildSome ->
       case targets of
       [] -> putStrLn "Empty makefile, done nothing..."
       (target:_) ->
