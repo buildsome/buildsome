@@ -444,29 +444,32 @@ makeSlaveForTarget buildsome reason targetRep target = do
       case M.lookup targetRep oldSlaveMap of
       Nothing ->
         ( M.insert targetRep newSlaveMVar oldSlaveMap
-        , resultIntoMVar newSlaveMVar =<< spawnSlave restoreMask
+        , resultIntoMVar newSlaveMVar =<<
+          spawnSlave buildsome target reason restoreMask
         )
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
     getSlave
   where
     resultIntoMVar mvar x = putMVar mvar x >> return x
-    spawnSlave restoreMask = do
-      success <- findApplyExecutionLog buildsome target
-      if success
-        then Slave target <$> async (return ())
-        else do
-          execution <- async . restoreMask $ do
-            mapM_ removeFileAllowNotExists $ targetOutputPaths target
-            need buildsome Explicit
-              ("Hint from " ++ show (take 1 (targetOutputPaths target)))
-              (targetInputHints target)
-            (inputsLists, outputsLists) <- withAllocatedParallelism buildsome $ do
-              unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
-            let inputs = M.unions inputsLists
-                outputs = S.unions outputsLists
-            verifyTargetOutputs outputs target
-            saveExecutionLog buildsome target inputs outputs
-          return $ Slave target execution
+
+spawnSlave :: Buildsome -> Target -> String -> (IO () -> IO ()) -> IO Slave
+spawnSlave buildsome target reason restoreMask = do
+  success <- findApplyExecutionLog buildsome target
+  if success
+    then Slave target <$> async (return ())
+    else do
+      execution <- async . restoreMask $ do
+        mapM_ removeFileAllowNotExists $ targetOutputPaths target
+        need buildsome Explicit
+          ("Hint from " ++ show (take 1 (targetOutputPaths target)))
+          (targetInputHints target)
+        (inputsLists, outputsLists) <- withAllocatedParallelism buildsome $ do
+          unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
+        let inputs = M.unions inputsLists
+            outputs = S.unions outputsLists
+        verifyTargetOutputs outputs target
+        saveExecutionLog buildsome target inputs outputs
+      return $ Slave target execution
 
 registeredOutputsKey :: ByteString
 registeredOutputsKey = BS.pack "outputs"
