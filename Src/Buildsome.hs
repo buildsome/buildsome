@@ -407,7 +407,6 @@ applyExecutionLog buildsome target (ExecutionLog inputsDescs outputsDescs) = run
       let reason = "Recorded dependency of " ++ show (targetOutputPaths target)
       speculativeSlaves <- concat <$> mapM (makeSlaves buildsome Implicit reason) (M.keys inputsDescs)
       let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
-      putStrLn $ "Building hinted: " ++ show (targetInputHints target)
       hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason) (targetInputHints target)
       traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
     verifyNoChange str descs =
