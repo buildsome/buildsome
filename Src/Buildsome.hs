@@ -453,10 +453,10 @@ makeSlaveForRepPath buildsome reason outPathRep target = do
         else do
           execution <- async . restoreMask $ do
             mapM_ removeFileAllowNotExists $ targetOutputPaths target
+            need buildsome Explicit
+              ("Hint from " ++ show (take 1 (targetOutputPaths target)))
+              (targetInputHints target)
             (inputsLists, outputsLists) <- withAllocatedParallelism buildsome $ do
-              need buildsome Explicit
-                ("Hint from " ++ show (take 1 (targetOutputPaths target)))
-                (targetInputHints target)
               unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
             let inputs = M.unions inputsLists
                 outputs = S.unions outputsLists
