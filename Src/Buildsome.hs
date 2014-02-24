@@ -407,8 +407,6 @@ applyExecutionLog ::
   Buildsome -> Target -> ExecutionLog ->
   IO (Either (String, FilePath, FileDesc, FileDesc) ())
 applyExecutionLog buildsome target (ExecutionLog inputsDescs outputsDescs) = runEitherT $ do
-  -- TODO: verify targetOutputPaths includes the output paths, or
-  -- target was modified incorrectly in spec
   liftIO waitForInputs
 
   verifyNoChange "input" inputsDescs
