@@ -5,6 +5,7 @@ module Lib.Makefile
   ) where
 
 import Control.Applicative
+import Data.List (partition)
 import qualified Data.Attoparsec.ByteString.Char8 as P
 import qualified Data.ByteString.Char8 as BS
 
@@ -14,9 +15,10 @@ data Target = Target
   , targetCmds :: [String]
   } deriving (Show)
 
-newtype Makefile = Makefile
-  { makefileTargets :: [Target] }
-  deriving (Show)
+data Makefile = Makefile
+  { makefileTargets :: [Target]
+  , makefilePhonies :: [FilePath]
+  } deriving (Show)
 
 isSeparator :: Char -> Bool
 isSeparator x = P.isSpace x || x == ':'
@@ -49,6 +51,17 @@ target = do
     , targetCmds = unpack cmdLines
     }
 
+mkMakefile :: [Target] -> Makefile
+mkMakefile targets
+  | not $ null $ concatMap targetCmds phonyTargets = error ".PHONY targets may not have commands!"
+  | otherwise =
+    Makefile
+    { makefileTargets = regularTargets
+    , makefilePhonies = concatMap targetInputHints phonyTargets
+    }
+  where
+    (phonyTargets, regularTargets) = partition ((== [".PHONY"]) . targetOutputPaths) targets
+
 makefileParser :: P.Parser Makefile
 makefileParser =
-  (Makefile <$> many target) <* P.endOfInput
+  (mkMakefile <$> many target) <* P.endOfInput

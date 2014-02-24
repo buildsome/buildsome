@@ -47,6 +47,8 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
 
+data Explicitness = Explicit | Implicit
+
 type Reason = String
 type CmdId = ByteString
 
@@ -81,6 +83,7 @@ data Buildsome = Buildsome
   , bsCurJobId :: IORef Int
   , bsRestrictedParallelism :: MSem Int
   , bsDb :: Sophia.Db
+  , bsMakefile :: Makefile
   }
 
 slaveWait :: Slave -> IO ()
@@ -200,18 +203,18 @@ handleCmdMsg buildsome conn ec msg =
       | otherwise = do
         -- Temporarily paused, so we can temporarily release parallelism
         -- semaphore
-        withReleasedParallelism buildsome $ need buildsome reason [path]
+        withReleasedParallelism buildsome $ need buildsome Implicit reason [path]
         sendGo conn
         unless (isLegalOutput (ecTarget ec) path) $ recordInput ec path
     reportOutput fullPath =
       recordOutput ec =<< Dir.makeRelativeToCurrentDirectory fullPath
 
-toBuildMaps :: [Target] -> BuildMaps
-toBuildMaps targets = BuildMaps buildMap childrenMap
+toBuildMaps :: Makefile -> BuildMaps
+toBuildMaps makefile = BuildMaps buildMap childrenMap
   where
     outputs =
       [ (outputPath, target)
-      | target <- targets
+      | target <- makefileTargets makefile
       , outputPath <- targetOutputPaths target
       ]
     pair target = (minimum (targetOutputPaths target), target)
@@ -225,9 +228,9 @@ toBuildMaps targets = BuildMaps buildMap childrenMap
       | (outputPath, target) <- outputs ]
 
 withBuildsome ::
-  Sophia.Db -> Int -> [Target] -> DeleteUnspecifiedOutputs ->
+  Sophia.Db -> Int -> Makefile -> DeleteUnspecifiedOutputs ->
   FilePath -> (Buildsome -> IO a) -> IO a
-withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath body = do
+withBuildsome db parallelism makefile deleteUnspecifiedOutput ldPreloadPath body = do
   runningCmds <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   bsPid <- getProcessID
@@ -240,11 +243,12 @@ withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath body 
         , bsSlaveByRepPath = slaveMapByRepPath
         , bsAddress = serverFilename
         , bsLdPreloadPath = ldPreloadPath
-        , bsBuildMaps = toBuildMaps targets
+        , bsBuildMaps = toBuildMaps makefile
         , bsCurJobId = curJobId
         , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
         , bsRestrictedParallelism = semaphore
         , bsDb = db
+        , bsMakefile = makefile
         }
 
   withUnixSeqPacketListener serverFilename $ \listener ->
@@ -263,21 +267,42 @@ nextJobId :: Buildsome -> IO Int
 nextJobId buildsome =
   atomicModifyIORef (bsCurJobId buildsome) $ \oldJobId -> (oldJobId+1, oldJobId)
 
-need :: Buildsome -> Reason -> [FilePath] -> IO ()
-need buildsome reason paths = do
-  slaves <- concat <$> mapM (makeSlaves buildsome reason) paths
+need :: Buildsome -> Explicitness -> Reason -> [FilePath] -> IO ()
+need buildsome explicitness reason paths = do
+  slaves <- concat <$> mapM (makeSlaves buildsome explicitness reason) paths
   traverse_ slaveWait slaves
 
-makeSlaves :: Buildsome -> Reason -> FilePath -> IO [Slave]
-makeSlaves buildsome reason path = do
-  mSlave <-
-    traverse (mkTargetSlave reason) $ M.lookup path buildMap
+assertExists :: Buildsome -> FilePath -> String -> IO ()
+assertExists buildsome path msg
+  | path `elem` makefilePhonies (bsMakefile buildsome) = return ()
+  | otherwise = do
+    doesExist <- fileExists path
+    unless doesExist $ fail msg
+
+makeSlaves :: Buildsome -> Explicitness -> Reason -> FilePath -> IO [Slave]
+makeSlaves buildsome explicitness reason path = do
+  mSlave <- traverse (mkTargetSlave reason) $ M.lookup path buildMap
+  case (explicitness, mSlave) of
+    (Explicit, Nothing) -> assertExists buildsome path $ concat ["No rule to build ", show path, " (", reason, ")"]
+    _ -> return ()
   childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) children
   return (maybeToList mSlave ++ childSlaves)
   where
     children = M.findWithDefault [] path childrenMap
     BuildMaps buildMap childrenMap = bsBuildMaps buildsome
+    verifyExplicitness slave =
+      case explicitness of
+      Implicit -> return slave
+      Explicit -> do
+        wrappedExecution <- async $ do
+          wait (slaveExecution slave)
+          assertExists buildsome path $ concat
+            [ show path
+            , " explicitly demanded but was not "
+            , "created by its target rule" ]
+        return slave { slaveExecution = wrappedExecution }
     mkTargetSlave nuancedReason (outPathRep, target) =
+      verifyExplicitness =<<
       makeSlaveForRepPath buildsome nuancedReason outPathRep target
 
 -- Verify output of whole of slave (after all cmds)
@@ -376,9 +401,10 @@ applyExecutionLog buildsome target (ExecutionLog inputsDescs outputsDescs) = run
       -- inputs changed, as it may build stuff that's no longer
       -- required:
       let reason = "Recorded dependency of " ++ show (targetOutputPaths target)
-      speculativeSlaves <- concat <$> mapM (makeSlaves buildsome reason) (M.keys inputsDescs)
+      speculativeSlaves <- concat <$> mapM (makeSlaves buildsome Implicit reason) (M.keys inputsDescs)
       let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
-      hintedSlaves <- concat <$> mapM (makeSlaves buildsome hintReason) (targetInputHints target)
+      putStrLn $ "Building hinted: " ++ show (targetInputHints target)
+      hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason) (targetInputHints target)
       traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
     verifyNoChange str descs =
       forM_ (M.toList descs) $ \(filePath, oldDesc) -> do
@@ -404,7 +430,6 @@ findApplyExecutionLog buildsome target = do
           putStrLn $ "Execution log match for: " ++ show (targetOutputPaths target)
           return True
 
-
 makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
 makeSlaveForRepPath buildsome reason outPathRep target = do
   newSlaveMVar <- newEmptyMVar
@@ -429,18 +454,15 @@ makeSlaveForRepPath buildsome reason outPathRep target = do
           execution <- async . restoreMask $ do
             mapM_ removeFileAllowNotExists $ targetOutputPaths target
             (inputsLists, outputsLists) <- withAllocatedParallelism buildsome $ do
-              buildHinted buildsome target
+              need buildsome Explicit
+                ("Hint from " ++ show (take 1 (targetOutputPaths target)))
+                (targetInputHints target)
               unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
             let inputs = M.unions inputsLists
                 outputs = S.unions outputsLists
             verifyTargetOutputs outputs target
             saveExecutionLog buildsome target inputs outputs
           return $ Slave target execution
-
-buildHinted :: Buildsome -> Target -> IO ()
-buildHinted buildsome target =
-  need buildsome ("Hint from " ++ show (take 1 (targetOutputPaths target)))
-  (targetInputHints target)
 
 registeredOutputsKey :: ByteString
 registeredOutputsKey = BS.pack "outputs"
@@ -526,13 +548,12 @@ main = do
       parallelism = fromMaybe 1 mparallelism
   makefile <- parseMakefile makefileName
   withDb buildDbFilename $ \db -> do
-    let targets = makefileTargets makefile
     ldPreloadPath <- getLdPreloadPath
-    withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath $
+    withBuildsome db parallelism makefile deleteUnspecifiedOutput ldPreloadPath $
       \buildsome -> do
       deleteRemovedOutputs buildsome
-      case targets of
+      case makefileTargets makefile of
         [] -> putStrLn "Empty makefile, done nothing..."
         (target:_) ->
-          need buildsome "First target in Makefile" $
+          need buildsome Explicit "First target in Makefile" $
           take 1 (targetOutputPaths target)
