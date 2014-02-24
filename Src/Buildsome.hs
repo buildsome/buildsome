@@ -310,13 +310,14 @@ makeSlaves buildsome explicitness reason path = do
       makeSlaveForTarget buildsome nuancedReason targetRep target
 
 -- Verify output of whole of slave (after all cmds)
-verifyTargetOutputs :: Set FilePath -> Target -> IO ()
-verifyTargetOutputs outputs target =
+verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
+verifyTargetOutputs buildsome outputs target =
   unless (S.null unusedOutputs) $
   putStrLn $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
   where
+    phonies = S.fromList $ makefilePhonies $ bsMakefile buildsome
     specifiedOutputs = S.fromList (targetOutputPaths target)
-    unusedOutputs = specifiedOutputs `S.difference` outputs
+    unusedOutputs = specifiedOutputs `S.difference` outputs `S.difference` phonies
 
 handleLegalUnspecifiedOutputs :: DeleteUnspecifiedOutputs -> String -> [FilePath] -> IO ()
 handleLegalUnspecifiedOutputs DeleteUnspecifiedOutputs cmd paths = do
@@ -375,12 +376,12 @@ saveExecutionLog buildsome target inputsMStats outputs = do
   let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs)
   setKey buildsome (targetKey target) execLog
 
-verifyLoggedOutputs :: Set FilePath -> Target -> IO ()
-verifyLoggedOutputs outputs target = do
+verifyLoggedOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
+verifyLoggedOutputs buildsome outputs target = do
   unless (S.null missingOutputsSpec) $ fail $ concat $
     [ show (targetCmds target), " outputs to ", show (S.toList missingOutputsSpec)
     , " but output specification lists only ", show (targetOutputPaths target) ]
-  verifyTargetOutputs outputs target
+  verifyTargetOutputs buildsome outputs target
   where
     missingOutputsSpec =
       S.filter (not . allowedUnspecifiedOutput) $
@@ -398,7 +399,7 @@ applyExecutionLog buildsome target (ExecutionLog inputsDescs outputsDescs) = run
   -- the output content is still correct
   verifyNoChange "output" outputsDescs
 
-  liftIO $ verifyLoggedOutputs (M.keysSet outputsDescs) target
+  liftIO $ verifyLoggedOutputs buildsome (M.keysSet outputsDescs) target
   where
     waitForInputs = do
       -- TODO: This is good for parallelism, but bad if the set of
@@ -466,7 +467,7 @@ spawnSlave buildsome target reason restoreMask = do
           unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
         let inputs = M.unions inputsLists
             outputs = S.unions outputsLists
-        verifyTargetOutputs outputs target
+        verifyTargetOutputs buildsome outputs target
         saveExecutionLog buildsome target inputs outputs
       return $ Slave target execution
 
