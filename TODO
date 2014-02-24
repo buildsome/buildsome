@@ -1,8 +1,8 @@
 * opendir in execution log needs to verify content or content hash of file list?
   * currently it doesn't rerun opendir
 
-* Disallowed generated outputs should be blocked:
-  C-side can be given list of allowed outputs
+* C-side can be given allowed outputs rules and fail anything else
+* C-side can be given buildable outputs and not round-trip for other inputs
 
 * Use mtime cache to see that outputs already match the execution log too
 
