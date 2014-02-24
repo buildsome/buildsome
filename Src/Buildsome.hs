@@ -47,8 +47,14 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
 
+newtype TargetRep = TargetRep FilePath -- We use the minimum output path as the target key/representative
+  deriving (Eq, Ord, Show)
+computeTargetRep :: Target -> TargetRep
+computeTargetRep = TargetRep . minimum . targetOutputPaths
+
 data Explicitness = Explicit | Implicit
 
+type Parents = [TargetRep]
 type Reason = String
 type CmdId = ByteString
 
@@ -61,17 +67,13 @@ data ExecutingCommand = ExecutingCommand
   { ecCmd :: String
   , ecThreadId :: ThreadId
   , ecTarget :: Target
+  , ecParents :: Parents
   , -- For each input file, record modification time before input is
     -- used, to compare it after cmd is done
     ecInputs :: IORef (Map FilePath (Maybe FileStatus))
   , ecOutputs :: IORef (Set FilePath)
   , ecActiveConnections :: IORef [MVar ()]
   }
-
-newtype TargetRep = TargetRep FilePath -- We use the minimum output path as the target key/representative
-  deriving (Eq, Ord)
-computeTargetRep :: Target -> TargetRep
-computeTargetRep = TargetRep . minimum . targetOutputPaths
 
 data BuildMaps = BuildMaps
   { bmBuildMap :: Map FilePath (TargetRep, Target) -- output paths -> min(representative) path and original spec
@@ -207,7 +209,7 @@ handleCmdMsg buildsome conn ec msg =
       | otherwise = do
         -- Temporarily paused, so we can temporarily release parallelism
         -- semaphore
-        withReleasedParallelism buildsome $ need buildsome Implicit reason [path]
+        withReleasedParallelism buildsome $ need buildsome Implicit reason (ecParents ec) [path]
         sendGo conn
         unless (isLegalOutput (ecTarget ec) path) $ recordInput ec path
     reportOutput fullPath =
@@ -271,9 +273,9 @@ nextJobId :: Buildsome -> IO Int
 nextJobId buildsome =
   atomicModifyIORef (bsCurJobId buildsome) $ \oldJobId -> (oldJobId+1, oldJobId)
 
-need :: Buildsome -> Explicitness -> Reason -> [FilePath] -> IO ()
-need buildsome explicitness reason paths = do
-  slaves <- concat <$> mapM (makeSlaves buildsome explicitness reason) paths
+need :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
+need buildsome explicitness reason parents paths = do
+  slaves <- concat <$> mapM (makeSlaves buildsome explicitness reason parents) paths
   traverse_ slaveWait slaves
 
 assertExists :: Buildsome -> FilePath -> String -> IO ()
@@ -283,8 +285,8 @@ assertExists buildsome path msg
     doesExist <- fileExists path
     unless doesExist $ fail msg
 
-makeSlaves :: Buildsome -> Explicitness -> Reason -> FilePath -> IO [Slave]
-makeSlaves buildsome explicitness reason path = do
+makeSlaves :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
+makeSlaves buildsome explicitness reason parents path = do
   mSlave <- traverse (mkTargetSlave reason) $ M.lookup path buildMap
   case (explicitness, mSlave) of
     (Explicit, Nothing) -> assertExists buildsome path $ concat ["No rule to build ", show path, " (", reason, ")"]
@@ -307,7 +309,7 @@ makeSlaves buildsome explicitness reason path = do
         return slave { slaveExecution = wrappedExecution }
     mkTargetSlave nuancedReason (targetRep, target) =
       verifyExplicitness =<<
-      getSlaveForTarget buildsome nuancedReason targetRep target
+      getSlaveForTarget buildsome nuancedReason parents targetRep target
 
 -- Verify output of whole of slave (after all cmds)
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
@@ -388,43 +390,44 @@ verifyLoggedOutputs buildsome outputs target = do
       outputs `S.difference` S.fromList (targetOutputPaths target)
 
 applyExecutionLog ::
-  Buildsome -> Target -> ExecutionLog ->
+  Buildsome -> Target -> Parents -> ExecutionLog ->
   IO (Either (String, FilePath, FileDesc, FileDesc) ())
-applyExecutionLog buildsome target (ExecutionLog inputsDescs outputsDescs) = runEitherT $ do
-  liftIO waitForInputs
+applyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsDescs) =
+  runEitherT $ do
+    liftIO waitForInputs
 
-  verifyNoChange "input" inputsDescs
-  -- For now, we don't store the output files' content
-  -- anywhere besides the actual output files, so just verify
-  -- the output content is still correct
-  verifyNoChange "output" outputsDescs
+    verifyNoChange "input" inputsDescs
+    -- For now, we don't store the output files' content
+    -- anywhere besides the actual output files, so just verify
+    -- the output content is still correct
+    verifyNoChange "output" outputsDescs
 
-  liftIO $ verifyLoggedOutputs buildsome (M.keysSet outputsDescs) target
-  where
-    waitForInputs = do
-      -- TODO: This is good for parallelism, but bad if the set of
-      -- inputs changed, as it may build stuff that's no longer
-      -- required:
-      let reason = "Recorded dependency of " ++ show (targetOutputPaths target)
-      speculativeSlaves <- concat <$> mapM (makeSlaves buildsome Implicit reason) (M.keys inputsDescs)
-      let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
-      hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason) (targetInputHints target)
-      traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
-    verifyNoChange str descs =
-      forM_ (M.toList descs) $ \(filePath, oldDesc) -> do
-        newDesc <- liftIO $ getFileDesc filePath
-        when (oldDesc /= newDesc) $ left (str, filePath, oldDesc, newDesc) -- fail entire computation
+    liftIO $ verifyLoggedOutputs buildsome (M.keysSet outputsDescs) target
+    where
+      waitForInputs = do
+        -- TODO: This is good for parallelism, but bad if the set of
+        -- inputs changed, as it may build stuff that's no longer
+        -- required:
+        let reason = "Recorded dependency of " ++ show (targetOutputPaths target)
+        speculativeSlaves <- concat <$> mapM (makeSlaves buildsome Implicit reason parents) (M.keys inputsDescs)
+        let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
+        hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetInputHints target)
+        traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
+      verifyNoChange str descs =
+        forM_ (M.toList descs) $ \(filePath, oldDesc) -> do
+          newDesc <- liftIO $ getFileDesc filePath
+          when (oldDesc /= newDesc) $ left (str, filePath, oldDesc, newDesc) -- fail entire computation
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: Buildsome -> Target -> IO Bool
-findApplyExecutionLog buildsome target = do
+findApplyExecutionLog :: Buildsome -> Target -> Parents -> IO Bool
+findApplyExecutionLog buildsome target parents = do
   mExecutionLog <- getKey buildsome (targetKey target)
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return False
     Just executionLog -> do
-      res <- applyExecutionLog buildsome target executionLog
+      res <- applyExecutionLog buildsome target parents executionLog
       case res of
         Left (str, filePath, _oldDesc, _newDesc) -> do
           putStrLn $ concat
@@ -435,38 +438,41 @@ findApplyExecutionLog buildsome target = do
           return True
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: Buildsome -> Reason -> TargetRep -> Target -> IO Slave
-getSlaveForTarget buildsome reason targetRep target = do
-  newSlaveMVar <- newEmptyMVar
-  E.mask $ \restoreMask -> do
-    getSlave <-
-      atomicModifyIORef (bsSlaveByRepPath buildsome) $
-      \oldSlaveMap ->
-      case M.lookup targetRep oldSlaveMap of
-      Nothing ->
-        ( M.insert targetRep newSlaveMVar oldSlaveMap
-        , resultIntoMVar newSlaveMVar =<<
-          spawnSlave buildsome target reason restoreMask
-        )
-      Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
-    getSlave
-  where
-    resultIntoMVar mvar x = putMVar mvar x >> return x
+getSlaveForTarget :: Buildsome -> Reason -> Parents -> TargetRep -> Target -> IO Slave
+getSlaveForTarget buildsome reason parents targetRep target
+  | targetRep `elem` parents = fail $ "Target loop: " ++ show parents
+  | otherwise = do
+    newSlaveMVar <- newEmptyMVar
+    E.mask $ \restoreMask -> do
+      getSlave <-
+        atomicModifyIORef (bsSlaveByRepPath buildsome) $
+        \oldSlaveMap ->
+        case M.lookup targetRep oldSlaveMap of
+        Nothing ->
+          ( M.insert targetRep newSlaveMVar oldSlaveMap
+          , resultIntoMVar newSlaveMVar =<<
+            spawnSlave buildsome target reason newParents restoreMask
+          )
+        Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
+      getSlave
+    where
+      newParents = targetRep : parents
+      resultIntoMVar mvar x = putMVar mvar x >> return x
 
 -- Spawn a new slave for a target
-spawnSlave :: Buildsome -> Target -> Reason -> (IO () -> IO ()) -> IO Slave
-spawnSlave buildsome target reason restoreMask = do
-  success <- findApplyExecutionLog buildsome target
+spawnSlave :: Buildsome -> Target -> Reason -> Parents -> (IO () -> IO ()) -> IO Slave
+spawnSlave buildsome target reason parents restoreMask = do
+  success <- findApplyExecutionLog buildsome target parents
   if success
     then Slave target <$> async (return ())
     else do
       execution <- async . restoreMask $ do
         mapM_ removeFileAllowNotExists $ targetOutputPaths target
         need buildsome Explicit
-          ("Hint from " ++ show (take 1 (targetOutputPaths target)))
+          ("Hint from " ++ show (take 1 (targetOutputPaths target))) parents
           (targetInputHints target)
         (inputsLists, outputsLists) <- withAllocatedParallelism buildsome $ do
-          unzip <$> mapM (runCmd buildsome target reason) (targetCmds target)
+          unzip <$> mapM (runCmd buildsome target reason parents) (targetCmds target)
         let inputs = M.unions inputsLists
             outputs = S.unions outputsLists
         verifyTargetOutputs buildsome outputs target
@@ -501,9 +507,9 @@ deleteRemovedOutputs buildsome = do
     makefileOutputPaths = M.keysSet $ bmBuildMap $ bsBuildMaps buildsome
 
 runCmd ::
-  Buildsome -> Target -> Reason -> String ->
+  Buildsome -> Target -> Reason -> Parents -> String ->
   IO (Map FilePath (Maybe FileStatus), Set FilePath)
-runCmd buildsome target reason cmd = do
+runCmd buildsome target reason parents cmd = do
   registerOutputs buildsome (targetOutputPaths target)
 
   inputsRef <- newIORef M.empty
@@ -513,7 +519,7 @@ runCmd buildsome target reason cmd = do
   cmdIdNum <- nextJobId buildsome
   let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
   tid <- myThreadId
-  let ec = ExecutingCommand cmd tid target inputsRef outputsRef activeConnections
+  let ec = ExecutingCommand cmd tid target parents inputsRef outputsRef activeConnections
   putStrLn $ concat ["{ ", show cmd, ": ", reason]
   atomicModifyIORef_ (bsRunningCmds buildsome) $ M.insert cmdId ec
   shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildsome cmdId) cmd
@@ -564,5 +570,5 @@ main = do
       case makefileTargets makefile of
         [] -> putStrLn "Empty makefile, done nothing..."
         (target:_) ->
-          need buildsome Explicit "First target in Makefile" $
+          need buildsome Explicit "First target in Makefile" [] $
           take 1 (targetOutputPaths target)
