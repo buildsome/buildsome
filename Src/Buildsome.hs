@@ -51,7 +51,7 @@ type ContentHash = ByteString
 data FileDesc
   = RegularFile ContentHash
   | Symlink FilePath
-  | Directory -- files inside have their own FileDesc's
+  | Directory ContentHash -- Of the getDirectoryContents
   | NoFile -- an unlinked/deleted file at a certain path is also a
            -- valid input or output of a build step
   deriving (Generic, Eq, Show)
@@ -331,10 +331,13 @@ fileDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileDesc
 fileDescOfMStat path oldMStat = do
   mContentHash <-
     case oldMStat of
-    Just stat | isRegularFile stat ->
-      Just . MD5.hash <$>
-      (BS.readFile path `catchDoesNotExist`
-       fail (show path ++ " deleted during build!"))
+    Just stat
+      | isRegularFile stat ->
+        Just . MD5.hash <$>
+        assertExists (BS.readFile path)
+      | isDirectory stat ->
+        Just . MD5.hash . BS.pack . unlines <$>
+        assertExists (Dir.getDirectoryContents path)
     _ -> return Nothing
   -- Verify file did not change since we took its first mtime:
   newMStat <- getMFileStatus path
@@ -344,13 +347,18 @@ fileDescOfMStat path oldMStat = do
     Nothing -> return NoFile
     Just stat
       | isRegularFile stat ->
-        return . RegularFile $
+        return $ RegularFile $
         fromMaybe (error ("File disappeared: " ++ show path))
         mContentHash
-      | isDirectory stat -> return Directory
+      | isDirectory stat ->
+        return $ Directory $
+        fromMaybe (error ("Directory disappeared: " ++ show path))
+        mContentHash
       | isSymbolicLink stat -> Symlink <$> readSymbolicLink path
       | otherwise -> fail $ "Unsupported file type: " ++ show path
   where
+    assertExists act =
+      act `catchDoesNotExist` fail (show path ++ " deleted during build!")
     compareMTimes x y =
       (modificationTime <$> x) ==
       (modificationTime <$> y)
