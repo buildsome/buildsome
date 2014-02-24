@@ -307,7 +307,7 @@ makeSlaves buildsome explicitness reason path = do
         return slave { slaveExecution = wrappedExecution }
     mkTargetSlave nuancedReason (targetRep, target) =
       verifyExplicitness =<<
-      makeSlaveForTarget buildsome nuancedReason targetRep target
+      getSlaveForTarget buildsome nuancedReason targetRep target
 
 -- Verify output of whole of slave (after all cmds)
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
@@ -434,8 +434,9 @@ findApplyExecutionLog buildsome target = do
           putStrLn $ "Execution log match for: " ++ show (targetOutputPaths target)
           return True
 
-makeSlaveForTarget :: Buildsome -> Reason -> TargetRep -> Target -> IO Slave
-makeSlaveForTarget buildsome reason targetRep target = do
+-- Find existing slave for target, or spawn a new one
+getSlaveForTarget :: Buildsome -> Reason -> TargetRep -> Target -> IO Slave
+getSlaveForTarget buildsome reason targetRep target = do
   newSlaveMVar <- newEmptyMVar
   E.mask $ \restoreMask -> do
     getSlave <-
@@ -452,6 +453,7 @@ makeSlaveForTarget buildsome reason targetRep target = do
   where
     resultIntoMVar mvar x = putMVar mvar x >> return x
 
+-- Spawn a new slave for a target
 spawnSlave :: Buildsome -> Target -> String -> (IO () -> IO ()) -> IO Slave
 spawnSlave buildsome target reason restoreMask = do
   success <- findApplyExecutionLog buildsome target
