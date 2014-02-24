@@ -124,8 +124,7 @@ serve buildsome conn = do
         Nothing -> do
           let cmdIds = M.keys runningCmds
           fail $ "Bad slave id: " ++ show cmdId ++ " mismatches all: " ++ show cmdIds
-        Just executingCmd -> do
-          handleCmdConnection buildsome conn executingCmd
+        Just ec -> handleCmdConnection buildsome conn ec
       where
         [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
 
