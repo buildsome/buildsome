@@ -398,7 +398,7 @@ findApplyExecutionLog buildsome target = do
       case res of
         Left (str, filePath, _oldDesc, _newDesc) -> do
           putStrLn $ concat
-            ["Execution log did not match because ", str, ": ", show filePath, " changed"]
+            ["Execution log of ", show (targetOutputPaths target), " did not match because ", str, ": ", show filePath, " changed"]
           return False
         Right () -> do
           putStrLn $ "Execution log match for: " ++ show (targetOutputPaths target)
