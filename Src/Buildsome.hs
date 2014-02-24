@@ -299,22 +299,25 @@ verifyTargetOutputs outputs target =
     specifiedOutputs = S.fromList (targetOutputPaths target)
     unusedOutputs = specifiedOutputs `S.difference` outputs
 
+handleLegalUnspecifiedOutputs :: DeleteUnspecifiedOutputs -> String -> [FilePath] -> IO ()
+handleLegalUnspecifiedOutputs DeleteUnspecifiedOutputs cmd paths = do
+  unless (null paths) $
+    putStrLn $ concat
+    [ "WARNING: Removing unspecified outputs: "
+    , show paths, " from ", show cmd ]
+  mapM_ Dir.removeFile paths
+handleLegalUnspecifiedOutputs DontDeleteUnspecifiedOutputs cmd paths =
+  unless (null paths) $
+    putStrLn $ concat
+    [ "WARNING: Keeping leaked unspecified outputs: "
+    , show paths, " from ", show cmd ]
+
 -- Verify output of a single cmd
 verifyCmdOutputs :: Buildsome -> Set FilePath -> String -> Target -> IO ()
 verifyCmdOutputs buildsome outputs cmd target = do
-  existingLegalUnspecified <- filterM fileExists legalUnspecified
-  case bsDeleteUnspecifiedOutput buildsome of
-    DeleteUnspecifiedOutputs -> do
-      unless (null existingLegalUnspecified) $
-        putStrLn $ concat
-        [ "WARNING: Removing unspecified outputs: "
-        , show existingLegalUnspecified, " from ", show cmd ]
-      mapM_ Dir.removeFile existingLegalUnspecified
-    DontDeleteUnspecifiedOutputs ->
-      unless (null existingLegalUnspecified) $
-      putStrLn $ concat
-      [ "WARNING: Keeping leaked unspecified outputs: "
-      , show existingLegalUnspecified, " from ", show cmd ]
+  handleLegalUnspecifiedOutputs
+    (bsDeleteUnspecifiedOutput buildsome) cmd =<<
+    filterM fileExists legalUnspecified
 
   unless (null illegalUnspecified) $ do
     mapM_ removeFileAllowNotExists illegalUnspecified
