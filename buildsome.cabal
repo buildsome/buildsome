@@ -32,6 +32,7 @@ executable buildsome
                ,     Lib.Sock
                ,     Lib.Directory
                ,     Lib.Binary
+               ,     Lib.FileDesc
 
   build-depends:     base >=4.6 && <4.7
                ,     binary >=0.7 && <0.8

@@ -20,7 +20,8 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
-import Lib.Directory (getMFileStatus, fileExists, catchDoesNotExist, removeFileAllowNotExists)
+import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
+import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), Target(..), makefileParser)
 import Lib.Process (shellCmdVerify)
@@ -29,7 +30,7 @@ import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Environment (getProgName)
 import System.FilePath (takeDirectory, (</>))
-import System.Posix.Files (FileStatus, isRegularFile, isDirectory, isSymbolicLink, modificationTime, readSymbolicLink)
+import System.Posix.Files (FileStatus)
 import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
@@ -45,17 +46,6 @@ import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
-
-type ContentHash = ByteString
-
-data FileDesc
-  = RegularFile ContentHash
-  | Symlink FilePath
-  | Directory ContentHash -- Of the getDirectoryContents
-  | NoFile -- an unlinked/deleted file at a certain path is also a
-           -- valid input or output of a build step
-  deriving (Generic, Eq, Show)
-instance Binary FileDesc
 
 type Reason = String
 type CmdId = ByteString
@@ -329,45 +319,6 @@ verifyCmdOutputs buildsome outputs cmd target = do
     (legalUnspecified, illegalUnspecified) = partition (isLegalOutput target) unspecified
     unspecified = S.toList (outputs `S.difference` S.fromList specified)
     specified = targetOutputPaths target
-
-fileDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileDesc
-fileDescOfMStat path oldMStat = do
-  mContentHash <-
-    case oldMStat of
-    Just stat
-      | isRegularFile stat ->
-        Just . MD5.hash <$>
-        assertExists (BS.readFile path)
-      | isDirectory stat ->
-        Just . MD5.hash . BS.pack . unlines <$>
-        assertExists (Dir.getDirectoryContents path)
-    _ -> return Nothing
-  -- Verify file did not change since we took its first mtime:
-  newMStat <- getMFileStatus path
-  when (not (compareMTimes oldMStat newMStat)) $ fail $
-    show path ++ " changed during build!"
-  case newMStat of
-    Nothing -> return NoFile
-    Just stat
-      | isRegularFile stat ->
-        return $ RegularFile $
-        fromMaybe (error ("File disappeared: " ++ show path))
-        mContentHash
-      | isDirectory stat ->
-        return $ Directory $
-        fromMaybe (error ("Directory disappeared: " ++ show path))
-        mContentHash
-      | isSymbolicLink stat -> Symlink <$> readSymbolicLink path
-      | otherwise -> fail $ "Unsupported file type: " ++ show path
-  where
-    assertExists act =
-      act `catchDoesNotExist` fail (show path ++ " deleted during build!")
-    compareMTimes x y =
-      (modificationTime <$> x) ==
-      (modificationTime <$> y)
-
-getFileDesc :: FilePath -> IO FileDesc
-getFileDesc path = fileDescOfMStat path =<< getMFileStatus path
 
 targetKey :: Target -> ByteString
 targetKey target =
