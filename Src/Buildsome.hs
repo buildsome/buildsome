@@ -482,10 +482,39 @@ buildHinted buildsome target =
   need buildsome ("Hint from " ++ show (take 1 (targetOutputPaths target)))
   (targetInputHints target)
 
+registeredOutputsKey :: ByteString
+registeredOutputsKey = BS.pack "outputs"
+
+getRegisteredOutputs :: Buildsome -> IO [FilePath]
+getRegisteredOutputs buildsome =
+  fromMaybe [] <$> getKey buildsome registeredOutputsKey
+
+setRegisteredOutputs :: Buildsome -> [FilePath] -> IO ()
+setRegisteredOutputs buildsome outputs =
+  setKey buildsome registeredOutputsKey outputs
+
+registerOutputs :: Buildsome -> [FilePath] -> IO ()
+registerOutputs buildsome outputPaths = do
+  outputs <- getRegisteredOutputs buildsome
+  setRegisteredOutputs buildsome $ outputPaths ++ outputs
+
+deleteRemovedOutputs :: Buildsome -> Makefile -> IO ()
+deleteRemovedOutputs buildsome makefile = do
+  outputs <- S.fromList <$> getRegisteredOutputs buildsome
+  let deadOutputs = outputs `S.difference` makefileOutputPaths
+  forM_ (S.toList deadOutputs) $ \deadOutput -> do
+    putStrLn $ "Removing old output: " ++ show deadOutput
+    removeFileAllowNotExists deadOutput
+  setRegisteredOutputs buildsome . S.toList $ outputs `S.intersection` makefileOutputPaths
+  where
+    makefileOutputPaths = S.fromList $ concatMap targetOutputPaths $ makefileTargets makefile
+
 runCmd ::
   Buildsome -> Target -> String -> String ->
   IO (Map FilePath (Maybe FileStatus), Set FilePath)
 runCmd buildsome target reason cmd = do
+  registerOutputs buildsome (targetOutputPaths target)
+
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef S.empty
   activeConnections <- newIORef []
@@ -540,9 +569,10 @@ main = do
     let targets = makefileTargets makefile
     ldPreloadPath <- getLdPreloadPath
     withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath $
-      \buildsome ->
+      \buildsome -> do
+      deleteRemovedOutputs buildsome makefile
       case targets of
-      [] -> putStrLn "Empty makefile, done nothing..."
-      (target:_) ->
-        need buildsome "First target in Makefile" $
-        take 1 (targetOutputPaths target)
+        [] -> putStrLn "Empty makefile, done nothing..."
+        (target:_) ->
+          need buildsome "First target in Makefile" $
+          take 1 (targetOutputPaths target)
