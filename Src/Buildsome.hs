@@ -67,7 +67,7 @@ data ExecutingCommand = ExecutingCommand
   }
 
 data BuildMaps = BuildMaps
-  { _bmBuildMap :: Map FilePath (FilePath, Target) -- output paths -> min(representative) path and original spec
+  { bmBuildMap :: Map FilePath (FilePath, Target) -- output paths -> min(representative) path and original spec
   , _bmChildrenMap :: Map FilePath [(FilePath, Target)] -- parent/dir paths -> all build steps that build directly into it
   }
 
@@ -458,8 +458,8 @@ registerOutputs buildsome outputPaths = do
   outputs <- getRegisteredOutputs buildsome
   setRegisteredOutputs buildsome $ outputPaths ++ outputs
 
-deleteRemovedOutputs :: Buildsome -> Makefile -> IO ()
-deleteRemovedOutputs buildsome makefile = do
+deleteRemovedOutputs :: Buildsome -> IO ()
+deleteRemovedOutputs buildsome = do
   outputs <- S.fromList <$> getRegisteredOutputs buildsome
   let deadOutputs = outputs `S.difference` makefileOutputPaths
   forM_ (S.toList deadOutputs) $ \deadOutput -> do
@@ -467,7 +467,7 @@ deleteRemovedOutputs buildsome makefile = do
     removeFileAllowNotExists deadOutput
   setRegisteredOutputs buildsome . S.toList $ outputs `S.intersection` makefileOutputPaths
   where
-    makefileOutputPaths = S.fromList $ concatMap targetOutputPaths $ makefileTargets makefile
+    makefileOutputPaths = M.keysSet $ bmBuildMap $ bsBuildMaps buildsome
 
 runCmd ::
   Buildsome -> Target -> String -> String ->
@@ -530,7 +530,7 @@ main = do
     ldPreloadPath <- getLdPreloadPath
     withBuildsome db parallelism targets deleteUnspecifiedOutput ldPreloadPath $
       \buildsome -> do
-      deleteRemovedOutputs buildsome makefile
+      deleteRemovedOutputs buildsome
       case targets of
         [] -> putStrLn "Empty makefile, done nothing..."
         (target:_) ->
