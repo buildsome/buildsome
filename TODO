@@ -1,6 +1,3 @@
-* opendir in execution log needs to verify content or content hash of file list?
-  * currently it doesn't rerun opendir
-
 * C-side can be given allowed outputs rules and fail anything else
 * C-side can be given buildable outputs and not round-trip for other inputs
 
