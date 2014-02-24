@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, DeriveDataTypeable #-}
+{-# LANGUAGE DeriveGeneric, DeriveDataTypeable, GeneralizedNewtypeDeriving #-}
 import Control.Applicative ((<$>))
 import Control.Concurrent (ThreadId, myThreadId)
 import Control.Concurrent.Async
@@ -68,14 +68,19 @@ data ExecutingCommand = ExecutingCommand
   , ecActiveConnections :: IORef [MVar ()]
   }
 
+newtype TargetRep = TargetRep FilePath -- We use the minimum output path as the target key/representative
+  deriving (Eq, Ord)
+computeTargetRep :: Target -> TargetRep
+computeTargetRep = TargetRep . minimum . targetOutputPaths
+
 data BuildMaps = BuildMaps
-  { bmBuildMap :: Map FilePath (FilePath, Target) -- output paths -> min(representative) path and original spec
-  , _bmChildrenMap :: Map FilePath [(FilePath, Target)] -- parent/dir paths -> all build steps that build directly into it
+  { bmBuildMap :: Map FilePath (TargetRep, Target) -- output paths -> min(representative) path and original spec
+  , _bmChildrenMap :: Map FilePath [(TargetRep, Target)] -- parent/dir paths -> all build steps that build directly into it
   }
 
 data Buildsome = Buildsome
   { bsRunningCmds :: IORef (Map CmdId ExecutingCommand)
-  , bsSlaveByRepPath :: IORef (Map FilePath (MVar Slave))
+  , bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
   , bsAddress :: FilePath -- unix socket server
   , bsLdPreloadPath :: FilePath
   , bsDeleteUnspecifiedOutput :: DeleteUnspecifiedOutputs
@@ -216,7 +221,7 @@ toBuildMaps makefile = BuildMaps buildMap childrenMap
       | target <- makefileTargets makefile
       , outputPath <- targetOutputPaths target
       ]
-    pair target = (minimum (targetOutputPaths target), target)
+    pair target = (computeTargetRep target, target)
     childrenMap =
       M.fromListWith (++)
       [ (takeDirectory outputPath, [pair target])
@@ -300,9 +305,9 @@ makeSlaves buildsome explicitness reason path = do
             , " explicitly demanded but was not "
             , "created by its target rule" ]
         return slave { slaveExecution = wrappedExecution }
-    mkTargetSlave nuancedReason (outPathRep, target) =
+    mkTargetSlave nuancedReason (targetRep, target) =
       verifyExplicitness =<<
-      makeSlaveForRepPath buildsome nuancedReason outPathRep target
+      makeSlaveForTarget buildsome nuancedReason targetRep target
 
 -- Verify output of whole of slave (after all cmds)
 verifyTargetOutputs :: Set FilePath -> Target -> IO ()
@@ -429,16 +434,16 @@ findApplyExecutionLog buildsome target = do
           putStrLn $ "Execution log match for: " ++ show (targetOutputPaths target)
           return True
 
-makeSlaveForRepPath :: Buildsome -> Reason -> FilePath -> Target -> IO Slave
-makeSlaveForRepPath buildsome reason outPathRep target = do
+makeSlaveForTarget :: Buildsome -> Reason -> TargetRep -> Target -> IO Slave
+makeSlaveForTarget buildsome reason targetRep target = do
   newSlaveMVar <- newEmptyMVar
   E.mask $ \restoreMask -> do
     getSlave <-
       atomicModifyIORef (bsSlaveByRepPath buildsome) $
       \oldSlaveMap ->
-      case M.lookup outPathRep oldSlaveMap of
+      case M.lookup targetRep oldSlaveMap of
       Nothing ->
-        ( M.insert outPathRep newSlaveMVar oldSlaveMap
+        ( M.insert targetRep newSlaveMVar oldSlaveMap
         , resultIntoMVar newSlaveMVar =<< spawnSlave restoreMask
         )
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
