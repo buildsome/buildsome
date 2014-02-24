@@ -454,7 +454,7 @@ getSlaveForTarget buildsome reason targetRep target = do
     resultIntoMVar mvar x = putMVar mvar x >> return x
 
 -- Spawn a new slave for a target
-spawnSlave :: Buildsome -> Target -> String -> (IO () -> IO ()) -> IO Slave
+spawnSlave :: Buildsome -> Target -> Reason -> (IO () -> IO ()) -> IO Slave
 spawnSlave buildsome target reason restoreMask = do
   success <- findApplyExecutionLog buildsome target
   if success
@@ -501,7 +501,7 @@ deleteRemovedOutputs buildsome = do
     makefileOutputPaths = M.keysSet $ bmBuildMap $ bsBuildMaps buildsome
 
 runCmd ::
-  Buildsome -> Target -> String -> String ->
+  Buildsome -> Target -> Reason -> String ->
   IO (Map FilePath (Maybe FileStatus), Set FilePath)
 runCmd buildsome target reason cmd = do
   registerOutputs buildsome (targetOutputPaths target)
