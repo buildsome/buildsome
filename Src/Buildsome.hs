@@ -29,7 +29,7 @@ import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Environment (getProgName)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, (</>), (<.>))
 import System.Posix.Files (FileStatus)
 import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
@@ -543,7 +543,7 @@ withDb dbFileName body = do
 main :: IO ()
 main = do
   Opt makefileName mparallelism deleteUnspecifiedOutput <- getOpt
-  let buildDbFilename = takeDirectory makefileName </> "build.db"
+  let buildDbFilename = makefileName <.> "db"
       parallelism = fromMaybe 1 mparallelism
   makefile <- parseMakefile makefileName
   withDb buildDbFilename $ \db -> do
