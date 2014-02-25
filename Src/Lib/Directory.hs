@@ -5,6 +5,7 @@ module Lib.Directory
   ) where
 
 import Control.Applicative ((<$>))
+import Control.Monad
 import Data.Maybe (isJust)
 import System.IO.Error
 import System.Posix.Files (FileStatus, getFileStatus)
@@ -28,4 +29,8 @@ fileExists :: FilePath -> IO Bool
 fileExists path = isJust <$> getMFileStatus path
 
 removeFileAllowNotExists :: FilePath -> IO ()
-removeFileAllowNotExists path = Dir.removeFile path `catchDoesNotExist` return ()
+removeFileAllowNotExists path = do
+  f <- Dir.doesFileExist path
+  d <- Dir.doesDirectoryExist path
+  when f $ Dir.removeFile path
+  when d $ Dir.removeDirectoryRecursive path

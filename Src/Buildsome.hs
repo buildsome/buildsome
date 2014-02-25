@@ -342,6 +342,7 @@ verifyCmdOutputs buildsome outputs cmd target = do
     filterM fileExists legalUnspecified
 
   unless (null illegalUnspecified) $ do
+    putStrLn $ "Illegal output files: " ++ show illegalUnspecified
     mapM_ removeFileAllowNotExists illegalUnspecified
     fail $ concat
       [ show cmd, " wrote to unspecified output files: ", show illegalUnspecified
