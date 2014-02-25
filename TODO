@@ -1,6 +1,6 @@
-# getProgName
 # Instead of semaphore: Use pool of output streams (with different prefix + color!)
   # Support per-output-stream indent for dependency depth
+
 # Comments
 # Metavariables: ($@, $<, $^)
 # Wildcards: %.o: %.c ==> gcc -o $@ $<
