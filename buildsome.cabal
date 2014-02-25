@@ -19,7 +19,7 @@ extra-source-files:  README
 cabal-version:       >=1.10
 
 executable buildsome
-  hs-source-dirs:    Src/
+  hs-source-dirs:    src/
   main-is:           Buildsome.hs
   ghc-options:       -threaded -Wall -O2
   other-modules:     Opts

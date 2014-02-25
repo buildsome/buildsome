@@ -5,7 +5,7 @@ PKG_LISTING=${HOME}/.cabal/packages/hackage.haskell.org/00-index.tar
 fs_override.so: fs_override.c Makefile
 	gcc -o $@ -g -Wall -Wextra -Winit-self -shared -fPIC $< -ldl -lbsd
 
-buildsome: Src/*.hs Src/Lib/*.hs dist/
+buildsome: src/*.hs src/Lib/*.hs dist/
 	cabal build
 	cp dist/build/buildsome/buildsome $@
 
