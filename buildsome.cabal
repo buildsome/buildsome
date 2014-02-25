@@ -20,7 +20,7 @@ cabal-version:       >=1.10
 
 executable buildsome
   hs-source-dirs:    src/
-  main-is:           Buildsome.hs
+  main-is:           Main.hs
   ghc-options:       -threaded -Wall -O2
   other-modules:     Opts
                ,     Lib.AsyncContext
