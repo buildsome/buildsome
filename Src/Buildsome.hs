@@ -54,7 +54,7 @@ computeTargetRep = TargetRep . minimum . targetOutputPaths
 
 data Explicitness = Explicit | Implicit
 
-type Parents = [TargetRep]
+type Parents = [(TargetRep, Reason)]
 type Reason = String
 type CmdId = ByteString
 
@@ -440,10 +440,15 @@ findApplyExecutionLog buildsome target parents = do
           putStrLn $ "Execution log match for: " ++ show (targetOutputPaths target)
           return True
 
+showParents :: Parents -> String
+showParents = concatMap showParent
+  where
+    showParent (targetRep, reason) = concat ["\n-> ", show targetRep, " (", reason, ")"]
+
 -- Find existing slave for target, or spawn a new one
 getSlaveForTarget :: Buildsome -> Reason -> Parents -> TargetRep -> Target -> IO Slave
 getSlaveForTarget buildsome reason parents targetRep target
-  | targetRep `elem` parents = fail $ "Target loop: " ++ show parents
+  | any ((== targetRep) . fst) parents = fail $ "Target loop: " ++ showParents newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
     E.mask $ \restoreMask -> do
@@ -459,7 +464,7 @@ getSlaveForTarget buildsome reason parents targetRep target
         Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
       getSlave
     where
-      newParents = targetRep : parents
+      newParents = (targetRep, reason) : parents
       resultIntoMVar mvar x = putMVar mvar x >> return x
 
 -- Spawn a new slave for a target
