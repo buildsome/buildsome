@@ -231,7 +231,7 @@ toBuildMaps makefile = BuildMaps buildMap childrenMap
       [ (takeDirectory outputPath, [pair target])
       | (outputPath, target) <- outputs ]
     buildMap =
-      M.fromListWith (error "Overlapping output paths")
+      M.fromListWithKey (\path -> error $ "Overlapping output paths for: " ++ show path)
       [ (outputPath, pair target)
       | (outputPath, target) <- outputs ]
 
