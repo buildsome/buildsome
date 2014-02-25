@@ -17,6 +17,7 @@ import Data.Maybe (fromMaybe, maybeToList)
 import Data.Set (Set)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
+import Filesystem.Path.CurrentOS (encodeString)
 import GHC.Generics (Generic)
 import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
@@ -28,7 +29,7 @@ import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
-import System.Environment (getProgName)
+import System.Argv0 (getArgv0)
 import System.FilePath (takeDirectory, (</>), (<.>))
 import System.Posix.Files (FileStatus)
 import System.Posix.Process (getProcessID)
@@ -268,8 +269,8 @@ withBuildsome db parallelism makefile deleteUnspecifiedOutput ldPreloadPath body
 
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
-  progName <- getProgName
-  Dir.canonicalizePath (takeDirectory progName </> "fs_override.so")
+  argv0 <- encodeString <$> getArgv0
+  Dir.canonicalizePath (takeDirectory argv0 </> "fs_override.so")
 
 nextJobId :: Buildsome -> IO Int
 nextJobId buildsome =
