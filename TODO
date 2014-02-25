@@ -1,3 +1,13 @@
+# getProgName
+# Instead of semaphore: Use pool of output streams (with different prefix + color!)
+  # Support per-output-stream indent for dependency depth
+# Comments
+# Metavariables: ($@, $<, $^)
+# Wildcards: %.o: %.c ==> gcc -o $@ $<
+# Internal variables
+# Include
+
+
 * ls of directory containing target is a loop
 
 * C-side can be given allowed outputs rules and fail anything else
