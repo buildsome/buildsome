@@ -209,8 +209,10 @@ handleCmdMsg buildsome conn ec msg =
       | otherwise = do
         -- Temporarily paused, so we can temporarily release parallelism
         -- semaphore
-        withReleasedParallelism buildsome $ need buildsome Implicit reason (ecParents ec) [path]
-        sendGo conn
+        withReleasedParallelism buildsome
+          (need buildsome Implicit reason (ecParents ec) [path])
+          `E.catch` (\e@E.SomeException {} -> E.throwTo (ecThreadId ec) e)
+          `E.finally` sendGo conn
         unless (isLegalOutput (ecTarget ec) path) $ recordInput ec path
     reportOutput fullPath =
       recordOutput ec =<< Dir.makeRelativeToCurrentDirectory fullPath
