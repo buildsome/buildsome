@@ -1,4 +1,19 @@
-# Process execution to return a stream of events, until EndOfProcess?
+* Switch to parsec for better error msgs and for "include" support (transformer over IO)
+
+* Need to detect number of active threads in cmds:
+  * Pre-allocate one slot for at least one thread
+  * Allocate an extra slot of parallelism for each detected thread
+    (connection created)
+    * This will fix the current bug that pausing releases parallelism
+      that wasn't necessarily ever allocated!
+    * Test this via Haskell program that creates multiple real threads
+      to access file system
+
+* Need to revert all the mailbox-serialization of events from cmds,
+  since multithreaded commands need to be handled in parallel.
+
+  * Should document which thread each function runs at
+  * Perhaps even annotate the IO types?
 
 # Instead of semaphore: Use pool of output streams (with different prefix + color!)
   # Support per-output-stream indent for dependency depth
@@ -97,10 +112,6 @@
 * In every rule, whether we got actual outputs from cache or build,
   need to verify *actual* outputs are in the specification and warn
   about specification outputs that are unused
-
-----------------------
-
-* Switch to parsec for better error msgs and for "include" support (transformer over IO)
 
 ----------------------
 
