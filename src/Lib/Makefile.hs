@@ -24,7 +24,7 @@ data Makefile = Makefile
   } deriving (Show)
 
 isSeparator :: Char -> Bool
-isSeparator x = C.isSpace x || x == ':'
+isSeparator x = C.isSpace x || x == ':' || x == '#'
 
 type Parser = P.Parsec String ()
 
@@ -32,16 +32,16 @@ word :: Parser String
 word = some (P.satisfy (not . isSeparator))
 
 horizSpace :: Parser Char
-horizSpace = P.satisfy $ \x -> x == ' ' || x == '\t'
+horizSpace = P.satisfy (`elem` " \t")
 
 tillEndOfLine :: Parser String
 tillEndOfLine = P.many (P.satisfy (/= '\n'))
 
 comment :: Parser ()
-comment = void $ P.char '#' *> tillEndOfLine *> P.char '\n'
+comment = void $ P.char '#' *> tillEndOfLine
 
-skippedLine :: Parser ()
-skippedLine = void (P.many1 P.space) <|> comment
+skipLineSuffix :: Parser ()
+skipLineSuffix = void $ P.many horizSpace *> optional comment *> P.char '\n'
 
 lineWords :: Parser [String]
 lineWords = many (many horizSpace *> word <* many horizSpace)
@@ -98,22 +98,21 @@ parseCmdChar outputPaths inputPaths =
   (: []) <$> P.satisfy (/= '\n')
 
 interpolateCmdLine :: [FilePath] -> [FilePath] -> Parser String
-interpolateCmdLine outputPaths inputPaths = concat <$> many (parseLiteralString <|> parseCmdChar outputPaths inputPaths)
+interpolateCmdLine outputPaths inputPaths =
+  concat <$> many (parseLiteralString <|> parseCmdChar outputPaths inputPaths)
 
 cmdLine :: [FilePath] -> [FilePath] -> Parser String
-cmdLine outputPaths inputPaths = do
-  res <-
-    (P.char '\t' *> interpolateCmdLine outputPaths inputPaths <* P.char '\n') <|>
-    ("" <$ skippedLine)
-  return res
+cmdLine outputPaths inputPaths =
+  fromMaybe "" <$>
+  optional (P.char '\t' *> interpolateCmdLine outputPaths inputPaths) <* skipLineSuffix
 
 target :: Parser Target
 target = do
-  P.skipMany skippedLine
+  P.skipMany skipLineSuffix
   outputPaths <- lineWords
   _ <- P.char ':'
   inputPaths <- lineWords
-  _ <- P.char '\n'
+  _ <- skipLineSuffix
   cmdLines <- filter (not . null) <$> many (cmdLine outputPaths inputPaths)
   return Target
     { targetOutputPaths = outputPaths
@@ -134,4 +133,4 @@ mkMakefile targets
 
 makefileParser :: Parser Makefile
 makefileParser =
-  (mkMakefile <$> many target) <* P.many skippedLine <* P.eof
+  (mkMakefile <$> many target) <* P.skipMany skipLineSuffix <* P.eof
