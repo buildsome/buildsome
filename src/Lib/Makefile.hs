@@ -5,6 +5,7 @@ module Lib.Makefile
   ) where
 
 import Control.Applicative
+import Control.Monad
 import Data.List (partition)
 import qualified Data.Char as C
 import qualified Text.Parsec as P
@@ -31,21 +32,33 @@ word = some (P.satisfy (not . isSeparator))
 horizSpace :: Parser Char
 horizSpace = P.satisfy $ \x -> x == ' ' || x == '\t'
 
+tillEndOfLine :: Parser String
+tillEndOfLine = P.many (P.satisfy (/= '\n'))
+
+comment :: Parser ()
+comment = void $ P.char '#' *> tillEndOfLine *> P.char '\n'
+
+skippedLine :: Parser ()
+skippedLine = void (P.many1 P.space) <|> comment
+
 lineWords :: Parser [String]
 lineWords = many (many horizSpace *> word <* many horizSpace)
 
 cmdLine :: Parser String
-cmdLine =
-  (P.char '\t' *> P.many (P.satisfy (/= '\n'))) <|>
-  ("" <$ (many horizSpace *> P.char '\n'))
+cmdLine = do
+  res <-
+    (P.char '\t' *> tillEndOfLine <* P.char '\n') <|>
+    ("" <$ skippedLine)
+  return res
 
 target :: Parser Target
 target = do
+  P.skipMany skippedLine
   outputPaths <- lineWords
   _ <- P.char ':'
   inputPaths <- lineWords
   _ <- P.char '\n'
-  cmdLines <- filter (not . null) <$> many cmdLine
+  cmdLines <- filter (not . null) <$> many (P.try cmdLine)
   return Target
     { targetOutputPaths = outputPaths
     , targetInputHints = inputPaths
@@ -65,4 +78,4 @@ mkMakefile targets
 
 makefileParser :: Parser Makefile
 makefileParser =
-  (mkMakefile <$> many target) <* P.eof
+  (mkMakefile <$> many target) <* P.many skippedLine <* P.eof

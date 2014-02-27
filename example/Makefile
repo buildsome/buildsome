@@ -1,9 +1,11 @@
 all: example/out/a example/out/subdir.list
 
+# Linkage
 example/out/a: example/out/a.o
 	gcc -o example/out/a example/out/a.o -g -Wall
 
 example/out/a.o:
+	# Compilation
 	gcc -c -o example/out/a.o example/a.c -g -Wall
 
 example/out/auto.h:
