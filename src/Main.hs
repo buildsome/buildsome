@@ -36,7 +36,7 @@ import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
-import qualified Data.Attoparsec.ByteString.Char8 as P
+import qualified Text.Trifecta as T
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -552,11 +552,9 @@ mkEnvVars buildsome cmdId =
     ]
 
 parseMakefile :: FilePath -> IO Makefile
-parseMakefile makefileName = do
-  parseResult <- P.parseOnly makefileParser <$> BS.readFile makefileName
-  case parseResult of
-    Left err -> fail $ "Makefile parse error: " ++ err
-    Right makefile -> return makefile
+parseMakefile makefileName =
+  fromMaybe (error "Makefile parse error") <$>
+  T.parseFromFile makefileParser makefileName
 
 withDb :: FilePath -> (Sophia.Db -> IO a) -> IO a
 withDb dbFileName body = do

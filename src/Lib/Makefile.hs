@@ -6,8 +6,9 @@ module Lib.Makefile
 
 import Control.Applicative
 import Data.List (partition)
-import qualified Data.Attoparsec.ByteString.Char8 as P
-import qualified Data.ByteString.Char8 as BS
+import qualified Data.Char as C
+import qualified Text.Parser.Char as P
+import qualified Text.Trifecta as T
 
 data Target = Target
   { targetOutputPaths :: [FilePath]
@@ -21,34 +22,33 @@ data Makefile = Makefile
   } deriving (Show)
 
 isSeparator :: Char -> Bool
-isSeparator x = P.isSpace x || x == ':'
+isSeparator x = C.isSpace x || x == ':'
 
-word :: P.Parser BS.ByteString
-word = P.takeWhile1 (not . isSeparator)
+word :: T.Parser String
+word = some (P.satisfy (not . isSeparator))
 
-horizSpace :: P.Parser Char
+horizSpace :: T.Parser Char
 horizSpace = P.satisfy $ \x -> x == ' ' || x == '\t'
 
-lineWords :: P.Parser [BS.ByteString]
+lineWords :: T.Parser [String]
 lineWords = many (many horizSpace *> word <* many horizSpace)
 
-cmdLine :: P.Parser BS.ByteString
+cmdLine :: T.Parser String
 cmdLine =
-  (P.char '\t' *> P.takeTill (== '\n')) <|>
-  (BS.empty <$ (many horizSpace *> P.char '\n'))
+  (P.char '\t' *> T.many (P.satisfy (/= '\n'))) <|>
+  ("" <$ (many horizSpace *> P.char '\n'))
 
-target :: P.Parser Target
+target :: T.Parser Target
 target = do
   outputPaths <- lineWords
   _ <- P.char ':'
   inputPaths <- lineWords
   _ <- P.char '\n'
-  cmdLines <- filter (not . BS.null) <$> many cmdLine
-  let unpack = map BS.unpack
+  cmdLines <- filter (not . null) <$> many cmdLine
   return Target
-    { targetOutputPaths = unpack outputPaths
-    , targetInputHints = unpack inputPaths
-    , targetCmds = unpack cmdLines
+    { targetOutputPaths = outputPaths
+    , targetInputHints = inputPaths
+    , targetCmds = cmdLines
     }
 
 mkMakefile :: [Target] -> Makefile
@@ -62,6 +62,6 @@ mkMakefile targets
   where
     (phonyTargets, regularTargets) = partition ((== [".PHONY"]) . targetOutputPaths) targets
 
-makefileParser :: P.Parser Makefile
+makefileParser :: T.Parser Makefile
 makefileParser =
-  (mkMakefile <$> many target) <* P.endOfInput
+  (mkMakefile <$> many target) <* T.eof
