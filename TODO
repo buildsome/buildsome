@@ -1,3 +1,5 @@
+* order only inputs (| after inputs)
+
 * Need to detect number of active threads in cmds:
   * Pre-allocate one slot for at least one thread
   * Allocate an extra slot of parallelism for each detected thread
@@ -16,7 +18,6 @@
 # Instead of semaphore: Use pool of output streams (with different prefix + color!)
   # Support per-output-stream indent for dependency depth
 
-# Metavariables: ($@, $<, $^)
 # Wildcards: %.o: %.c ==> gcc -o $@ $<
 # Internal variables (CFLAGS=-g -Wall -I...)
 # Include
@@ -94,6 +95,10 @@
       rare and relatively cheap, so who cares?
 
     * Walking the trie would require many round-trips...
+
+* Outputs that are untouched by a whole rule's execution should be OK,
+  even if internally they are created, written, and eventually
+  unlinked.
 
 -----------------
 
