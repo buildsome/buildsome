@@ -92,15 +92,15 @@ variable outputPaths inputPaths = do
       '|' -> error "TODO: order-only inputs"
       _ -> P.unexpected $ "Invalid variable id: " ++ [varId]
 
-parseCmdChar :: [FilePath] -> [FilePath] -> Parser String
-parseCmdChar outputPaths inputPaths =
+cmdChar :: [FilePath] -> [FilePath] -> Parser String
+cmdChar outputPaths inputPaths =
   escapeSequence <|>
   variable outputPaths inputPaths <|>
   (: []) <$> P.satisfy (/= '\n')
 
 interpolateCmdLine :: [FilePath] -> [FilePath] -> Parser String
 interpolateCmdLine outputPaths inputPaths =
-  concat <$> many (literalString '\'' <|> parseCmdChar outputPaths inputPaths)
+  concat <$> many (literalString '\'' <|> cmdChar outputPaths inputPaths)
 
 includeDirective :: Parser FilePath
 includeDirective = do
@@ -154,8 +154,6 @@ target = do
     , targetOrderOnlyInputHints = fromMaybe [] orderOnlyInputs
     , targetCmds = cmdLines
     }
-
-
 
 mkMakefile :: [Target] -> Makefile
 mkMakefile targets
