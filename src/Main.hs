@@ -552,9 +552,9 @@ mkEnvVars buildsome cmdId =
     ]
 
 parseMakefile :: FilePath -> IO Makefile
-parseMakefile makefileName =
-  either (fail . show) return =<<
-  parseFromFile makefileParser makefileName
+parseMakefile makefileName = do
+  parseAction <- parseFromFile makefileParser makefileName
+  either (fail . show) return =<< parseAction
 
 withDb :: FilePath -> (Sophia.Db -> IO a) -> IO a
 withDb dbFileName body = do

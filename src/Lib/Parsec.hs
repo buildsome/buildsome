@@ -1,8 +1,11 @@
 module Lib.Parsec (parseFromFile) where
 
+import Data.Monoid
 import qualified Text.Parsec as P
 
-parseFromFile :: P.Parsec String () a -> FilePath -> IO (Either P.ParseError a)
+parseFromFile ::
+  (Monad m, Monoid u) =>
+  P.ParsecT String u m a -> FilePath -> IO (m (Either P.ParseError a))
 parseFromFile p fname = do
   input <- readFile fname
-  return $ P.runParser p () fname input
+  return $ P.runParserT p mempty fname input

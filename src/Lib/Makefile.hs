@@ -6,11 +6,13 @@ module Lib.Makefile
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.IO.Class (liftIO)
 import Data.List (partition)
 import Data.Maybe (fromMaybe, listToMaybe)
 import System.FilePath (takeDirectory, takeFileName)
 import qualified Data.Char as C
 import qualified Text.Parsec as P
+import qualified Text.Parsec.Pos as Pos
 
 data Target = Target
   { targetOutputPaths :: [FilePath]
@@ -26,7 +28,9 @@ data Makefile = Makefile
 isSeparator :: Char -> Bool
 isSeparator x = C.isSpace x || x == ':' || x == '#'
 
-type Parser = P.Parsec String ()
+type IncludeStack = [(Pos.SourcePos, String)]
+
+type Parser = P.ParsecT String IncludeStack IO
 
 word :: Parser String
 word = some (P.satisfy (not . isSeparator))
@@ -46,15 +50,15 @@ skipLineSuffix = void $ P.many horizSpace *> optional comment *> P.char '\n'
 lineWords :: Parser [String]
 lineWords = many (many horizSpace *> word <* many horizSpace)
 
-parseLiteralString :: Parser String
-parseLiteralString = do
-  x <- P.char '\''
+literalString :: Char -> Parser String
+literalString delimiter = do
+  x <- P.char delimiter
   str <- concat <$> many p
-  y <- P.char '\''
+  y <- P.char delimiter
   return $ concat [[x], str, [y]]
   where
     p = escapeSequence <|>
-        ((: []) <$> P.satisfy (`notElem` "\n'"))
+        ((: []) <$> P.satisfy (`notElem` ['\n', delimiter]))
 
 escapeSequence :: Parser String
 escapeSequence = do
@@ -99,16 +103,47 @@ parseCmdChar outputPaths inputPaths =
 
 interpolateCmdLine :: [FilePath] -> [FilePath] -> Parser String
 interpolateCmdLine outputPaths inputPaths =
-  concat <$> many (parseLiteralString <|> parseCmdChar outputPaths inputPaths)
+  concat <$> many (literalString '\'' <|> parseCmdChar outputPaths inputPaths)
+
+includeDirective :: Parser FilePath
+includeDirective = do
+  fileNameStr <- P.string "include" *> many horizSpace *> (literalString '"' <|> (wrap <$> tillEndOfLine)) <* skipLineSuffix
+  case reads fileNameStr of
+    [(path, "")] -> return path
+    _ -> fail $ "Malformed include statement: " ++ show fileNameStr
+  where
+    wrap x = concat ["\"", x, "\""]
+
+include :: Parser ()
+include = do
+  includedPath <- includeDirective
+  fileContent <- liftIO $ readFile includedPath
+  void $ P.updateParserState $ \oldState -> oldState
+    { P.stateInput = fileContent
+    , P.statePos = Pos.initialPos includedPath
+    , P.stateUser = (P.statePos oldState, P.stateInput oldState) : P.stateUser oldState
+    }
+
+popStack :: Parser ()
+popStack = P.eof *> do
+  posStack <- P.getState
+  case posStack of
+    [] -> fail "Don't steal eof"
+    ((pos, input) : rest) ->
+      void $ P.setParserState
+      P.State { P.statePos = pos, P.stateInput = input, P.stateUser = rest }
+
+commonLine :: Parser ()
+commonLine = many horizSpace *> (include <|> skipLineSuffix <|> popStack)
 
 cmdLine :: [FilePath] -> [FilePath] -> Parser String
 cmdLine outputPaths inputPaths =
-  fromMaybe "" <$>
-  optional (P.char '\t' *> interpolateCmdLine outputPaths inputPaths) <* skipLineSuffix
+  (P.char '\t' *> interpolateCmdLine outputPaths inputPaths <* skipLineSuffix) <|>
+  ("" <$ commonLine)
 
 target :: Parser Target
 target = do
-  P.skipMany skipLineSuffix
+  P.skipMany commonLine
   outputPaths <- lineWords
   _ <- P.char ':'
   inputPaths <- lineWords
@@ -133,4 +168,4 @@ mkMakefile targets
 
 makefileParser :: Parser Makefile
 makefileParser =
-  (mkMakefile <$> many target) <* P.skipMany skipLineSuffix <* P.eof
+  (mkMakefile <$> many target) <* P.skipMany commonLine <* P.eof

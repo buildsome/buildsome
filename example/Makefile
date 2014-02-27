@@ -1,4 +1,6 @@
-all: example/out/a example/out/subdir.list
+all: example/out/a example/out/subdir.list other
+
+include "example/other.Makefile"
 
 # Linkage
 example/out/a: example/out/a.o example/out/b.o
