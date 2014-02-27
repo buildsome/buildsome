@@ -3,7 +3,7 @@ all: example/out/a example/out/subdir.list other
 include "example/other.Makefile"
 
 # Linkage
-example/out/a: example/out/a.o example/out/b.o
+example/out/a: example/out/a.o example/out/b.o | example/a.h
 	gcc -o example/out/a $^ -g -Wall
 
 example/out/a.o: example/a.c

@@ -10,13 +10,13 @@ import Control.Monad.IO.Class (liftIO)
 import Data.List (partition)
 import Data.Maybe (fromMaybe, listToMaybe)
 import System.FilePath (takeDirectory, takeFileName)
-import qualified Data.Char as C
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
 data Target = Target
   { targetOutputPaths :: [FilePath]
-  , targetInputHints :: [FilePath]
+  , targetExplicitInputHints :: [FilePath]
+  , targetOrderOnlyInputHints :: [FilePath]
   , targetCmds :: [String]
   } deriving (Show)
 
@@ -25,15 +25,12 @@ data Makefile = Makefile
   , makefilePhonies :: [FilePath]
   } deriving (Show)
 
-isSeparator :: Char -> Bool
-isSeparator x = C.isSpace x || x == ':' || x == '#'
-
 type IncludeStack = [(Pos.SourcePos, String)]
 
 type Parser = P.ParsecT String IncludeStack IO
 
-word :: Parser String
-word = some (P.satisfy (not . isSeparator))
+filepath :: Parser FilePath
+filepath = some $ P.satisfy $ \x -> x `notElem` ":#| \t\r\n"
 
 horizSpace :: Parser Char
 horizSpace = P.satisfy (`elem` " \t")
@@ -45,10 +42,10 @@ comment :: Parser ()
 comment = void $ P.char '#' *> tillEndOfLine
 
 skipLineSuffix :: Parser ()
-skipLineSuffix = void $ P.many horizSpace *> optional comment *> P.char '\n'
+skipLineSuffix = P.skipMany horizSpace <* optional comment <* P.char '\n'
 
-lineWords :: Parser [String]
-lineWords = many (many horizSpace *> word <* many horizSpace)
+filepaths :: Parser [String]
+filepaths = many (many horizSpace *> filepath <* many horizSpace)
 
 literalString :: Char -> Parser String
 literalString delimiter = do
@@ -78,7 +75,7 @@ variable outputPaths inputPaths = do
         case multiType of
         'D' -> return takeDirectory
         'F' -> return takeFileName
-        _ -> fail $ concat
+        _ -> P.unexpected $ concat
              [ "Invalid selector "
              , show multiType, " in sequence: $("
              , [multiVarId, multiType], ")"
@@ -93,7 +90,7 @@ variable outputPaths inputPaths = do
       '<' -> return $ toString $ getFirst "No first input for < variable" inputPaths
       '^' -> return $ unwords $ map toString inputPaths
       '|' -> error "TODO: order-only inputs"
-      _ -> fail $ "Invalid variable id: " ++ [varId]
+      _ -> P.unexpected $ "Invalid variable id: " ++ [varId]
 
 parseCmdChar :: [FilePath] -> [FilePath] -> Parser String
 parseCmdChar outputPaths inputPaths =
@@ -110,7 +107,7 @@ includeDirective = do
   fileNameStr <- P.string "include" *> many horizSpace *> (literalString '"' <|> (wrap <$> tillEndOfLine)) <* skipLineSuffix
   case reads fileNameStr of
     [(path, "")] -> return path
-    _ -> fail $ "Malformed include statement: " ++ show fileNameStr
+    _ -> P.unexpected $ "Malformed include statement: " ++ show fileNameStr
   where
     wrap x = concat ["\"", x, "\""]
 
@@ -125,13 +122,14 @@ include = do
     }
 
 popStack :: Parser ()
-popStack = P.eof *> do
-  posStack <- P.getState
-  case posStack of
-    [] -> fail "Don't steal eof"
-    ((pos, input) : rest) ->
-      void $ P.setParserState
-      P.State { P.statePos = pos, P.stateInput = input, P.stateUser = rest }
+popStack =
+  P.eof *> do
+    posStack <- P.getState
+    case posStack of
+      [] -> fail "Don't steal eof"
+      ((pos, input) : rest) ->
+        void $ P.setParserState
+        P.State { P.statePos = pos, P.stateInput = input, P.stateUser = rest }
 
 commonLine :: Parser ()
 commonLine = many horizSpace *> (include <|> skipLineSuffix <|> popStack)
@@ -144,16 +142,20 @@ cmdLine outputPaths inputPaths =
 target :: Parser Target
 target = do
   P.skipMany commonLine
-  outputPaths <- lineWords
+  outputPaths <- filepaths
   _ <- P.char ':'
-  inputPaths <- lineWords
+  inputPaths <- filepaths
+  orderOnlyInputs <- optional $ P.char '|' *> filepaths
   _ <- skipLineSuffix
   cmdLines <- filter (not . null) <$> many (cmdLine outputPaths inputPaths)
   return Target
     { targetOutputPaths = outputPaths
-    , targetInputHints = inputPaths
+    , targetExplicitInputHints = inputPaths
+    , targetOrderOnlyInputHints = fromMaybe [] orderOnlyInputs
     , targetCmds = cmdLines
     }
+
+
 
 mkMakefile :: [Target] -> Makefile
 mkMakefile targets
@@ -161,10 +163,12 @@ mkMakefile targets
   | otherwise =
     Makefile
     { makefileTargets = regularTargets
-    , makefilePhonies = concatMap targetInputHints phonyTargets
+    , makefilePhonies = concatMap getPhonyInputs phonyTargets
     }
   where
-    (phonyTargets, regularTargets) = partition ((== [".PHONY"]) . targetOutputPaths) targets
+    getPhonyInputs (Target [".PHONY"] inputs [] []) = inputs
+    getPhonyInputs t = error $ "Invalid .PHONY target: " ++ show t
+    (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputPaths) targets
 
 makefileParser :: Parser Makefile
 makefileParser =

@@ -393,6 +393,10 @@ verifyLoggedOutputs buildsome outputs target = do
       S.filter (not . allowedUnspecifiedOutput) $
       outputs `S.difference` S.fromList (targetOutputPaths target)
 
+targetInputHints :: Target -> [FilePath]
+targetInputHints target =
+  targetExplicitInputHints target ++ targetOrderOnlyInputHints target
+
 applyExecutionLog ::
   Buildsome -> Target -> Parents -> ExecutionLog ->
   IO (Either (String, FilePath, FileDesc, FileDesc) ())
