@@ -7,8 +7,7 @@ module Lib.Makefile
 import Control.Applicative
 import Data.List (partition)
 import qualified Data.Char as C
-import qualified Text.Parser.Char as P
-import qualified Text.Trifecta as T
+import qualified Text.Parsec as P
 
 data Target = Target
   { targetOutputPaths :: [FilePath]
@@ -24,21 +23,23 @@ data Makefile = Makefile
 isSeparator :: Char -> Bool
 isSeparator x = C.isSpace x || x == ':'
 
-word :: T.Parser String
+type Parser = P.Parsec String ()
+
+word :: Parser String
 word = some (P.satisfy (not . isSeparator))
 
-horizSpace :: T.Parser Char
+horizSpace :: Parser Char
 horizSpace = P.satisfy $ \x -> x == ' ' || x == '\t'
 
-lineWords :: T.Parser [String]
+lineWords :: Parser [String]
 lineWords = many (many horizSpace *> word <* many horizSpace)
 
-cmdLine :: T.Parser String
+cmdLine :: Parser String
 cmdLine =
-  (P.char '\t' *> T.many (P.satisfy (/= '\n'))) <|>
+  (P.char '\t' *> P.many (P.satisfy (/= '\n'))) <|>
   ("" <$ (many horizSpace *> P.char '\n'))
 
-target :: T.Parser Target
+target :: Parser Target
 target = do
   outputPaths <- lineWords
   _ <- P.char ':'
@@ -62,6 +63,6 @@ mkMakefile targets
   where
     (phonyTargets, regularTargets) = partition ((== [".PHONY"]) . targetOutputPaths) targets
 
-makefileParser :: T.Parser Makefile
+makefileParser :: Parser Makefile
 makefileParser =
-  (mkMakefile <$> many target) <* T.eof
+  (mkMakefile <$> many target) <* P.eof

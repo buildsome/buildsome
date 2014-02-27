@@ -1,5 +1,3 @@
-* Switch to parsec for better error msgs and for "include" support (transformer over IO)
-
 * Need to detect number of active threads in cmds:
   * Pre-allocate one slot for at least one thread
   * Allocate an extra slot of parallelism for each detected thread

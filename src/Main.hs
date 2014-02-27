@@ -25,6 +25,7 @@ import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), Target(..), makefileParser)
+import Lib.Parsec (parseFromFile)
 import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
@@ -36,7 +37,6 @@ import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
-import qualified Text.Trifecta as T
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -553,8 +553,8 @@ mkEnvVars buildsome cmdId =
 
 parseMakefile :: FilePath -> IO Makefile
 parseMakefile makefileName =
-  fromMaybe (error "Makefile parse error") <$>
-  T.parseFromFile makefileParser makefileName
+  either (fail . show) return =<<
+  parseFromFile makefileParser makefileName
 
 withDb :: FilePath -> (Sophia.Db -> IO a) -> IO a
 withDb dbFileName body = do
