@@ -1,17 +1,26 @@
 module Lib.Makefile
   ( Target(..)
   , Makefile(..)
-  , makefileParser
+  , makefile
+  , parseMakefile
   ) where
 
-import Control.Applicative (Applicative(..), (<$>), (<|>))
+import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.State (StateT, evalStateT)
+import Data.Char (isAlpha, isAlphaNum)
 import Data.List (partition)
+import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
+import Lib.Parsec (parseFromFile, showErr, showPos)
 import System.FilePath (takeDirectory, takeFileName)
+import System.IO (hPutStrLn, stderr)
 import Text.Parsec ((<?>))
 import qualified Control.Exception as E
+import qualified Control.Monad.Trans.State as State
+import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
@@ -30,7 +39,8 @@ data Makefile = Makefile
 
 type IncludeStack = [(Pos.SourcePos, String)]
 
-type Parser = P.ParsecT String IncludeStack IO
+type Vars = Map String String
+type Parser = P.ParsecT String IncludeStack (StateT Vars IO)
 
 horizSpace :: Parser Char
 horizSpace = P.satisfy (`elem` " \t")
@@ -83,11 +93,23 @@ escapeSequence = do
   code <- P.anyChar
   return [esc, code]
 
+ident :: Parser String
+ident = (:) <$> P.satisfy isAlphaEx <*> P.many (P.satisfy isAlphaNumEx)
+
 variable :: [FilePath] -> [FilePath] -> Parser String
 variable outputPaths inputPaths = do
   _ <- P.char '$'
   varId <- P.anyChar
   case varId of
+    '{' -> do
+      varName <- ident <* P.char '}'
+      mResult <- lift $ State.gets $ M.lookup varName
+      case mResult of
+        Nothing -> do
+          posStr <- showPos <$> P.getPosition
+          liftIO $ hPutStrLn stderr $ posStr ++ ": No such variable: " ++ show varName
+          fail "No such variable"
+        Just val -> return val
     '(' -> do
       (multiVarId, multiType) <- (,) <$> P.anyChar <*> P.anyChar
       _ <- P.char ')'
@@ -112,15 +134,15 @@ variable outputPaths inputPaths = do
       '|' -> error "TODO: order-only inputs"
       _ -> P.unexpected $ "Invalid variable id: " ++ [varId]
 
-cmdChar :: [FilePath] -> [FilePath] -> Parser String
-cmdChar outputPaths inputPaths =
+interpolatedChar :: [FilePath] -> [FilePath] -> Parser String
+interpolatedChar outputPaths inputPaths =
   escapeSequence <|>
   variable outputPaths inputPaths <|>
   (: []) <$> P.satisfy (/= '\n')
 
-interpolateCmdLine :: [FilePath] -> [FilePath] -> Parser String
-interpolateCmdLine outputPaths inputPaths =
-  concat <$> P.many (literalString '\'' <|> cmdChar outputPaths inputPaths)
+interpolateString :: [FilePath] -> [FilePath] -> Parser String
+interpolateString outputPaths inputPaths =
+  concat <$> P.many (literalString '\'' <|> interpolatedChar outputPaths inputPaths)
 
 type IncludePath = FilePath
 
@@ -199,15 +221,18 @@ cmdLine outputPaths inputPaths =
   newline *>
   noiseLines *>
   P.char '\t' *>
-  interpolateCmdLine outputPaths inputPaths <*
+  interpolateString outputPaths inputPaths <*
   skipLineSuffix
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
 target :: Parser Target
 target = do
-  P.skipMany $ P.char ' ' -- disallow tab here
-  outputPaths <- filepaths1 <?> "outputs"
-  horizSpaces *> P.char ':' *> horizSpaces
+  outputPaths <- P.try $
+    -- disallow tab here
+    P.skipMany (P.char ' ') *>
+    (filepaths1 <?> "outputs") <*
+    horizSpaces <* P.char ':'
+  horizSpaces
   inputPaths <- filepaths <?> "inputs"
   orderOnlyInputs <-
     P.optionMaybe $ P.try $
@@ -246,12 +271,37 @@ properEof = do
     [] -> return ()
     _ -> fail "EOF but includers still pending"
 
-makefileParser :: Parser Makefile
-makefileParser =
-  mkMakefile <$>
+isAlphaEx :: Char -> Bool
+isAlphaEx x = isAlpha x || x == '_'
+
+isAlphaNumEx :: Char -> Bool
+isAlphaNumEx x = isAlphaNum x || x == '_'
+
+setVariable :: Parser ()
+setVariable = do
+  varName <- P.try $ ident <* P.char '='
+  value <- interpolateString [] []
+  lift $ State.modify (M.insert varName value)
+
+makefile :: Parser Makefile
+makefile =
+  mkMakefile . concat <$>
   ( beginningOfLine *> -- due to beginning of file
     noiseLines *>
-    (target `sepBy` (newline *> noiseLines)) <*
+    ( ( ((: []) <$> target) <|>
+        ([] <$ setVariable)
+      ) `sepBy` (newline *> noiseLines)
+    ) <*
     P.optional (newline *> noiseLines) <*
     properEof
   )
+
+parseMakefile :: FilePath -> IO Makefile
+parseMakefile makefileName = do
+  parseAction <- parseFromFile makefile makefileName
+  res <- evalStateT parseAction M.empty
+  case res of
+    Right x -> return x
+    Left err -> do
+      hPutStrLn stderr $ showErr err
+      fail "Makefile parse failure"
