@@ -1,7 +1,7 @@
-* verify .PHONY's exist
-* order only inputs (| after inputs)
-* Wildcards: %.o: %.c ==> gcc -o $@ $<
-* Internal variables (CFLAGS=-g -Wall -I...)
+* Target patterns/factories: %.o: %.c ==> gcc -o $@ $<
+* Wildcards that scan source+target universe, including patterns
+
+* Verification about used targets/etc, also when using execution log
 
 * Need to detect number of active threads in cmds:
   * Pre-allocate one slot for at least one thread
