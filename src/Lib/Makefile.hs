@@ -12,6 +12,7 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import System.FilePath (takeDirectory, takeFileName)
 import Text.Parsec ((<?>))
 import qualified Control.Exception as E
+import qualified Data.Set as S
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
@@ -223,12 +224,16 @@ target = do
 mkMakefile :: [Target] -> Makefile
 mkMakefile targets
   | not $ null $ concatMap targetCmds phonyTargets = error ".PHONY targets may not have commands!"
+  | not $ null missingPhonies = error $ "missing .PHONY targets: " ++ show missingPhonies
   | otherwise =
     Makefile
     { makefileTargets = regularTargets
-    , makefilePhonies = concatMap getPhonyInputs phonyTargets
+    , makefilePhonies = phonies
     }
   where
+    missingPhonies = S.toList $ S.fromList phonies `S.difference` outputPathsSet
+    outputPathsSet = S.fromList (concatMap targetOutputPaths regularTargets)
+    phonies = concatMap getPhonyInputs phonyTargets
     getPhonyInputs (Target [".PHONY"] inputs [] []) = inputs
     getPhonyInputs t = error $ "Invalid .PHONY target: " ++ show t
     (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputPaths) targets
