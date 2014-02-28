@@ -4,12 +4,14 @@ module Lib.Makefile
   , makefileParser
   ) where
 
-import Control.Applicative
+import Control.Applicative (Applicative(..), (<$>), (<|>))
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import Data.List (partition)
 import Data.Maybe (fromMaybe, listToMaybe)
 import System.FilePath (takeDirectory, takeFileName)
+import Text.Parsec ((<?>))
+import qualified Control.Exception as E
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
@@ -29,11 +31,14 @@ type IncludeStack = [(Pos.SourcePos, String)]
 
 type Parser = P.ParsecT String IncludeStack IO
 
-filepath :: Parser FilePath
-filepath = some $ P.satisfy $ \x -> x `notElem` ":#| \t\r\n"
-
 horizSpace :: Parser Char
 horizSpace = P.satisfy (`elem` " \t")
+
+horizSpaces :: Parser ()
+horizSpaces = P.skipMany horizSpace
+
+horizSpaces1 :: Parser ()
+horizSpaces1 = P.skipMany1 horizSpace
 
 tillEndOfLine :: Parser String
 tillEndOfLine = P.many (P.satisfy (/= '\n'))
@@ -42,15 +47,29 @@ comment :: Parser ()
 comment = void $ P.char '#' *> tillEndOfLine
 
 skipLineSuffix :: Parser ()
-skipLineSuffix = P.skipMany horizSpace <* optional comment <* P.char '\n'
+skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
 
-filepaths :: Parser [String]
-filepaths = many (many horizSpace *> filepath <* many horizSpace)
+filepath :: Parser FilePath
+filepath = P.many1 $ P.satisfy $ \x -> x `notElem` ":#| \t\r\n"
+
+-- Parsec's sepBy cannot handle the separator following the sequence
+-- without a following element:
+sepBy :: Parser a -> Parser () -> Parser [a]
+item `sepBy` sep = sepBy1 item sep <|> return []
+
+sepBy1 :: Parser a -> Parser () -> Parser [a]
+item `sepBy1` sep = (:) <$> item <*> P.many (P.try (sep >> item))
+
+filepaths :: Parser [FilePath]
+filepaths = filepath `sepBy` horizSpaces1
+
+filepaths1 :: Parser [FilePath]
+filepaths1 = filepath `sepBy1` horizSpaces1
 
 literalString :: Char -> Parser String
 literalString delimiter = do
   x <- P.char delimiter
-  str <- concat <$> many p
+  str <- concat <$> P.many p
   y <- P.char delimiter
   return $ concat [[x], str, [y]]
   where
@@ -100,29 +119,37 @@ cmdChar outputPaths inputPaths =
 
 interpolateCmdLine :: [FilePath] -> [FilePath] -> Parser String
 interpolateCmdLine outputPaths inputPaths =
-  concat <$> many (literalString '\'' <|> cmdChar outputPaths inputPaths)
+  concat <$> P.many (literalString '\'' <|> cmdChar outputPaths inputPaths)
 
-includeDirective :: Parser FilePath
-includeDirective = do
-  fileNameStr <- P.string "include" *> many horizSpace *> (literalString '"' <|> (wrap <$> tillEndOfLine)) <* skipLineSuffix
+type IncludePath = FilePath
+
+includeLine :: Parser IncludePath
+includeLine = P.try $ do
+  horizSpaces
+  fileNameStr <-
+    P.string "include" *> horizSpaces1 *>
+    (literalString '"' <|> (wrap <$> tillEndOfLine))
+  skipLineSuffix
   case reads fileNameStr of
     [(path, "")] -> return path
     _ -> P.unexpected $ "Malformed include statement: " ++ show fileNameStr
   where
     wrap x = concat ["\"", x, "\""]
 
-include :: Parser ()
-include = do
-  includedPath <- includeDirective
-  fileContent <- liftIO $ readFile includedPath
-  void $ P.updateParserState $ \oldState -> oldState
-    { P.stateInput = fileContent
-    , P.statePos = Pos.initialPos includedPath
-    , P.stateUser = (P.statePos oldState, P.stateInput oldState) : P.stateUser oldState
-    }
+runInclude :: IncludePath -> Parser ()
+runInclude includedPath = do
+  eFileContent <- liftIO $ E.try $ readFile includedPath
+  case eFileContent of
+    Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e
+    Right fileContent ->
+      void $ P.updateParserState $ \oldState -> oldState
+        { P.stateInput = fileContent
+        , P.statePos = Pos.initialPos includedPath
+        , P.stateUser = (P.statePos oldState, P.stateInput oldState) : P.stateUser oldState
+        }
 
-popStack :: Parser ()
-popStack =
+returnToIncluder :: Parser ()
+returnToIncluder =
   P.eof *> do
     posStack <- P.getState
     case posStack of
@@ -130,29 +157,67 @@ popStack =
       ((pos, input) : rest) ->
         void $ P.setParserState
         P.State { P.statePos = pos, P.stateInput = input, P.stateUser = rest }
+    -- "include" did not eat the end of line, so when we return here,
+    -- we'll be before the newline, and we'll read a fake empty line
+    -- here, but no big deal
 
-commonLine :: Parser ()
-commonLine = many horizSpace *> (include <|> skipLineSuffix <|> popStack)
+beginningOfLine :: Parser ()
+beginningOfLine = do
+  mIncludePath <- P.optionMaybe $ P.try (includeLine <* P.optional (P.char '\n'))
+  case mIncludePath of
+    Just includePath -> runInclude includePath *> beginningOfLine
+    Nothing -> -- A line that begins with eof can still lead to a new line in the includer
+      P.optional $ returnToIncluder *> beginningOfLine
+
+-- Called to indicate we are willing to start a new line, which can be
+-- done in two ways:
+-- * A simple newline char
+-- * End of file that leads back to the includer.
+--
+-- Either way, we get to the beginning of a new line, and despite
+-- Parsec unconvinced, we do make progress in both, so it is safe for
+-- Applicative.many (P.many complains)
+newline :: Parser ()
+newline =
+  (returnToIncluder <|> void (P.char '\n')) *> beginningOfLine
+
+-- we're at the beginning of a line, and we can eat
+-- whitespace-only lines, as long as we also eat all the way to
+-- the end of line (including the next newline if it exists)
+-- Always succeeds, but may eat nothing at all:
+noiseLines :: Parser ()
+noiseLines =
+  P.try (horizSpaces1 *> ((eol *> noiseLines) <|> properEof)) <|>
+  P.optional (P.try (eol *> noiseLines))
+  where
+    eol = skipLineSuffix *> newline
 
 cmdLine :: [FilePath] -> [FilePath] -> Parser String
 cmdLine outputPaths inputPaths =
-  (P.char '\t' *> interpolateCmdLine outputPaths inputPaths <* skipLineSuffix) <|>
-  ("" <$ commonLine)
+  P.try $
+  newline *>
+  noiseLines *>
+  P.char '\t' *>
+  interpolateCmdLine outputPaths inputPaths <*
+  skipLineSuffix
 
+-- Parses the target's entire lines (excluding the pre/post newlines)
 target :: Parser Target
 target = do
-  P.skipMany commonLine
-  outputPaths <- filepaths
-  _ <- P.char ':'
-  inputPaths <- filepaths
-  orderOnlyInputs <- optional $ P.char '|' *> filepaths
-  _ <- skipLineSuffix
-  cmdLines <- filter (not . null) <$> many (cmdLine outputPaths inputPaths)
+  P.skipMany $ P.char ' ' -- disallow tab here
+  outputPaths <- filepaths1 <?> "outputs"
+  horizSpaces *> P.char ':' *> horizSpaces
+  inputPaths <- filepaths <?> "inputs"
+  orderOnlyInputs <-
+    P.optionMaybe $ P.try $
+    horizSpaces *> P.char '|' *> horizSpaces *> filepaths
+  skipLineSuffix
+  cmdLines <- P.many (cmdLine outputPaths inputPaths <?> "cmd line")
   return Target
     { targetOutputPaths = outputPaths
     , targetExplicitInputHints = inputPaths
     , targetOrderOnlyInputHints = fromMaybe [] orderOnlyInputs
-    , targetCmds = cmdLines
+    , targetCmds = filter (not . null) cmdLines
     }
 
 mkMakefile :: [Target] -> Makefile
@@ -168,6 +233,20 @@ mkMakefile targets
     getPhonyInputs t = error $ "Invalid .PHONY target: " ++ show t
     (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputPaths) targets
 
+properEof :: Parser ()
+properEof = do
+  P.eof
+  posStack <- P.getState
+  case posStack of
+    [] -> return ()
+    _ -> fail "EOF but includers still pending"
+
 makefileParser :: Parser Makefile
 makefileParser =
-  (mkMakefile <$> many target) <* P.skipMany commonLine <* P.eof
+  mkMakefile <$>
+  ( beginningOfLine *> -- due to beginning of file
+    noiseLines *>
+    (target `sepBy` (newline *> noiseLines)) <*
+    P.optional (newline *> noiseLines) <*
+    properEof
+  )

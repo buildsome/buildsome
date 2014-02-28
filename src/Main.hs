@@ -25,13 +25,14 @@ import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), Target(..), makefileParser)
-import Lib.Parsec (parseFromFile)
+import Lib.Parsec (parseFromFile, showErr)
 import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Argv0 (getArgv0)
 import System.FilePath (takeDirectory, (</>), (<.>))
+import System.IO (hPutStrLn, stderr)
 import System.Posix.Files (FileStatus)
 import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
@@ -558,7 +559,12 @@ mkEnvVars buildsome cmdId =
 parseMakefile :: FilePath -> IO Makefile
 parseMakefile makefileName = do
   parseAction <- parseFromFile makefileParser makefileName
-  either (fail . show) return =<< parseAction
+  res <- parseAction
+  case res of
+    Right x -> return x
+    Left err -> do
+      hPutStrLn stderr $ showErr err
+      fail "Makefile parse failure"
 
 withDb :: FilePath -> (Sophia.Db -> IO a) -> IO a
 withDb dbFileName body = do

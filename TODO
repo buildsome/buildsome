@@ -1,3 +1,4 @@
+* verify .PHONY's exist
 * order only inputs (| after inputs)
 * Wildcards: %.o: %.c ==> gcc -o $@ $<
 * Internal variables (CFLAGS=-g -Wall -I...)

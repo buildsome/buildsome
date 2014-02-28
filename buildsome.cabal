@@ -54,4 +54,6 @@ executable buildsome
                ,     either >=4.1 && <4.2
                ,     system-argv0 >=0.1 && <0.2
                ,     system-filepath >=0.4 && <0.5
+               ,     TraceUtils
+
   default-language:    Haskell2010
