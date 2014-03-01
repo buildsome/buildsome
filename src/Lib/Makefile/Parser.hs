@@ -119,15 +119,14 @@ variable outputPaths inputPaths = do
       '|' -> error "TODO: order-only inputs"
       _ -> P.unexpected $ "Invalid variable id: " ++ [varId]
 
-interpolatedChar :: [FilePath] -> [FilePath] -> Parser String
-interpolatedChar outputPaths inputPaths =
-  escapeSequence <|>
-  variable outputPaths inputPaths <|>
-  (: []) <$> P.satisfy (/= '\n')
-
-interpolateString :: [FilePath] -> [FilePath] -> Parser String
-interpolateString outputPaths inputPaths =
-  concat <$> P.many (literalString '\'' <|> interpolatedChar outputPaths inputPaths)
+-- Inside a single line
+interpolateString :: Parser String -> Parser String
+interpolateString var =
+  concat <$> P.many (literalString '\'' <|> interpolatedChar)
+  where
+    interpolatedChar =
+      escapeSequence <|> var <|>
+      (: []) <$> P.satisfy (/= '\n')
 
 type IncludePath = FilePath
 
@@ -206,7 +205,7 @@ cmdLine outputPaths inputPaths =
   newline *>
   noiseLines *>
   P.char '\t' *>
-  interpolateString outputPaths inputPaths <*
+  interpolateString (variable outputPaths inputPaths) <*
   skipLineSuffix
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
@@ -265,7 +264,7 @@ isAlphaNumEx x = isAlphaNum x || x == '_'
 setVariable :: Parser ()
 setVariable = do
   varName <- P.try $ ident <* P.char '='
-  value <- interpolateString [] []
+  value <- interpolateString (variable [] [])
   lift $ State.modify (M.insert varName value)
 
 makefile :: Parser Makefile
