@@ -1,7 +1,7 @@
 -- | The notion of a string pattern: abc%def can be matched or plugged
 -- with a match
 module Lib.StringPattern
-  ( StringPattern(..), makePattern
+  ( StringPattern(..), fromString
   , Match(..), match, plug
   ) where
 
@@ -22,13 +22,13 @@ match :: StringPattern -> String -> Maybe Match
 match (StringPattern prefix suffix) string = do
   Match <$> (unprefixed prefix string >>= unsuffixed suffix)
 
-plug :: StringPattern -> Match -> String
-plug (StringPattern prefix suffix) (Match component) =
+plug :: Match -> StringPattern -> String
+plug (Match component) (StringPattern prefix suffix) =
   prefix ++ component ++ suffix
 
-makePattern :: String -> Maybe StringPattern
-makePattern pattern =
-  case splitOn "%" pattern of
+fromString :: String -> String -> Maybe StringPattern
+fromString splitter pattern =
+  case splitOn splitter pattern of
   [] -> Nothing
   [_] -> Nothing
   [prefix, suffix] ->

@@ -24,4 +24,7 @@ example/out/subdir.list:
 example/subdir/a:
 	echo hi > example/subdir/a
 
+%.o: %.c
+	gcc -o $@ $< ${CFLAGS}
+
 .PHONY: all

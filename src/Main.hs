@@ -24,7 +24,7 @@ import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
-import Lib.Makefile (Makefile(..), Target(..), parseMakefile)
+import Lib.Makefile (Makefile(..), Target, TargetType(..), parseMakefile)
 import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
@@ -50,7 +50,7 @@ import qualified System.Directory as Dir
 newtype TargetRep = TargetRep FilePath -- We use the minimum output path as the target key/representative
   deriving (Eq, Ord, Show)
 computeTargetRep :: Target -> TargetRep
-computeTargetRep = TargetRep . minimum . targetOutputPaths
+computeTargetRep = TargetRep . minimum . targetOutput
 
 data Explicitness = Explicit | Implicit
 
@@ -117,7 +117,7 @@ allowedUnspecifiedOutput path = or
 
 isLegalOutput :: Target -> FilePath -> Bool
 isLegalOutput target path =
-  path `elem` targetOutputPaths target ||
+  path `elem` targetOutput target ||
   allowedUnspecifiedOutput path
 
 serve :: Buildsome -> Socket -> IO ()
@@ -223,7 +223,7 @@ toBuildMaps makefile = BuildMaps buildMap childrenMap
     outputs =
       [ (outputPath, target)
       | target <- makefileTargets makefile
-      , outputPath <- targetOutputPaths target
+      , outputPath <- targetOutput target
       ]
     pair target = (computeTargetRep target, target)
     childrenMap =
@@ -320,7 +320,7 @@ verifyTargetOutputs buildsome outputs target =
   putStrLn $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
   where
     phonies = S.fromList $ makefilePhonies $ bsMakefile buildsome
-    specifiedOutputs = S.fromList (targetOutputPaths target)
+    specifiedOutputs = S.fromList (targetOutput target)
     unusedOutputs = specifiedOutputs `S.difference` outputs `S.difference` phonies
 
 handleLegalUnspecifiedOutputs :: DeleteUnspecifiedOutputs -> String -> [FilePath] -> IO ()
@@ -353,7 +353,7 @@ verifyCmdOutputs buildsome outputs cmd target = do
   where
     (legalUnspecified, illegalUnspecified) = partition (isLegalOutput target) unspecified
     unspecified = S.toList (outputs `S.difference` S.fromList specified)
-    specified = targetOutputPaths target
+    specified = targetOutput target
 
 targetKey :: Target -> ByteString
 targetKey target =
@@ -385,16 +385,16 @@ verifyLoggedOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
 verifyLoggedOutputs buildsome outputs target = do
   unless (S.null missingOutputsSpec) $ fail $ concat $
     [ show (targetCmds target), " outputs to ", show (S.toList missingOutputsSpec)
-    , " but output specification lists only ", show (targetOutputPaths target) ]
+    , " but output specification lists only ", show (targetOutput target) ]
   verifyTargetOutputs buildsome outputs target
   where
     missingOutputsSpec =
       S.filter (not . allowedUnspecifiedOutput) $
-      outputs `S.difference` S.fromList (targetOutputPaths target)
+      outputs `S.difference` S.fromList (targetOutput target)
 
-targetInputHints :: Target -> [FilePath]
-targetInputHints target =
-  targetExplicitInputHints target ++ targetOrderOnlyInputHints target
+targetAllInputs :: Target -> [FilePath]
+targetAllInputs target =
+  targetInput target ++ targetOrderOnlyInput target
 
 applyExecutionLog ::
   Buildsome -> Target -> Parents -> ExecutionLog ->
@@ -415,10 +415,10 @@ applyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsDesc
         -- TODO: This is good for parallelism, but bad if the set of
         -- inputs changed, as it may build stuff that's no longer
         -- required:
-        let reason = "Recorded dependency of " ++ show (targetOutputPaths target)
+        let reason = "Recorded dependency of " ++ show (targetOutput target)
         speculativeSlaves <- concat <$> mapM (makeSlaves buildsome Implicit reason parents) (M.keys inputsDescs)
-        let hintReason = "Hint from " ++ show (take 1 (targetOutputPaths target))
-        hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetInputHints target)
+        let hintReason = "Hint from " ++ show (take 1 (targetOutput target))
+        hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
         traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
       verifyNoChange str descs =
         forM_ (M.toList descs) $ \(filePath, oldDesc) -> do
@@ -438,10 +438,10 @@ findApplyExecutionLog buildsome target parents = do
       case res of
         Left (str, filePath, _oldDesc, _newDesc) -> do
           putStrLn $ concat
-            ["Execution log of ", show (targetOutputPaths target), " did not match because ", str, ": ", show filePath, " changed"]
+            ["Execution log of ", show (targetOutput target), " did not match because ", str, ": ", show filePath, " changed"]
           return False
         Right () -> do
-          putStrLn $ "Execution log match for: " ++ show (targetOutputPaths target)
+          putStrLn $ "Execution log match for: " ++ show (targetOutput target)
           return True
 
 showParents :: Parents -> String
@@ -479,10 +479,10 @@ spawnSlave buildsome target reason parents restoreMask = do
     then Slave target <$> async (return ())
     else do
       execution <- async . restoreMask $ do
-        mapM_ removeFileAllowNotExists $ targetOutputPaths target
+        mapM_ removeFileAllowNotExists $ targetOutput target
         need buildsome Explicit
-          ("Hint from " ++ show (take 1 (targetOutputPaths target))) parents
-          (targetInputHints target)
+          ("Hint from " ++ show (take 1 (targetOutput target))) parents
+          (targetAllInputs target)
         (inputsLists, outputsLists) <- withAllocatedParallelism buildsome $ do
           unzip <$> mapM (runCmd buildsome target reason parents) (targetCmds target)
         let inputs = M.unions inputsLists
@@ -527,7 +527,7 @@ runCmd ::
   Buildsome -> Target -> Reason -> Parents -> String ->
   IO (Map FilePath (Maybe FileStatus), Set FilePath)
 runCmd buildsome target reason parents cmd = do
-  registerOutputs buildsome (targetOutputPaths target)
+  registerOutputs buildsome (targetOutput target)
 
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef S.empty
@@ -581,4 +581,4 @@ main = do
         [] -> putStrLn "Empty makefile, done nothing..."
         (target:_) ->
           need buildsome Explicit "First target in Makefile" [] $
-          take 1 (targetOutputPaths target)
+          take 1 (targetOutput target)

@@ -8,18 +8,20 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT, evalStateT)
 import Data.Char (isAlpha, isAlphaNum)
-import Data.List (partition)
+import Data.Either (partitionEithers)
+import Data.List (partition, isInfixOf)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Lib.Makefile.Types (Target(..), Makefile(..))
+import Lib.Makefile.Types (Target, TargetType(..), InputPat(..), TargetPattern(..), Makefile(..))
 import Lib.Parsec (parseFromFile, showErr, showPos)
-import System.FilePath (takeDirectory, takeFileName)
+import System.FilePath (takeDirectory, takeFileName, splitFileName)
 import System.IO (hPutStrLn, stderr)
 import Text.Parsec ((<?>))
 import qualified Control.Exception as E
 import qualified Control.Monad.Trans.State as State
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
@@ -209,8 +211,51 @@ cmdLine var =
   interpolateString var <*
   skipLineSuffix
 
+-- TODO: Better canonization
+canonizeCmdLines :: [String] -> [String]
+canonizeCmdLines = filter (not . null)
+
+targetPattern :: [FilePath] -> [FilePath] -> [FilePath] -> Parser TargetPattern
+targetPattern [outputPath] inputPaths orderOnlyInputs
+  | "%" `isInfixOf` outputDir = error $ "Directory component of output may not be a pattern (with %): " ++ show outputPath
+  | otherwise = do
+  -- Meta-variable interpolation must happen later, so allow $ to
+  -- remain $ if variable fails to parse it
+  cmdLines <- P.many (cmdLine (variable <|> pure "$") <?> "cmd line")
+  return $ TargetPattern
+    { targetPatternOutputDirectory = outputDir
+    , targetPatternTarget =
+      Target
+      { targetOutput = outputFilePattern
+      , targetInput = inputPats
+      , targetOrderOnlyInput = orderOnlyInputPats
+      , targetCmds = canonizeCmdLines cmdLines
+      }
+    }
+  where
+    inputPats = map tryMakePattern inputPaths
+    orderOnlyInputPats = map tryMakePattern orderOnlyInputs
+    tryMakePattern p = maybe (InputPath p) InputPattern $ StringPattern.fromString "%" p
+    unjust = fromMaybe . error
+    outputFilePattern =
+      unjust ("Output path must contain % in pattern rules: " ++ show outputPath) $
+      StringPattern.fromString "%" outputFile
+    (outputDir, outputFile) = splitFileName outputPath
+targetPattern outputPaths _ _ = error $ "Pattern targets must have exactly 1 output path, not: " ++ show outputPaths
+
+targetSimple :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
+targetSimple outputPaths inputPaths orderOnlyInputs = do
+  let var = variable <|> metaVariable outputPaths inputPaths orderOnlyInputs
+  cmdLines <- P.many (cmdLine var <?> "cmd line")
+  return $ Target
+    { targetOutput = outputPaths
+    , targetInput = inputPaths
+    , targetOrderOnlyInput = orderOnlyInputs
+    , targetCmds = canonizeCmdLines cmdLines
+    }
+
 -- Parses the target's entire lines (excluding the pre/post newlines)
-target :: Parser Target
+target :: Parser (Either TargetPattern Target)
 target = do
   outputPaths <- P.try $
     -- disallow tab here
@@ -223,31 +268,28 @@ target = do
     fmap (fromMaybe []) . P.optionMaybe $ P.try $
     horizSpaces *> P.char '|' *> horizSpaces *> filepaths
   skipLineSuffix
-  let var = variable <|> metaVariable outputPaths inputPaths orderOnlyInputs
-  cmdLines <- P.many (cmdLine var <?> "cmd line")
-  return Target
-    { targetOutputPaths = outputPaths
-    , targetExplicitInputHints = inputPaths
-    , targetOrderOnlyInputHints = orderOnlyInputs
-    , targetCmds = filter (not . null) cmdLines
-    }
+  if "%" `isInfixOf` (concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
+    then Left <$> targetPattern outputPaths inputPaths orderOnlyInputs
+    else Right <$> targetSimple outputPaths inputPaths orderOnlyInputs
 
-mkMakefile :: [Target] -> Makefile
-mkMakefile targets
+mkMakefile :: [Either TargetPattern Target] -> Makefile
+mkMakefile allTargets
   | not $ null $ concatMap targetCmds phonyTargets = error ".PHONY targets may not have commands!"
   | not $ null missingPhonies = error $ "missing .PHONY targets: " ++ show missingPhonies
   | otherwise =
     Makefile
     { makefileTargets = regularTargets
+    , makefileTargetPatterns = targetPatterns
     , makefilePhonies = phonies
     }
   where
+    (targetPatterns, targets) = partitionEithers allTargets
     missingPhonies = S.toList $ S.fromList phonies `S.difference` outputPathsSet
-    outputPathsSet = S.fromList (concatMap targetOutputPaths regularTargets)
+    outputPathsSet = S.fromList (concatMap targetOutput regularTargets)
     phonies = concatMap getPhonyInputs phonyTargets
     getPhonyInputs (Target [".PHONY"] inputs [] []) = inputs
     getPhonyInputs t = error $ "Invalid .PHONY target: " ++ show t
-    (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputPaths) targets
+    (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutput) targets
 
 properEof :: Parser ()
 properEof = do
