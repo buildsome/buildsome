@@ -81,43 +81,46 @@ escapeSequence = do
 ident :: Parser String
 ident = (:) <$> P.satisfy isAlphaEx <*> P.many (P.satisfy isAlphaNumEx)
 
-variable :: [FilePath] -> [FilePath] -> Parser String
-variable outputPaths inputPaths = do
-  _ <- P.char '$'
-  varId <- P.anyChar
-  case varId of
-    '{' -> do
-      varName <- ident <* P.char '}'
-      mResult <- lift $ State.gets $ M.lookup varName
-      case mResult of
-        Nothing -> do
-          posStr <- showPos <$> P.getPosition
-          liftIO $ hPutStrLn stderr $ posStr ++ ": No such variable: " ++ show varName
-          fail "No such variable"
-        Just val -> return val
-    '(' -> do
-      (multiVarId, multiType) <- (,) <$> P.anyChar <*> P.anyChar
-      _ <- P.char ')'
-      selector <-
-        case multiType of
-        'D' -> return takeDirectory
-        'F' -> return takeFileName
-        _ -> P.unexpected $ concat
-             [ "Invalid selector "
-             , show multiType, " in sequence: $("
-             , [multiVarId, multiType], ")"
-             ]
-      varSelect multiVarId selector
-    _ -> varSelect varId id
+varId :: [FilePath] -> [FilePath] -> [FilePath] -> Parser ((String -> String) -> String)
+varId outputPaths inputPaths ooInputPaths =
+  P.choice
+  [ firstOutput <$ P.char '@'
+  , firstInput  <$ P.char '<'
+  , allInputs   <$ P.char '^'
+  , allOOInputs <$ P.char '|'
+  ]
   where
     getFirst err paths = fromMaybe err $ listToMaybe paths
-    varSelect varId toString =
-      case varId of
-      '@' -> return $ toString $ getFirst "No first output for @ variable" outputPaths
-      '<' -> return $ toString $ getFirst "No first input for < variable" inputPaths
-      '^' -> return $ unwords $ map toString inputPaths
-      '|' -> error "TODO: order-only inputs"
-      _ -> P.unexpected $ "Invalid variable id: " ++ [varId]
+    firstOutput toString = toString $ getFirst "No first output for @ variable" outputPaths
+    firstInput  toString = toString $ getFirst "No first input for < variable"  inputPaths
+    allInputs   toString = unwords $ map toString inputPaths
+    allOOInputs toString = unwords $ map toString ooInputPaths
+
+varModifier :: Parser (String -> String)
+varModifier =
+  P.choice
+  [ takeDirectory <$ P.char 'D'
+  , takeFileName  <$ P.char 'F'
+  ]
+
+metaVariable :: [FilePath] -> [FilePath] -> [FilePath] -> Parser String
+metaVariable outputPaths inputPaths ooInputPaths =
+  P.try (P.char '(' *> (vid <*> varModifier) <* P.char ')') <|>
+  (vid <*> pure id)
+  where
+    vid = varId outputPaths inputPaths ooInputPaths
+
+-- '$' already parsed
+variable :: Parser String
+variable = do
+  varName <- P.char '{' *> ident <* P.char '}'
+  mResult <- lift $ State.gets $ M.lookup varName
+  case mResult of
+    Nothing -> do
+      posStr <- showPos <$> P.getPosition
+      liftIO $ hPutStrLn stderr $ posStr ++ ": No such variable: " ++ show varName
+      fail "No such variable"
+    Just val -> return val
 
 -- Inside a single line
 interpolateString :: Parser String -> Parser String
@@ -125,7 +128,7 @@ interpolateString var =
   concat <$> P.many (literalString '\'' <|> interpolatedChar)
   where
     interpolatedChar =
-      escapeSequence <|> var <|>
+      escapeSequence <|> (P.char '$' *> var) <|>
       (: []) <$> P.satisfy (/= '\n')
 
 type IncludePath = FilePath
@@ -199,13 +202,11 @@ noiseLines =
   where
     eol = skipLineSuffix *> newline
 
-cmdLine :: [FilePath] -> [FilePath] -> Parser String
-cmdLine outputPaths inputPaths =
+cmdLine :: Parser String -> Parser String
+cmdLine var =
   P.try $
-  newline *>
-  noiseLines *>
-  P.char '\t' *>
-  interpolateString (variable outputPaths inputPaths) <*
+  newline *> noiseLines *> P.char '\t' *>
+  interpolateString var <*
   skipLineSuffix
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
@@ -219,14 +220,15 @@ target = do
   horizSpaces
   inputPaths <- filepaths <?> "inputs"
   orderOnlyInputs <-
-    P.optionMaybe $ P.try $
+    fmap (fromMaybe []) . P.optionMaybe $ P.try $
     horizSpaces *> P.char '|' *> horizSpaces *> filepaths
   skipLineSuffix
-  cmdLines <- P.many (cmdLine outputPaths inputPaths <?> "cmd line")
+  let var = variable <|> metaVariable outputPaths inputPaths orderOnlyInputs
+  cmdLines <- P.many (cmdLine var <?> "cmd line")
   return Target
     { targetOutputPaths = outputPaths
     , targetExplicitInputHints = inputPaths
-    , targetOrderOnlyInputHints = fromMaybe [] orderOnlyInputs
+    , targetOrderOnlyInputHints = orderOnlyInputs
     , targetCmds = filter (not . null) cmdLines
     }
 
@@ -264,7 +266,7 @@ isAlphaNumEx x = isAlphaNum x || x == '_'
 setVariable :: Parser ()
 setVariable = do
   varName <- P.try $ ident <* P.char '='
-  value <- interpolateString (variable [] [])
+  value <- interpolateString variable
   lift $ State.modify (M.insert varName value)
 
 makefile :: Parser Makefile
