@@ -1,5 +1,5 @@
 module Lib.Makefile.Parser
-  ( makefile, parseMakefile
+  ( makefile, parseMakefile, interpolateString, metaVariable
   ) where
 
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
@@ -28,43 +28,44 @@ import qualified Text.Parsec.Pos as Pos
 type IncludeStack = [(Pos.SourcePos, String)]
 type Vars = Map String String
 type Parser = P.ParsecT String IncludeStack (StateT Vars IO)
+type ParserG = P.ParsecT String
 
-horizSpace :: Parser Char
+horizSpace :: Monad m => ParserG u m Char
 horizSpace = P.satisfy (`elem` " \t")
 
-horizSpaces :: Parser ()
+horizSpaces :: Monad m => ParserG u m ()
 horizSpaces = P.skipMany horizSpace
 
-horizSpaces1 :: Parser ()
+horizSpaces1 :: Monad m => ParserG u m ()
 horizSpaces1 = P.skipMany1 horizSpace
 
-tillEndOfLine :: Parser String
+tillEndOfLine :: Monad m => ParserG u m String
 tillEndOfLine = P.many (P.satisfy (/= '\n'))
 
-comment :: Parser ()
+comment :: Monad m => ParserG u m ()
 comment = void $ P.char '#' *> tillEndOfLine
 
-skipLineSuffix :: Parser ()
+skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
 
-filepath :: Parser FilePath
+filepath :: Monad m => ParserG u m FilePath
 filepath = P.many1 $ P.satisfy $ \x -> x `notElem` ":#| \t\r\n"
 
 -- Parsec's sepBy cannot handle the separator following the sequence
 -- without a following element:
-sepBy :: Parser a -> Parser () -> Parser [a]
+sepBy :: Monad m => ParserG u m a -> ParserG u m () -> ParserG u m [a]
 item `sepBy` sep = sepBy1 item sep <|> return []
 
-sepBy1 :: Parser a -> Parser () -> Parser [a]
+sepBy1 :: Monad m => ParserG u m a -> ParserG u m () -> ParserG u m [a]
 item `sepBy1` sep = (:) <$> item <*> P.many (P.try (sep >> item))
 
-filepaths :: Parser [FilePath]
+filepaths :: Monad m => ParserG u m [FilePath]
 filepaths = filepath `sepBy` horizSpaces1
 
-filepaths1 :: Parser [FilePath]
+filepaths1 :: Monad m => ParserG u m [FilePath]
 filepaths1 = filepath `sepBy1` horizSpaces1
 
-literalString :: Char -> Parser String
+literalString :: Monad m => Char -> ParserG u m String
 literalString delimiter = do
   x <- P.char delimiter
   str <- concat <$> P.many p
@@ -74,17 +75,17 @@ literalString delimiter = do
     p = escapeSequence <|>
         ((: []) <$> P.satisfy (`notElem` ['\n', delimiter]))
 
-escapeSequence :: Parser String
+escapeSequence :: Monad m => ParserG u m String
 escapeSequence = do
   esc <- P.char '\\'
   code <- P.anyChar
   return [esc, code]
 
-ident :: Parser String
+ident :: Monad m => ParserG u m String
 ident = (:) <$> P.satisfy isAlphaEx <*> P.many (P.satisfy isAlphaNumEx)
 
-varId :: [FilePath] -> [FilePath] -> [FilePath] -> Parser ((String -> String) -> String)
-varId outputPaths inputPaths ooInputPaths =
+metaVarId :: Monad m => [FilePath] -> [FilePath] -> [FilePath] -> ParserG u m ((String -> String) -> String)
+metaVarId outputPaths inputPaths ooInputPaths =
   P.choice
   [ firstOutput <$ P.char '@'
   , firstInput  <$ P.char '<'
@@ -98,19 +99,28 @@ varId outputPaths inputPaths ooInputPaths =
     allInputs   toString = unwords $ map toString inputPaths
     allOOInputs toString = unwords $ map toString ooInputPaths
 
-varModifier :: Parser (String -> String)
-varModifier =
+metaVarModifier :: Monad m => ParserG u m (String -> String)
+metaVarModifier =
   P.choice
   [ takeDirectory <$ P.char 'D'
   , takeFileName  <$ P.char 'F'
   ]
 
-metaVariable :: [FilePath] -> [FilePath] -> [FilePath] -> Parser String
+metaVariable :: Monad m => [FilePath] -> [FilePath] -> [FilePath] -> ParserG u m String
 metaVariable outputPaths inputPaths ooInputPaths =
-  P.try (P.char '(' *> (vid <*> varModifier) <* P.char ')') <|>
+  (P.char '(' *> (vid <*> metaVarModifier) <* P.char ')') <|>
   (vid <*> pure id)
   where
-    vid = varId outputPaths inputPaths ooInputPaths
+    vid = metaVarId outputPaths inputPaths ooInputPaths
+
+-- Parse succeeds only if meta-variable, but preserve the meta-variable as is
+keepMetavar :: Monad m => ParserG u m String
+keepMetavar =
+  fmap ('$':) $
+  (char4 <$> P.char '(' <*> P.oneOf "@<^|" <*> P.oneOf "DF" <*> P.char ')') <|>
+  ((: []) <$> P.oneOf "@<^|")
+  where
+    char4 a b c d = [a, b, c, d]
 
 -- '$' already parsed
 variable :: Parser String
@@ -125,7 +135,7 @@ variable = do
     Just val -> return val
 
 -- Inside a single line
-interpolateString :: Parser String -> Parser String
+interpolateString :: Monad m => ParserG u m String -> ParserG u m String
 interpolateString var =
   concat <$> P.many (literalString '\'' <|> interpolatedChar)
   where
@@ -135,7 +145,7 @@ interpolateString var =
 
 type IncludePath = FilePath
 
-includeLine :: Parser IncludePath
+includeLine :: Monad m => ParserG u m IncludePath
 includeLine = P.try $ do
   horizSpaces
   fileNameStr <-
@@ -190,8 +200,7 @@ beginningOfLine = do
 -- Parsec unconvinced, we do make progress in both, so it is safe for
 -- Applicative.many (P.many complains)
 newline :: Parser ()
-newline =
-  (returnToIncluder <|> void (P.char '\n')) *> beginningOfLine
+newline = (returnToIncluder <|> void (P.char '\n')) *> beginningOfLine
 
 -- we're at the beginning of a line, and we can eat
 -- whitespace-only lines, as long as we also eat all the way to
@@ -221,7 +230,7 @@ targetPattern [outputPath] inputPaths orderOnlyInputs
   | otherwise = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
-  cmdLines <- P.many (cmdLine (variable <|> pure "$") <?> "cmd line")
+  cmdLines <- P.many (cmdLine (variable <|> keepMetavar) <?> "cmd line")
   return $ TargetPattern
     { targetPatternOutputDirectory = outputDir
     , targetPatternTarget =
