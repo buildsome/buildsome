@@ -146,11 +146,10 @@ interpolateString var =
 type IncludePath = FilePath
 
 includeLine :: Monad m => ParserG u m IncludePath
-includeLine = P.try $ do
-  horizSpaces
+includeLine = do
   fileNameStr <-
-    P.string "include" *> horizSpaces1 *>
-    (literalString '"' <|> (wrap <$> tillEndOfLine))
+    P.try (horizSpaces *> P.string "include" *> horizSpace) *>
+    horizSpaces *> (literalString '"' <|> (wrap <$> tillEndOfLine))
   skipLineSuffix
   case reads fileNameStr of
     [(path, "")] -> return path
@@ -185,7 +184,7 @@ returnToIncluder =
 
 beginningOfLine :: Parser ()
 beginningOfLine = do
-  mIncludePath <- P.optionMaybe $ P.try (includeLine <* P.optional (P.char '\n'))
+  mIncludePath <- P.optionMaybe $ includeLine <* P.optional (P.char '\n')
   case mIncludePath of
     Just includePath -> runInclude includePath *> beginningOfLine
     Nothing -> -- A line that begins with eof can still lead to a new line in the includer
@@ -215,10 +214,8 @@ noiseLines =
 
 cmdLine :: Parser String -> Parser String
 cmdLine var =
-  P.try $
-  newline *> noiseLines *> P.char '\t' *>
-  interpolateString var <*
-  skipLineSuffix
+  P.try (newline *> noiseLines *> P.char '\t') *>
+  interpolateString var <* skipLineSuffix
 
 -- TODO: Better canonization
 canonizeCmdLines :: [String] -> [String]
@@ -274,8 +271,8 @@ target = do
   horizSpaces
   inputPaths <- filepaths <?> "inputs"
   orderOnlyInputs <-
-    fmap (fromMaybe []) . P.optionMaybe $ P.try $
-    horizSpaces *> P.char '|' *> horizSpaces *> filepaths
+    fmap (fromMaybe []) . P.optionMaybe $
+    P.try (horizSpaces *> P.char '|') *> horizSpaces *> filepaths
   skipLineSuffix
   if "%" `isInfixOf` (concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
     then Left <$> targetPattern outputPaths inputPaths orderOnlyInputs
@@ -325,9 +322,8 @@ makefile =
   mkMakefile . concat <$>
   ( beginningOfLine *> -- due to beginning of file
     noiseLines *>
-    ( ( ((: []) <$> target) <|>
-        ([] <$ setVariable)
-      ) `sepBy` (newline *> noiseLines)
+    ( (([] <$ properEof) <|> ((: []) <$> target) <|> ([] <$ setVariable))
+      `P.sepBy` (newline *> noiseLines)
     ) <*
     P.optional (newline *> noiseLines) <*
     properEof
