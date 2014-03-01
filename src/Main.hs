@@ -76,7 +76,7 @@ data ExecutingCommand = ExecutingCommand
   }
 
 data BuildMaps = BuildMaps
-  { bmBuildMap :: Map FilePath (TargetRep, Target) -- output paths -> min(representative) path and original spec
+  { _bmBuildMap :: Map FilePath (TargetRep, Target) -- output paths -> min(representative) path and original spec
   , _bmChildrenMap :: Map FilePath [(TargetRep, Target)] -- parent/dir paths -> all build steps that build directly into it
   }
 
@@ -509,14 +509,19 @@ registerOutputs buildsome outputPaths = do
 
 deleteRemovedOutputs :: Buildsome -> IO ()
 deleteRemovedOutputs buildsome = do
-  outputs <- S.fromList <$> getRegisteredOutputs buildsome
-  let deadOutputs = outputs `S.difference` makefileOutputPaths
-  forM_ (S.toList deadOutputs) $ \deadOutput -> do
-    putStrLn $ "Removing old output: " ++ show deadOutput
-    removeFileAllowNotExists deadOutput
-  setRegisteredOutputs buildsome . S.toList $ outputs `S.intersection` makefileOutputPaths
+  outputs <- getRegisteredOutputs buildsome
+  liveOutputs <-
+    fmap concat .
+    forM outputs $ \output ->
+    if output `M.member` buildMap
+      then return [output]
+      else do
+        putStrLn $ "Removing old output: " ++ show output
+        removeFileAllowNotExists output
+        return []
+  setRegisteredOutputs buildsome liveOutputs
   where
-    makefileOutputPaths = M.keysSet $ bmBuildMap $ bsBuildMaps buildsome
+    BuildMaps buildMap _ = bsBuildMaps buildsome
 
 runCmd ::
   Buildsome -> Target -> Reason -> Parents -> String ->
