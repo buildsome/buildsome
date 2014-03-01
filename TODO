@@ -1,7 +1,5 @@
-* Target patterns/factories: %.o: %.c ==> gcc -o $@ $<
-* Wildcards that scan source+target universe, including patterns
-
-* Verification about used targets/etc, also when using execution log
+* Disallow readdir for directory with pattern, until I do the out->in
+  walk properly?
 
 * Need to detect number of active threads in cmds:
   * Pre-allocate one slot for at least one thread
@@ -21,6 +19,7 @@
 # Instead of semaphore: Use pool of output streams (with different prefix + color!)
   # Support per-output-stream indent for dependency depth
 
+* Verification about used targets/etc, also when using execution log
 * replay stdout/stderr
 
 * ls of directory containing target is a loop
