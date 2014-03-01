@@ -26,6 +26,8 @@ executable buildsome
                ,     Lib.AsyncContext
                ,     Lib.ByteString
                ,     Lib.IORef
+               ,     Lib.Makefile.Types
+               ,     Lib.Makefile.Parser
                ,     Lib.Makefile
                ,     Lib.Process
                ,     Lib.Protocol
