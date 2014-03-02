@@ -1,9 +1,4 @@
-* Meta-variable expansions as an extra pass on cmds, before executing
-  the cmd, and not during parsing
-
 * Patterns need to support multiple outputs
-
-* {} bash expansions in Makefile
 
 * Paths relative/absolute/etc?
 
