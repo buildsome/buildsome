@@ -36,8 +36,10 @@ executable buildsome
                ,     Lib.Directory
                ,     Lib.Binary
                ,     Lib.FileDesc
+               ,     Lib.FilePath
                ,     Lib.Parsec
                ,     Lib.StringPattern
+               ,     Lib.EnumTargets
 
   build-depends:     base >=4.6 && <4.7
                ,     binary >=0.7 && <0.8
@@ -59,5 +61,7 @@ executable buildsome
                ,     system-argv0 >=0.1 && <0.2
                ,     system-filepath >=0.4 && <0.5
                ,     split >=0.2 && <0.3
+               -- TODO: remove Glob:
+               ,     Glob >=0.7 && <0.8
 
   default-language:    Haskell2010

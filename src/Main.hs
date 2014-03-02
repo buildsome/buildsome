@@ -13,7 +13,8 @@ import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf, partition)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, maybeToList)
+import Data.Maybe (fromMaybe, maybeToList, mapMaybe)
+import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
@@ -22,9 +23,10 @@ import GHC.Generics (Generic)
 import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
+import Lib.EnumTargets (enumTargetsFromPattern)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
-import Lib.Makefile (Makefile(..), Target, TargetType(..), parseMakefile)
+import Lib.Makefile (Makefile(..), Target, TargetPattern(..), TargetType(..), parseMakefile, instantiatePatternByOutput)
 import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
@@ -75,9 +77,18 @@ data ExecutingCommand = ExecutingCommand
   , ecActiveConnections :: IORef [MVar ()]
   }
 
+data DirectoryBuildMap = DirectoryBuildMap
+  { dbmTargets :: [(TargetRep, Target)]
+  , dbmPatterns :: [TargetPattern]
+  }
+instance Monoid DirectoryBuildMap where
+  mempty = DirectoryBuildMap mempty mempty
+  mappend (DirectoryBuildMap x0 x1) (DirectoryBuildMap y0 y1) =
+    DirectoryBuildMap (mappend x0 y0) (mappend x1 y1)
+
 data BuildMaps = BuildMaps
   { _bmBuildMap :: Map FilePath (TargetRep, Target) -- output paths -> min(representative) path and original spec
-  , _bmChildrenMap :: Map FilePath [(TargetRep, Target)] -- parent/dir paths -> all build steps that build directly into it
+  , _bmChildrenMap :: Map FilePath DirectoryBuildMap
   }
 
 data Buildsome = Buildsome
@@ -217,6 +228,9 @@ handleCmdMsg buildsome conn ec msg =
     reportOutput fullPath =
       recordOutput ec =<< Dir.makeRelativeToCurrentDirectory fullPath
 
+pairWithTargetRep :: Target -> (TargetRep, Target)
+pairWithTargetRep target = (computeTargetRep target, target)
+
 toBuildMaps :: Makefile -> BuildMaps
 toBuildMaps makefile = BuildMaps buildMap childrenMap
   where
@@ -225,14 +239,20 @@ toBuildMaps makefile = BuildMaps buildMap childrenMap
       | target <- makefileTargets makefile
       , outputPath <- targetOutput target
       ]
-    pair target = (computeTargetRep target, target)
     childrenMap =
-      M.fromListWith (++)
-      [ (takeDirectory outputPath, [pair target])
-      | (outputPath, target) <- outputs ]
+      M.fromListWith mappend $
+
+      [ (takeDirectory outputPath, mempty { dbmTargets = [pairWithTargetRep target] })
+      | (outputPath, target) <- outputs
+      ] ++
+
+      [ (targetPatternOutputDirectory targetPattern, mempty { dbmPatterns = [targetPattern] })
+      | targetPattern <- makefileTargetPatterns makefile
+      ]
+
     buildMap =
       M.fromListWithKey (\path -> error $ "Overlapping output paths for: " ++ show path)
-      [ (outputPath, pair target)
+      [ (outputPath, pairWithTargetRep target)
       | (outputPath, target) <- outputs ]
 
 withBuildsome ::
@@ -289,15 +309,20 @@ assertExists buildsome path msg
 
 makeSlaves :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
 makeSlaves buildsome explicitness reason parents path = do
-  mSlave <- traverse (mkTargetSlave reason) $ M.lookup path buildMap
+  mSlave <- traverse (mkTargetSlave reason) $ buildMapFind buildMaps path
   case (explicitness, mSlave) of
     (Explicit, Nothing) -> assertExists buildsome path $ concat ["No rule to build ", show path, " (", reason, ")"]
     _ -> return ()
-  childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) children
-  return (maybeToList mSlave ++ childSlaves)
+  childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) childTargets
+
+  targetsFromPatterns <- concat <$> traverse ((fmap . map) pairWithTargetRep . enumTargetsFromPattern) childPatterns
+  patternChildSlaves <- traverse (mkTargetSlave (reason ++ "(Pattern in directory)")) targetsFromPatterns
+
+  return (maybeToList mSlave ++ childSlaves ++ patternChildSlaves)
   where
-    children = M.findWithDefault [] path childrenMap
-    BuildMaps buildMap childrenMap = bsBuildMaps buildsome
+    DirectoryBuildMap childTargets childPatterns = M.findWithDefault mempty path childrenMap
+    -- TODO: Abstract this with buildMapsFindChildren, extract BuildMaps to its own module?
+    buildMaps@(BuildMaps _ childrenMap) = bsBuildMaps buildsome
     verifyExplicitness slave =
       case explicitness of
       Implicit -> return slave
@@ -507,21 +532,36 @@ registerOutputs buildsome outputPaths = do
   outputs <- getRegisteredOutputs buildsome
   setRegisteredOutputs buildsome $ outputPaths ++ outputs
 
+buildMapFind :: BuildMaps -> FilePath -> Maybe (TargetRep, Target)
+buildMapFind (BuildMaps buildMap childrenMap) outputPath =
+  -- Allow specific/direct matches to override pattern matches
+  directMatch `mplus` patternMatch
+  where
+    directMatch = outputPath `M.lookup` buildMap
+    patterns = dbmPatterns $ M.findWithDefault mempty (takeDirectory outputPath) childrenMap
+    patternMatch =
+      case mapMaybe (instantiatePatternByOutput outputPath) patterns of
+      [] -> Nothing
+      [target] -> Just (computeTargetRep target, target)
+      targets ->
+        error $ concat
+        [ "Multiple matching patterns: ", show outputPath
+        , " (", show (map targetOutput targets), ")"
+        ]
+
 deleteRemovedOutputs :: Buildsome -> IO ()
 deleteRemovedOutputs buildsome = do
   outputs <- getRegisteredOutputs buildsome
   liveOutputs <-
     fmap concat .
     forM outputs $ \output ->
-    if output `M.member` buildMap
-      then return [output]
-      else do
+      case buildMapFind (bsBuildMaps buildsome) output of
+      Just _ -> return [output]
+      Nothing -> do
         putStrLn $ "Removing old output: " ++ show output
         removeFileAllowNotExists output
         return []
   setRegisteredOutputs buildsome liveOutputs
-  where
-    BuildMaps buildMap _ = bsBuildMaps buildsome
 
 runCmd ::
   Buildsome -> Target -> Reason -> Parents -> String ->
