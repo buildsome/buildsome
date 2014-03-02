@@ -29,6 +29,7 @@ executable buildsome
                ,     Lib.List
                ,     Lib.Makefile.Types
                ,     Lib.Makefile.Parser
+               ,     Lib.Makefile.InstantiatePattern
                ,     Lib.Makefile
                ,     Lib.Process
                ,     Lib.Protocol
