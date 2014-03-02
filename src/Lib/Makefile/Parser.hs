@@ -1,5 +1,5 @@
 module Lib.Makefile.Parser
-  ( makefile, parseMakefile, interpolateString, metaVariable
+  ( makefile, parseMakefile, interpolateCmds, metaVariable
   ) where
 
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
@@ -122,8 +122,8 @@ metaVariable outputPaths inputPaths ooInputPaths mStem =
     vid = metaVarId outputPaths inputPaths ooInputPaths mStem
 
 -- Parse succeeds only if meta-variable, but preserve the meta-variable as is
-keepMetavar :: Monad m => ParserG u m String
-keepMetavar =
+preserveMetavar :: Monad m => ParserG u m String
+preserveMetavar =
   fmap ('$':) $
   (char4 <$> P.char '(' <*> P.oneOf "@<^|*" <*> P.oneOf "DF" <*> P.char ')') <|>
   ((: []) <$> P.oneOf "@<^|*")
@@ -220,10 +220,13 @@ noiseLines =
   where
     eol = skipLineSuffix *> newline
 
-cmdLine :: Parser String -> Parser String
-cmdLine var =
-  P.try (newline *> noiseLines *> P.char '\t') *>
-  interpolateString var <* skipLineSuffix
+cmdLine :: Parser String
+cmdLine =
+  ( P.try (newline *> noiseLines *> P.char '\t') *>
+    interpolateString var <* skipLineSuffix
+  ) <?> "cmd line"
+  where
+    var = variable <|> preserveMetavar
 
 -- TODO: Better canonization
 canonizeCmdLines :: [String] -> [String]
@@ -235,7 +238,7 @@ targetPattern [outputPath] inputPaths orderOnlyInputs
   | otherwise = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
-  cmdLines <- P.many (cmdLine (variable <|> keepMetavar) <?> "cmd line")
+  cmdLines <- P.many cmdLine
   return $ TargetPattern
     { targetPatternOutputDirectory = outputDir
     , targetPatternTarget =
@@ -257,11 +260,21 @@ targetPattern [outputPath] inputPaths orderOnlyInputs
     (outputDir, outputFile) = splitFileName outputPath
 targetPattern outputPaths _ _ = error $ "Pattern targets must have exactly 1 output path, not: " ++ show outputPaths
 
+interpolateCmds :: Maybe String -> Target -> Target
+interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds) =
+  tgt
+  { targetCmds = either (error . show) id $ mapM interpolateMetavars cmds
+  }
+  where
+    interpolateMetavars = P.runParser cmdInterpolate () (show tgt)
+    cmdInterpolate =
+      interpolateString $ metaVariable outputs inputs ooInputs mStem
+
 targetSimple :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
 targetSimple outputPaths inputPaths orderOnlyInputs = do
-  let var = variable <|> metaVariable outputPaths inputPaths orderOnlyInputs Nothing
-  cmdLines <- P.many (cmdLine var <?> "cmd line")
-  return $ Target
+  cmdLines <- P.many cmdLine
+  -- Immediately interpolate cmdLine metaVars (after having expanded ordinary vars):
+  return $ interpolateCmds Nothing $ Target
     { targetOutput = outputPaths
     , targetInput = inputPaths
     , targetOrderOnlyInput = orderOnlyInputs
