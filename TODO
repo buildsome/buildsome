@@ -1,5 +1,4 @@
-* Disallow readdir for directory with pattern, until I do the out->in
-  walk properly?
+* Enumerate pattern outputs
 
 * Need to detect number of active threads in cmds:
   * Pre-allocate one slot for at least one thread
