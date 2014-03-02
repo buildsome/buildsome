@@ -1,0 +1,24 @@
+* Need to detect number of active threads in cmds:
+  * Pre-allocate one slot for at least one thread
+  * Allocate an extra slot of parallelism for each detected thread
+    (connection created)
+    * This will fix the current bug that pausing releases parallelism
+      that wasn't necessarily ever allocated!
+    * Test this via Haskell program that creates multiple real threads
+      to access file system
+
+* "Concurrent" identifiers for each concurrent command (even paused ones)
+  * Indentation is based on this
+
+* "Parallel" identifiers for actual allocated parallelism,
+  illustrating actual use of parallelism
+  * Record this to figure out actual achieved parallelism
+
+* Need to have the semaphore wait scheduler prefer waiters that are
+  being waited for by many dependents, over waiters that just want to
+  spawn new commands.  i.e: Prefer to finish stuff than start stuff
+
+  * There are only 2 interesting priorities: Normal (needed by hints),
+    FSHook (needed by a memory-consuming process). We could have more
+    fine grained priorities by measuring how much resources are held
+    in memory.

@@ -1,0 +1,9 @@
+* Verification about used targets/etc, also when using execution log
+* replay stdout/stderr
+
+* C-side can be given allowed outputs rules and fail anything else
+* C-side can be given buildable outputs and not round-trip for other inputs
+
+* Use mtime cache to see that outputs already match the execution log too
+
+* Add an age to keys, and delete old ones?
