@@ -1,3 +1,16 @@
+* $* stem
+
+* {} bash expansions in Makefile
+  * Var and {} expansions need to then expand meta-variables!
+
+* Paths relative to current Makefile, $/ for root access
+
+* Patterns need to support multiple outputs
+
+* Allow temp output files if they do not exist before and are unlinked after
+
+* Subdir-recursive pattern rules (%%)
+
 * Enumerate pattern outputs
 
 * Need to detect number of active threads in cmds:
@@ -20,8 +33,6 @@
 
 * Verification about used targets/etc, also when using execution log
 * replay stdout/stderr
-
-* ls of directory containing target is a loop
 
 * C-side can be given allowed outputs rules and fail anything else
 * C-side can be given buildable outputs and not round-trip for other inputs
@@ -99,12 +110,7 @@
 
 -----------------
 
-* H(x) = hash (canonicalized x)
-* FullPath -> (MTime, ContentHash)
-* H(CmdLines) ->
-  ( inputs: [(FullPath, ContentHash)]
-  , outputs: [(FullPath, ContentHash)] -- *actual* outputs
-  )
+* mtime->content-hash cache
 
 * Add an age to keys, and delete old ones?
 
