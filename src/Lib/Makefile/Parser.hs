@@ -87,13 +87,16 @@ ident = (:) <$> P.satisfy isAlphaEx <*> P.many (P.satisfy isAlphaNumEx)
 
 metaVarId ::
   Monad m => [FilePath] -> [FilePath] -> [FilePath] ->
-  ParserG u m ((String -> String) -> String)
-metaVarId outputPaths inputPaths ooInputPaths =
+  Maybe String -> ParserG u m ((String -> String) -> String)
+metaVarId outputPaths inputPaths ooInputPaths mStem =
   P.choice $
   [ firstOutput <$ P.char '@'
   , firstInput  <$ P.char '<'
   , allInputs   <$ P.char '^'
   , allOOInputs <$ P.char '|'
+  ] ++
+  [ ($ stem) <$ P.char '*'
+  | Just stem <- [mStem]
   ]
   where
     getFirst err paths = fromMaybe err $ listToMaybe paths
@@ -111,21 +114,18 @@ metaVarModifier =
 
 metaVariable :: Monad m => [FilePath] -> [FilePath] -> [FilePath] -> Maybe String -> ParserG u m String
 metaVariable outputPaths inputPaths ooInputPaths mStem =
-  P.choice $
+  P.choice
   [ P.char '(' *> (vid <*> metaVarModifier) <* P.char ')'
   , vid <*> pure id
-  ] ++
-  [ stem <$ P.char '*'
-  | Just stem <- [mStem]
   ]
   where
-    vid = metaVarId outputPaths inputPaths ooInputPaths
+    vid = metaVarId outputPaths inputPaths ooInputPaths mStem
 
 -- Parse succeeds only if meta-variable, but preserve the meta-variable as is
 keepMetavar :: Monad m => ParserG u m String
 keepMetavar =
   fmap ('$':) $
-  (char4 <$> P.char '(' <*> P.oneOf "@<^|" <*> P.oneOf "DF" <*> P.char ')') <|>
+  (char4 <$> P.char '(' <*> P.oneOf "@<^|*" <*> P.oneOf "DF" <*> P.char ')') <|>
   ((: []) <$> P.oneOf "@<^|*")
   where
     char4 a b c d = [a, b, c, d]

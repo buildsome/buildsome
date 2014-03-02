@@ -9,13 +9,13 @@ import Control.Monad (guard)
 import Lib.FilePath (splitFileName)
 import Lib.Makefile.Parser
 import Lib.Makefile.Types
-import Lib.StringPattern (StringPattern, matchPlaceHolder)
+import Lib.StringPattern (matchPlaceHolder)
 import System.FilePath ((</>))
 import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 
-instantiatePatternWith :: FilePath -> StringPattern.Match -> TargetType StringPattern InputPat -> Target
-instantiatePatternWith outputPath match (Target output input ooInput cmds) =
+instantiatePatternWith :: FilePath -> StringPattern.Match -> TargetPattern -> Target
+instantiatePatternWith outputPath match (TargetPattern patOutDir (Target output input ooInput cmds)) =
   Target [outputPath] pluggedInputs pluggedOOInputs interpolatedCmds
   where
     plugMatch (InputPattern pat) = StringPattern.plug match pat
@@ -25,20 +25,20 @@ instantiatePatternWith outputPath match (Target output input ooInput cmds) =
     cmdInterpolate =
       interpolateString $
       metaVariable [outputPath] pluggedInputs pluggedOOInputs $
-      Just (matchPlaceHolder match)
+      Just (patOutDir </> matchPlaceHolder match)
     interpolateMetavars = P.runParser cmdInterpolate () (show output)
     interpolatedCmds = either (error . show) id $ mapM interpolateMetavars cmds
 
 instantiatePatternByOutput :: FilePath -> TargetPattern -> Maybe Target
-instantiatePatternByOutput outputPath (TargetPattern patOutDir target) = do
+instantiatePatternByOutput outputPath pat@(TargetPattern patOutDir target) = do
   guard (patOutDir == outputDir)
   outputMatch <- StringPattern.match (targetOutput target) outputFile
-  return $ instantiatePatternWith outputPath outputMatch target
+  return $ instantiatePatternWith outputPath outputMatch pat
   where
     (outputDir, outputFile) = splitFileName outputPath
 
 instantiatePatternByMatch :: StringPattern.Match -> TargetPattern -> Target
-instantiatePatternByMatch match (TargetPattern patOutDir target) =
-  instantiatePatternWith outputPath match target
+instantiatePatternByMatch match pat@(TargetPattern patOutDir target) =
+  instantiatePatternWith outputPath match pat
   where
     outputPath = patOutDir </> StringPattern.plug match (targetOutput target)
