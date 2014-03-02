@@ -9,7 +9,7 @@ import Control.Monad (guard)
 import Lib.FilePath (splitFileName)
 import Lib.Makefile.Parser
 import Lib.Makefile.Types
-import Lib.StringPattern (StringPattern)
+import Lib.StringPattern (StringPattern, matchPlaceHolder)
 import System.FilePath ((</>))
 import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
@@ -22,7 +22,10 @@ instantiatePatternWith outputPath match (Target output input ooInput cmds) =
     plugMatch (InputPath str) = str
     pluggedInputs = map plugMatch input
     pluggedOOInputs = map plugMatch ooInput
-    cmdInterpolate = interpolateString $ metaVariable [outputPath] pluggedInputs pluggedOOInputs
+    cmdInterpolate =
+      interpolateString $
+      metaVariable [outputPath] pluggedInputs pluggedOOInputs $
+      Just (matchPlaceHolder match)
     interpolateMetavars = P.runParser cmdInterpolate () (show output)
     interpolatedCmds = either (error . show) id $ mapM interpolateMetavars cmds
 

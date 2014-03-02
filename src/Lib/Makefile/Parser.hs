@@ -85,9 +85,11 @@ escapeSequence = do
 ident :: Monad m => ParserG u m String
 ident = (:) <$> P.satisfy isAlphaEx <*> P.many (P.satisfy isAlphaNumEx)
 
-metaVarId :: Monad m => [FilePath] -> [FilePath] -> [FilePath] -> ParserG u m ((String -> String) -> String)
+metaVarId ::
+  Monad m => [FilePath] -> [FilePath] -> [FilePath] ->
+  ParserG u m ((String -> String) -> String)
 metaVarId outputPaths inputPaths ooInputPaths =
-  P.choice
+  P.choice $
   [ firstOutput <$ P.char '@'
   , firstInput  <$ P.char '<'
   , allInputs   <$ P.char '^'
@@ -107,10 +109,15 @@ metaVarModifier =
   , takeFileName  <$ P.char 'F'
   ]
 
-metaVariable :: Monad m => [FilePath] -> [FilePath] -> [FilePath] -> ParserG u m String
-metaVariable outputPaths inputPaths ooInputPaths =
-  (P.char '(' *> (vid <*> metaVarModifier) <* P.char ')') <|>
-  (vid <*> pure id)
+metaVariable :: Monad m => [FilePath] -> [FilePath] -> [FilePath] -> Maybe String -> ParserG u m String
+metaVariable outputPaths inputPaths ooInputPaths mStem =
+  P.choice $
+  [ P.char '(' *> (vid <*> metaVarModifier) <* P.char ')'
+  , vid <*> pure id
+  ] ++
+  [ stem <$ P.char '*'
+  | Just stem <- [mStem]
+  ]
   where
     vid = metaVarId outputPaths inputPaths ooInputPaths
 
@@ -119,7 +126,7 @@ keepMetavar :: Monad m => ParserG u m String
 keepMetavar =
   fmap ('$':) $
   (char4 <$> P.char '(' <*> P.oneOf "@<^|" <*> P.oneOf "DF" <*> P.char ')') <|>
-  ((: []) <$> P.oneOf "@<^|")
+  ((: []) <$> P.oneOf "@<^|*")
   where
     char4 a b c d = [a, b, c, d]
 
@@ -252,7 +259,7 @@ targetPattern outputPaths _ _ = error $ "Pattern targets must have exactly 1 out
 
 targetSimple :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
 targetSimple outputPaths inputPaths orderOnlyInputs = do
-  let var = variable <|> metaVariable outputPaths inputPaths orderOnlyInputs
+  let var = variable <|> metaVariable outputPaths inputPaths orderOnlyInputs Nothing
   cmdLines <- P.many (cmdLine var <?> "cmd line")
   return $ Target
     { targetOutput = outputPaths
