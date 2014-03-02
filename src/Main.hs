@@ -23,7 +23,6 @@ import GHC.Generics (Generic)
 import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
-import Lib.EnumTargets (enumTargetsFromPattern)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), Target, TargetPattern(..), TargetType(..), parseMakefile, instantiatePatternByOutput)
@@ -315,10 +314,9 @@ makeSlaves buildsome explicitness reason parents path = do
     _ -> return ()
   childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) childTargets
 
-  targetsFromPatterns <- concat <$> traverse ((fmap . map) pairWithTargetRep . enumTargetsFromPattern) childPatterns
-  patternChildSlaves <- traverse (mkTargetSlave (reason ++ "(Pattern in directory)")) targetsFromPatterns
+  unless (null childPatterns) $ fail "Read directory on directory with patterns: Enumeration of pattern outputs not supported yet"
 
-  return (maybeToList mSlave ++ childSlaves ++ patternChildSlaves)
+  return (maybeToList mSlave ++ childSlaves)
   where
     DirectoryBuildMap childTargets childPatterns = M.findWithDefault mempty path childrenMap
     -- TODO: Abstract this with buildMapsFindChildren, extract BuildMaps to its own module?
