@@ -2,6 +2,8 @@
   and has a: makeEnv that generates a job id that the server responds
   to, and gives the needed env vars to add.
 
+* When file is symlink, read of it should need the stuff behind it (except in ReadLink and LStat?)
+
 * Verification about used targets/etc, also when using execution log
 * replay stdout/stderr
 
