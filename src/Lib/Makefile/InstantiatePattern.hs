@@ -11,13 +11,17 @@ import Lib.StringPattern (matchPlaceHolder)
 import System.FilePath ((</>))
 import qualified Lib.StringPattern as StringPattern
 
+plugFilePattern :: StringPattern.Match -> FilePattern -> FilePath
+plugFilePattern match (FilePattern dir file) = dir </> StringPattern.plug match file
+
 instantiatePatternWith :: FilePath -> StringPattern.Match -> Pattern -> Target
-instantiatePatternWith outputPath match (Target (FilePattern patOutDir _) input ooInput cmds) =
+instantiatePatternWith outputPath match (Target output input ooInput cmds) =
   interpolateCmds mStem $
   Target [outputPath] pluggedInputs pluggedOOInputs cmds
   where
-    mStem = Just (patOutDir </> matchPlaceHolder match)
-    plugMatch (InputPattern pat) = StringPattern.plug match pat
+    patDir = filePatternDirectory output
+    mStem = Just (patDir </> matchPlaceHolder match)
+    plugMatch (InputPattern pat) = plugFilePattern match pat
     plugMatch (InputPath str) = str
     pluggedInputs = map plugMatch input
     pluggedOOInputs = map plugMatch ooInput

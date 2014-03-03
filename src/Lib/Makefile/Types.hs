@@ -21,7 +21,7 @@ data FilePattern = FilePattern
   , filePatternFile :: StringPattern
   } deriving (Show)
 
-data InputPat = InputPath String | InputPattern StringPattern
+data InputPat = InputPath String | InputPattern FilePattern
   deriving (Show)
 
 type Pattern = TargetType FilePattern InputPat

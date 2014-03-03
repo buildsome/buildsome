@@ -232,28 +232,33 @@ cmdLine =
 canonizeCmdLines :: [String] -> [String]
 canonizeCmdLines = filter (not . null)
 
+mkFilePattern :: FilePath -> Maybe FilePattern
+mkFilePattern path
+  | "%" `isInfixOf` dir =
+    error $ "Directory component may not be a pattern: " ++ show path
+  | otherwise = FilePattern dir <$> StringPattern.fromString "%" file
+  where
+    (dir, file) = splitFileName path
+
 targetPattern :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Pattern
-targetPattern [outputPath] inputPaths orderOnlyInputs
-  | "%" `isInfixOf` outputDir = error $ "Directory component of output may not be a pattern (with %): " ++ show outputPath
-  | otherwise = do
+targetPattern [outputPath] inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
   cmdLines <- P.many cmdLine
   return $ Target
-    { targetOutput = FilePattern outputDir outputFilePattern
+    { targetOutput = outputPattern
     , targetInput = inputPats
     , targetOrderOnlyInput = orderOnlyInputPats
     , targetCmds = canonizeCmdLines cmdLines
     }
   where
+    unjust = fromMaybe . error
+    outputPattern =
+      unjust ("Paths must contain % in pattern rules: " ++ show outputPath) $
+      mkFilePattern outputPath
     inputPats = map tryMakePattern inputPaths
     orderOnlyInputPats = map tryMakePattern orderOnlyInputs
-    tryMakePattern p = maybe (InputPath p) InputPattern $ StringPattern.fromString "%" p
-    unjust = fromMaybe . error
-    outputFilePattern =
-      unjust ("Output path must contain % in pattern rules: " ++ show outputPath) $
-      StringPattern.fromString "%" outputFile
-    (outputDir, outputFile) = splitFileName outputPath
+    tryMakePattern path = maybe (InputPath path) InputPattern $ mkFilePattern path
 targetPattern outputPaths _ _ = error $ "Pattern targets must have exactly 1 output path, not: " ++ show outputPaths
 
 interpolateCmds :: Maybe String -> Target -> Target
