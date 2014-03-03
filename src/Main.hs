@@ -340,47 +340,48 @@ makeSlaves buildsome explicitness reason parents path = do
       verifyExplicitness =<<
       getSlaveForTarget buildsome nuancedReason parents targetRep target
 
--- Verify output of whole of slave (after all cmds)
+handleLegalUnspecifiedOutputs :: DeleteUnspecifiedOutputs -> Target -> [FilePath] -> IO ()
+handleLegalUnspecifiedOutputs policy target paths = do
+  -- TODO: Verify nobody ever used this file as an input besides the
+  -- creating job
+  unless (null paths) $ putStrLn $ concat
+    [ "WARNING: Removing leaked unspecified outputs: "
+    , show paths, " from target for: ", show (targetOutputs target) ]
+  case policy of
+    DeleteUnspecifiedOutputs -> mapM_ Dir.removeFile paths
+    DontDeleteUnspecifiedOutputs -> return ()
+
+-- Verify output of whole of slave/execution log
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
-verifyTargetOutputs buildsome outputs target =
+verifyTargetOutputs buildsome outputs target = do
+
+  let (unspecifiedOutputs, illegalOutputs) = partition (isLegalOutput target) allUnspecified
+
+  -- Legal unspecified need to be kept/deleted according to policy:
+  handleLegalUnspecifiedOutputs
+    (bsDeleteUnspecifiedOutput buildsome) target =<<
+    filterM fileExists unspecifiedOutputs
+
+  -- Illegal unspecified that no longer exist need to be banned from
+  -- input use by any other job:
+  -- TODO: Add to a ban-from-input-list (by other jobs)
+
+  -- Illegal unspecified that do exist are a problem:
+  existingIllegalOutputs <- filterM fileExists illegalOutputs
+  unless (null existingIllegalOutputs) $ do
+    putStrLn $ "Illegal output files created: " ++ show existingIllegalOutputs
+    mapM_ removeFileAllowNotExists existingIllegalOutputs
+    fail $ concat
+      [ "Target for ", show (targetOutputs target)
+      , " wrote to unspecified output files: ", show existingIllegalOutputs
+      , ", allowed outputs: ", show specified ]
   unless (S.null unusedOutputs) $
-  putStrLn $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
+    putStrLn $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
   where
     phonies = S.fromList $ makefilePhonies $ bsMakefile buildsome
-    specifiedOutputs = S.fromList (targetOutputs target)
-    unusedOutputs = specifiedOutputs `S.difference` outputs `S.difference` phonies
-
-handleLegalUnspecifiedOutputs :: DeleteUnspecifiedOutputs -> String -> [FilePath] -> IO ()
-handleLegalUnspecifiedOutputs DeleteUnspecifiedOutputs cmd paths = do
-  unless (null paths) $
-    putStrLn $ concat
-    [ "WARNING: Removing unspecified outputs: "
-    , show paths, " from ", show cmd ]
-  mapM_ Dir.removeFile paths
-handleLegalUnspecifiedOutputs DontDeleteUnspecifiedOutputs cmd paths =
-  unless (null paths) $
-    putStrLn $ concat
-    [ "WARNING: Keeping leaked unspecified outputs: "
-    , show paths, " from ", show cmd ]
-
--- Verify output of a single cmd
-verifyCmdOutputs :: Buildsome -> Set FilePath -> String -> Target -> IO ()
-verifyCmdOutputs buildsome outputs cmd target = do
-  handleLegalUnspecifiedOutputs
-    (bsDeleteUnspecifiedOutput buildsome) cmd =<<
-    filterM fileExists legalUnspecified
-
-  unless (null illegalUnspecified) $ do
-    putStrLn $ "Illegal output files: " ++ show illegalUnspecified
-    mapM_ removeFileAllowNotExists illegalUnspecified
-    fail $ concat
-      [ show cmd, " wrote to unspecified output files: ", show illegalUnspecified
-      , ", allowed outputs: ", show specified ]
-
-  where
-    (legalUnspecified, illegalUnspecified) = partition (isLegalOutput target) unspecified
-    unspecified = S.toList (outputs `S.difference` S.fromList specified)
-    specified = targetOutputs target
+    unusedOutputs = (specified `S.difference` outputs) `S.difference` phonies
+    allUnspecified = S.toList $ outputs `S.difference` specified
+    specified = S.fromList $ targetOutputs target
 
 targetKey :: Target -> ByteString
 targetKey target =
@@ -408,17 +409,6 @@ saveExecutionLog buildsome target inputsMStats outputs = do
   let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs)
   setKey buildsome (targetKey target) execLog
 
-verifyLoggedOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
-verifyLoggedOutputs buildsome outputs target = do
-  unless (S.null missingOutputsSpec) $ fail $ concat $
-    [ show (targetCmds target), " outputs to ", show (S.toList missingOutputsSpec)
-    , " but output specification lists only ", show (targetOutputs target) ]
-  verifyTargetOutputs buildsome outputs target
-  where
-    missingOutputsSpec =
-      S.filter (not . allowedUnspecifiedOutput) $
-      outputs `S.difference` S.fromList (targetOutputs target)
-
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
@@ -436,7 +426,7 @@ applyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsDesc
     -- the output content is still correct
     verifyNoChange "output" outputsDescs
 
-    liftIO $ verifyLoggedOutputs buildsome (M.keysSet outputsDescs) target
+    liftIO $ verifyTargetOutputs buildsome (M.keysSet outputsDescs) target
     where
       waitForInputs = do
         -- TODO: This is good for parallelism, but bad if the set of
@@ -591,8 +581,6 @@ runCmd buildsome target reason parents cmd = do
   mapM_ readMVar =<< readIORef activeConnections
 
   outputs <- readIORef outputsRef
-  verifyCmdOutputs buildsome outputs cmd target
-
   inputsMStats <- readIORef inputsRef
   return (inputsMStats, outputs)
 
