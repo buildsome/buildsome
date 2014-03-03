@@ -20,6 +20,7 @@ import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
 import Filesystem.Path.CurrentOS (encodeString)
 import GHC.Generics (Generic)
+import Lib.AnnotatedException (annotateException)
 import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
@@ -504,7 +505,7 @@ spawnSlave buildsome target reason parents restoreMask = do
   if success
     then Slave target <$> async (return ())
     else do
-      execution <- async . restoreMask $ do
+      execution <- async . annotate . restoreMask $ do
         mapM_ removeFileAllowNotExists $ targetOutputs target
         need buildsome Explicit
           ("Hint from " ++ show (take 1 (targetOutputs target))) parents
@@ -516,6 +517,8 @@ spawnSlave buildsome target reason parents restoreMask = do
         verifyTargetOutputs buildsome outputs target
         saveExecutionLog buildsome target inputs outputs
       return $ Slave target execution
+  where
+    annotate = annotateException ("build failure of " ++ show (targetOutputs target))
 
 registeredOutputsKey :: ByteString
 registeredOutputsKey = BS.pack "outputs"
