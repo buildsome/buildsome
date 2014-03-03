@@ -3,7 +3,7 @@ module Lib.Makefile.InstantiatePattern
   , instantiatePatternByMatch
   ) where
 
-import Control.Monad (guard)
+import Control.Monad (guard, msum)
 import Lib.FilePath (splitFileName)
 import Lib.Makefile.Parser (interpolateCmds)
 import Lib.Makefile.Types
@@ -14,30 +14,29 @@ import qualified Lib.StringPattern as StringPattern
 plugFilePattern :: StringPattern.Match -> FilePattern -> FilePath
 plugFilePattern match (FilePattern dir file) = dir </> StringPattern.plug match file
 
-instantiatePatternWith :: FilePath -> StringPattern.Match -> Pattern -> Target
-instantiatePatternWith outputPath match (Target output input ooInput cmds) =
+instantiatePatternByMatch :: StringPattern.Match -> Pattern -> Target
+instantiatePatternByMatch match target@(Target outputs inputs ooInputs cmds) =
   interpolateCmds mStem $
-  Target [outputPath] pluggedInputs pluggedOOInputs cmds
+  Target pluggedOutputs pluggedInputs pluggedOOInputs cmds
   where
-    patDir = filePatternDirectory output
+    firstOutput =
+      case outputs of
+      [] -> error ("At least one output is required in pattern rules: " ++ show target)
+      (x:_) -> x
+    patDir = filePatternDirectory firstOutput
     mStem = Just (patDir </> matchPlaceHolder match)
-    plugMatch (InputPattern pat) = plugFilePattern match pat
-    plugMatch (InputPath str) = str
-    pluggedInputs = map plugMatch input
-    pluggedOOInputs = map plugMatch ooInput
+    plugInputMatch (InputPattern pat) = plugFilePattern match pat
+    plugInputMatch (InputPath str) = str
+    pluggedOutputs  = map (plugFilePattern match) outputs
+    pluggedInputs   = map plugInputMatch inputs
+    pluggedOOInputs = map plugInputMatch ooInputs
 
 instantiatePatternByOutput :: FilePath -> Pattern -> Maybe Target
-instantiatePatternByOutput outputPath target = do
-  guard (patDir == outputDir)
-  outputMatch <- StringPattern.match patFile outputFile
-  return $ instantiatePatternWith outputPath outputMatch target
+instantiatePatternByOutput outputPath target =
+  msum $ map tryMatchOutput (targetOutputs target)
   where
-    FilePattern patDir patFile = targetOutput target
     (outputDir, outputFile) = splitFileName outputPath
-
-instantiatePatternByMatch :: StringPattern.Match -> Pattern -> Target
-instantiatePatternByMatch match target =
-  instantiatePatternWith outputPath match target
-  where
-    FilePattern patDir patFile = targetOutput target
-    outputPath = patDir </> StringPattern.plug match patFile
+    tryMatchOutput (FilePattern patDir patFile) = do
+      guard (patDir == outputDir)
+      outputMatch <- StringPattern.match patFile outputFile
+      return $ instantiatePatternByMatch outputMatch target

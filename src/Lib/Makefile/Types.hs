@@ -7,12 +7,12 @@ module Lib.Makefile.Types
 
 import Lib.StringPattern (StringPattern)
 
-type Target = TargetType [FilePath] FilePath
+type Target = TargetType FilePath FilePath
 
-data TargetType outputs input = Target
-  { targetOutput :: outputs
-  , targetInput :: [input]
-  , targetOrderOnlyInput :: [input]
+data TargetType output input = Target
+  { targetOutputs :: [output]
+  , targetInputs :: [input]
+  , targetOrderOnlyInputs :: [input]
   , targetCmds :: [String]
   } deriving (Show)
 

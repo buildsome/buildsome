@@ -241,25 +241,23 @@ mkFilePattern path
     (dir, file) = splitFileName path
 
 targetPattern :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Pattern
-targetPattern [outputPath] inputPaths orderOnlyInputs = do
+targetPattern outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
   cmdLines <- P.many cmdLine
   return $ Target
-    { targetOutput = outputPattern
-    , targetInput = inputPats
-    , targetOrderOnlyInput = orderOnlyInputPats
+    { targetOutputs = map mkOutputPattern outputPaths
+    , targetInputs = inputPats
+    , targetOrderOnlyInputs = orderOnlyInputPats
     , targetCmds = canonizeCmdLines cmdLines
     }
   where
-    unjust = fromMaybe . error
-    outputPattern =
-      unjust ("Paths must contain % in pattern rules: " ++ show outputPath) $
+    mkOutputPattern outputPath =
+      fromMaybe (error ("Outputs must all be patterns (contain %) in pattern rules: " ++ show outputPath)) $
       mkFilePattern outputPath
     inputPats = map tryMakePattern inputPaths
     orderOnlyInputPats = map tryMakePattern orderOnlyInputs
     tryMakePattern path = maybe (InputPath path) InputPattern $ mkFilePattern path
-targetPattern outputPaths _ _ = error $ "Pattern targets must have exactly 1 output path, not: " ++ show outputPaths
 
 interpolateCmds :: Maybe String -> Target -> Target
 interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds) =
@@ -276,9 +274,9 @@ targetSimple outputPaths inputPaths orderOnlyInputs = do
   cmdLines <- P.many cmdLine
   -- Immediately interpolate cmdLine metaVars (after having expanded ordinary vars):
   return $ interpolateCmds Nothing $ Target
-    { targetOutput = outputPaths
-    , targetInput = inputPaths
-    , targetOrderOnlyInput = orderOnlyInputs
+    { targetOutputs = outputPaths
+    , targetInputs = inputPaths
+    , targetOrderOnlyInputs = orderOnlyInputs
     , targetCmds = canonizeCmdLines cmdLines
     }
 
@@ -313,11 +311,11 @@ mkMakefile allTargets
   where
     (targetPatterns, targets) = partitionEithers allTargets
     missingPhonies = S.toList $ S.fromList phonies `S.difference` outputPathsSet
-    outputPathsSet = S.fromList (concatMap targetOutput regularTargets)
+    outputPathsSet = S.fromList (concatMap targetOutputs regularTargets)
     phonies = concatMap getPhonyInputs phonyTargets
     getPhonyInputs (Target [".PHONY"] inputs [] []) = inputs
     getPhonyInputs t = error $ "Invalid .PHONY target: " ++ show t
-    (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutput) targets
+    (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputs) targets
 
 properEof :: Parser ()
 properEof = do
