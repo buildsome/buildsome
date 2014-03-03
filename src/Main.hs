@@ -123,10 +123,7 @@ withAllocatedParallelism :: Buildsome -> IO a -> IO a
 withAllocatedParallelism = MSem.with . bsRestrictedParallelism
 
 allowedUnspecifiedOutput :: FilePath -> Bool
-allowedUnspecifiedOutput path = or
-  [ "/tmp" `isPrefixOf` path
-  , ".pyc" `isSuffixOf` path
-  ]
+allowedUnspecifiedOutput = (".pyc" `isSuffixOf`)
 
 isLegalOutput :: Target -> FilePath -> Bool
 isLegalOutput target path =
@@ -176,6 +173,9 @@ recordOutput :: ExecutingCommand -> FilePath -> IO ()
 recordOutput ec path =
   atomicModifyIORef'_ (ecOutputs ec) $ S.insert path
 
+recordedOutputs :: ExecutingCommand -> IO (Set FilePath)
+recordedOutputs = readIORef . ecOutputs
+
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
 
@@ -217,16 +217,23 @@ handleCmdMsg buildsome conn ec msg =
   where
     failCmd = E.throwTo (ecThreadId ec) . InvalidCmdOperation
     reason = Protocol.showFunc msg ++ " done by " ++ show (ecCmd ec)
-    reportInput path
+    reportInput fullPath = handleInput =<< Dir.makeRelativeToCurrentDirectory fullPath
+    handleInput path
       | inputIgnored path = sendGo conn
+        -- There's no problem for a target to read its own outputs
+        -- freely:
       | otherwise = do
-        -- Temporarily paused, so we can temporarily release parallelism
-        -- semaphore
-        withReleasedParallelism buildsome
-          (need buildsome Implicit reason (ecParents ec) [path])
-          `E.catch` (\e@E.SomeException {} -> E.throwTo (ecThreadId ec) e)
-          `E.finally` sendGo conn
-        unless (isLegalOutput (ecTarget ec) path) $ recordInput ec path
+        actualOutputs <- recordedOutputs ec
+        if path `S.member` actualOutputs
+          then sendGo conn
+          else do
+            -- Temporarily paused, so we can temporarily release parallelism
+            -- semaphore
+            withReleasedParallelism buildsome
+              (need buildsome Implicit reason (ecParents ec) [path])
+              `E.catch` (\e@E.SomeException {} -> E.throwTo (ecThreadId ec) e)
+              `E.finally` sendGo conn
+            unless (isLegalOutput (ecTarget ec) path) $ recordInput ec path
     reportOutput fullPath =
       recordOutput ec =<< Dir.makeRelativeToCurrentDirectory fullPath
 
