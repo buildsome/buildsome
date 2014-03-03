@@ -565,11 +565,13 @@ spawnSlave buildsome target reason parents restoreMask = do
         need buildsome Explicit
           ("Hint from " ++ show (take 1 (targetOutputs target))) parents
           (targetAllInputs target)
-        (inputsLists, outputsLists) <-
-          withAllocatedParallelism buildsome $ do
-          unzip <$> mapM (runCmd buildsome target reason parents) (targetCmds target)
-        let inputs = M.unions inputsLists
-            outputs = S.unions outputsLists
+        inputsRef <- newIORef M.empty
+        outputsRef <- newIORef S.empty
+        withAllocatedParallelism buildsome $
+          mapM_ (runCmd buildsome target reason parents inputsRef outputsRef)
+            (targetCmds target)
+        inputs <- readIORef inputsRef
+        outputs <- readIORef outputsRef
         verifyTargetOutputs buildsome outputs target
         saveExecutionLog buildsome target inputs outputs
       return $ Slave target execution
@@ -624,13 +626,14 @@ deleteRemovedOutputs buildsome = do
   setRegisteredOutputs buildsome liveOutputs
 
 runCmd ::
-  Buildsome -> Target -> Reason -> Parents -> String ->
-  IO (Map FilePath (AccessType, Maybe FileStatus), Set FilePath)
-runCmd buildsome target reason parents cmd = do
+  Buildsome -> Target -> Reason -> Parents ->
+  -- TODO: Clean this arg list up
+  IORef (Map FilePath (AccessType, Maybe FileStatus)) ->
+  IORef (Set FilePath) ->
+  String -> IO ()
+runCmd buildsome target reason parents inputsRef outputsRef cmd = do
   registerOutputs buildsome (targetOutputs target)
 
-  inputsRef <- newIORef M.empty
-  outputsRef <- newIORef S.empty
   activeConnections <- newIORef []
 
   cmdIdNum <- nextJobId buildsome
@@ -645,10 +648,6 @@ runCmd buildsome target reason parents cmd = do
   -- Give all connections a chance to complete and perhaps fail
   -- this execution:
   mapM_ readMVar =<< readIORef activeConnections
-
-  outputs <- readIORef outputsRef
-  inputsMStats <- readIORef inputsRef
-  return (inputsMStats, outputs)
 
 mkEnvVars :: Buildsome -> ByteString -> Process.Env
 mkEnvVars buildsome cmdId =
