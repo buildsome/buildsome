@@ -1,3 +1,5 @@
+* Allow $X and not just ${X}
+
 * Paths relative/absolute/etc?
 
 * Subdir-recursive pattern rules?

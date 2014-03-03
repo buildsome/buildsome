@@ -1,3 +1,5 @@
+* .gitignore
+
 * Extract an abstract HookedFileSystem module that runs the server,
   and has a: makeEnv that generates a job id that the server responds
   to, and gives the needed env vars to add.

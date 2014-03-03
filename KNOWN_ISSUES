@@ -1,1 +1,3 @@
 * ls of directory containing target is a loop
+* cannot ls pattern dirs yet
+* do not handle symlinks correctly yet
