@@ -1,5 +1,5 @@
 module Lib.Makefile.Parser
-  ( makefile, parseMakefile, interpolateCmds, metaVariable
+  ( makefile, parse, interpolateCmds, metaVariable
   ) where
 
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
@@ -12,9 +12,9 @@ import Data.Either (partitionEithers)
 import Data.List (partition, isInfixOf)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Lib.Makefile.Types (Target, TargetType(..), InputPat(..), TargetPattern(..), Makefile(..))
-import Lib.Parsec (parseFromFile, showErr, showPos)
 import Lib.FilePath (splitFileName)
+import Lib.Makefile.Types
+import Lib.Parsec (parseFromFile, showErr, showPos)
 import System.FilePath (takeDirectory, takeFileName)
 import System.IO (hPutStrLn, stderr)
 import Text.Parsec ((<?>))
@@ -232,22 +232,18 @@ cmdLine =
 canonizeCmdLines :: [String] -> [String]
 canonizeCmdLines = filter (not . null)
 
-targetPattern :: [FilePath] -> [FilePath] -> [FilePath] -> Parser TargetPattern
+targetPattern :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Pattern
 targetPattern [outputPath] inputPaths orderOnlyInputs
   | "%" `isInfixOf` outputDir = error $ "Directory component of output may not be a pattern (with %): " ++ show outputPath
   | otherwise = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
   cmdLines <- P.many cmdLine
-  return $ TargetPattern
-    { targetPatternOutputDirectory = outputDir
-    , targetPatternTarget =
-      Target
-      { targetOutput = outputFilePattern
-      , targetInput = inputPats
-      , targetOrderOnlyInput = orderOnlyInputPats
-      , targetCmds = canonizeCmdLines cmdLines
-      }
+  return $ Target
+    { targetOutput = FilePattern outputDir outputFilePattern
+    , targetInput = inputPats
+    , targetOrderOnlyInput = orderOnlyInputPats
+    , targetCmds = canonizeCmdLines cmdLines
     }
   where
     inputPats = map tryMakePattern inputPaths
@@ -282,7 +278,7 @@ targetSimple outputPaths inputPaths orderOnlyInputs = do
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
-target :: Parser (Either TargetPattern Target)
+target :: Parser (Either Pattern Target)
 target = do
   outputPaths <- P.try $
     -- disallow tab here
@@ -299,14 +295,14 @@ target = do
     then Left <$> targetPattern outputPaths inputPaths orderOnlyInputs
     else Right <$> targetSimple outputPaths inputPaths orderOnlyInputs
 
-mkMakefile :: [Either TargetPattern Target] -> Makefile
+mkMakefile :: [Either Pattern Target] -> Makefile
 mkMakefile allTargets
   | not $ null $ concatMap targetCmds phonyTargets = error ".PHONY targets may not have commands!"
   | not $ null missingPhonies = error $ "missing .PHONY targets: " ++ show missingPhonies
   | otherwise =
     Makefile
     { makefileTargets = regularTargets
-    , makefileTargetPatterns = targetPatterns
+    , makefilePatterns = targetPatterns
     , makefilePhonies = phonies
     }
   where
@@ -350,8 +346,8 @@ makefile =
     properEof
   )
 
-parseMakefile :: FilePath -> IO Makefile
-parseMakefile makefileName = do
+parse :: FilePath -> IO Makefile
+parse makefileName = do
   parseAction <- parseFromFile makefile makefileName
   res <- evalStateT parseAction M.empty
   case res of

@@ -1,9 +1,9 @@
 module Lib.Makefile
   ( module Lib.Makefile.Types
   , module Lib.Makefile.InstantiatePattern
-  , parseMakefile
+  , parse
   ) where
 
 import Lib.Makefile.InstantiatePattern
-import Lib.Makefile.Parser (parseMakefile)
+import Lib.Makefile.Parser (parse)
 import Lib.Makefile.Types

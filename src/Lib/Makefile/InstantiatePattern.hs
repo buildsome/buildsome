@@ -11,8 +11,8 @@ import Lib.StringPattern (matchPlaceHolder)
 import System.FilePath ((</>))
 import qualified Lib.StringPattern as StringPattern
 
-instantiatePatternWith :: FilePath -> StringPattern.Match -> TargetPattern -> Target
-instantiatePatternWith outputPath match (TargetPattern patOutDir (Target _ input ooInput cmds)) =
+instantiatePatternWith :: FilePath -> StringPattern.Match -> Pattern -> Target
+instantiatePatternWith outputPath match (Target (FilePattern patOutDir _) input ooInput cmds) =
   interpolateCmds mStem $
   Target [outputPath] pluggedInputs pluggedOOInputs cmds
   where
@@ -22,16 +22,18 @@ instantiatePatternWith outputPath match (TargetPattern patOutDir (Target _ input
     pluggedInputs = map plugMatch input
     pluggedOOInputs = map plugMatch ooInput
 
-instantiatePatternByOutput :: FilePath -> TargetPattern -> Maybe Target
-instantiatePatternByOutput outputPath pat@(TargetPattern patOutDir target) = do
-  guard (patOutDir == outputDir)
-  outputMatch <- StringPattern.match (targetOutput target) outputFile
-  return $ instantiatePatternWith outputPath outputMatch pat
+instantiatePatternByOutput :: FilePath -> Pattern -> Maybe Target
+instantiatePatternByOutput outputPath target = do
+  guard (patDir == outputDir)
+  outputMatch <- StringPattern.match patFile outputFile
+  return $ instantiatePatternWith outputPath outputMatch target
   where
+    FilePattern patDir patFile = targetOutput target
     (outputDir, outputFile) = splitFileName outputPath
 
-instantiatePatternByMatch :: StringPattern.Match -> TargetPattern -> Target
-instantiatePatternByMatch match pat@(TargetPattern patOutDir target) =
-  instantiatePatternWith outputPath match pat
+instantiatePatternByMatch :: StringPattern.Match -> Pattern -> Target
+instantiatePatternByMatch match target =
+  instantiatePatternWith outputPath match target
   where
-    outputPath = patOutDir </> StringPattern.plug match (targetOutput target)
+    FilePattern patDir patFile = targetOutput target
+    outputPath = patDir </> StringPattern.plug match patFile

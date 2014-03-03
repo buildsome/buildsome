@@ -1,6 +1,7 @@
 module Lib.Makefile.Types
   ( TargetType(..)
-  , Target, InputPat(..), TargetPattern(..)
+  , FilePattern(..), InputPat(..)
+  , Target, Pattern
   , Makefile(..)
   ) where
 
@@ -15,22 +16,18 @@ data TargetType outputs input = Target
   , targetCmds :: [String]
   } deriving (Show)
 
+data FilePattern = FilePattern
+  { filePatternDirectory :: FilePath
+  , filePatternFile :: StringPattern
+  } deriving (Show)
+
 data InputPat = InputPath String | InputPattern StringPattern
   deriving (Show)
 
-data TargetPattern = TargetPattern
-  { targetPatternOutputDirectory :: FilePath
-
--- TODO: Don't abuse a shared TargetType here? Just duplicate the 4 fields?
-
-    -- The output pattern in the directory (We allow only 1 output and
-    -- the pattern must be in the file component). The input patterns
-    -- are more flexible and can be full paths
-  , targetPatternTarget :: TargetType StringPattern InputPat
-  } deriving (Show)
+type Pattern = TargetType FilePattern InputPat
 
 data Makefile = Makefile
   { makefileTargets :: [Target]
-  , makefileTargetPatterns :: [TargetPattern]
+  , makefilePatterns :: [Pattern]
   , makefilePhonies :: [FilePath]
   } deriving (Show)

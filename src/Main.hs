@@ -25,7 +25,7 @@ import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
-import Lib.Makefile (Makefile(..), Target, TargetPattern(..), TargetType(..), parseMakefile, instantiatePatternByOutput)
+import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
 import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
@@ -42,6 +42,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
 import qualified Lib.AsyncContext as AsyncContext
+import qualified Lib.Makefile as Makefile
 import qualified Lib.Process as Process
 import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
@@ -78,7 +79,7 @@ data ExecutingCommand = ExecutingCommand
 
 data DirectoryBuildMap = DirectoryBuildMap
   { dbmTargets :: [(TargetRep, Target)]
-  , dbmPatterns :: [TargetPattern]
+  , dbmPatterns :: [Pattern]
   }
 instance Monoid DirectoryBuildMap where
   mempty = DirectoryBuildMap mempty mempty
@@ -245,8 +246,9 @@ toBuildMaps makefile = BuildMaps buildMap childrenMap
       | (outputPath, target) <- outputs
       ] ++
 
-      [ (targetPatternOutputDirectory targetPattern, mempty { dbmPatterns = [targetPattern] })
-      | targetPattern <- makefileTargetPatterns makefile
+      [ (outPatDir, mempty { dbmPatterns = [targetPattern] })
+      | targetPattern <- makefilePatterns makefile
+      , let Makefile.FilePattern outPatDir _ = targetOutput targetPattern
       ]
 
     buildMap =
@@ -538,7 +540,7 @@ buildMapFind (BuildMaps buildMap childrenMap) outputPath =
     directMatch = outputPath `M.lookup` buildMap
     patterns = dbmPatterns $ M.findWithDefault mempty (takeDirectory outputPath) childrenMap
     patternMatch =
-      case mapMaybe (instantiatePatternByOutput outputPath) patterns of
+      case mapMaybe (Makefile.instantiatePatternByOutput outputPath) patterns of
       [] -> Nothing
       [target] -> Just (computeTargetRep target, target)
       targets ->
@@ -609,7 +611,7 @@ main = do
   Opt makefileName mparallelism deleteUnspecifiedOutput <- getOpt
   let buildDbFilename = makefileName <.> "db"
       parallelism = fromMaybe 1 mparallelism
-  makefile <- parseMakefile makefileName
+  makefile <- Makefile.parse makefileName
   withDb buildDbFilename $ \db -> do
     ldPreloadPath <- getLdPreloadPath
     withBuildsome db parallelism makefile deleteUnspecifiedOutput ldPreloadPath $
