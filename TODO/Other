@@ -5,9 +5,19 @@
 * Verification about used targets/etc, also when using execution log
 * replay stdout/stderr
 
+* Only report *successful* outputs? Or perhaps report as inputs,
+  output operations that failed due to FS state?
+
 * C-side can be given allowed outputs rules and fail anything else
+
+  * Need C side to verify output files do not exist before-hand to
+    avoid covert channels that are then unlinked
+
 * C-side can be given buildable outputs and not round-trip for other inputs
 
 * Use mtime cache to see that outputs already match the execution log too
 
 * Add an age to keys, and delete old ones?
+
+* C side failures should send fail messages to server, which is the
+  only way to fail the job reliably
