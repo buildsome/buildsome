@@ -21,10 +21,11 @@ import Data.Typeable (Typeable)
 import Filesystem.Path.CurrentOS (encodeString)
 import GHC.Generics (Generic)
 import Lib.AnnotatedException (annotateException)
+import Lib.Async (wrapAsync)
 import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
-import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc)
+import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc, FileModeDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>))
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
@@ -57,6 +58,7 @@ computeTargetRep :: Target -> TargetRep
 computeTargetRep = TargetRep . minimum . targetOutputs
 
 data Explicitness = Explicit | Implicit
+  deriving (Eq)
 
 type Parents = [(TargetRep, Reason)]
 type Reason = String
@@ -74,7 +76,7 @@ data ExecutingCommand = ExecutingCommand
   , ecParents :: Parents
   , -- For each input file, record modification time before input is
     -- used, to compare it after cmd is done
-    ecInputs :: IORef (Map FilePath (Maybe FileStatus))
+    ecInputs :: IORef (Map FilePath (AccessType, Maybe FileStatus))
   , ecOutputs :: IORef (Set FilePath)
   , ecActiveConnections :: IORef [MVar ()]
   }
@@ -161,13 +163,15 @@ handleCmdConnection buildsome conn ec = do
   where
     protect mvar act = act `E.finally` putMVar mvar ()
 
-recordInput :: ExecutingCommand -> FilePath -> IO ()
-recordInput ec path = do
+recordInput :: ExecutingCommand -> AccessType -> FilePath -> IO ()
+recordInput ec accessType path = do
   mstat <- getMFileStatus path
   atomicModifyIORef'_ (ecInputs ec) $
     -- Keep the older mtime in the map, and we'll eventually compare
     -- the final mtime to the oldest one
-    M.insertWith (\_new old -> old) path mstat
+    M.insertWith
+    (\_ (oldAccessType, oldMStat) ->
+     (higherAccessType accessType oldAccessType, oldMStat)) path (accessType, mstat)
 
 recordOutput :: ExecutingCommand -> FilePath -> IO ()
 recordOutput ec path =
@@ -176,12 +180,16 @@ recordOutput ec path =
 recordedOutputs :: ExecutingCommand -> IO (Set FilePath)
 recordedOutputs = readIORef . ecOutputs
 
-inputIgnored :: FilePath -> Bool
-inputIgnored path = "/dev" `isPrefixOf` path
-
 data InvalidCmdOperation = InvalidCmdOperation String
   deriving (Show, Typeable)
 instance E.Exception InvalidCmdOperation
+
+data AccessType
+  = AccessTypeFull -- open, stat, opendir, etc.  Depend on the content, and if directory, on the file listing
+  | AccessTypeModeOnly -- access, readlink.  Depend on its existence/permission-modes only. If directory, does not depend on file listing
+higherAccessType :: AccessType -> AccessType -> AccessType
+higherAccessType AccessTypeModeOnly AccessTypeModeOnly = AccessTypeModeOnly
+higherAccessType _ _ = AccessTypeFull
 
 handleCmdMsg ::
   Buildsome -> Socket -> ExecutingCommand -> Protocol.Func -> IO ()
@@ -201,24 +209,33 @@ handleCmdMsg buildsome conn ec msg =
     Protocol.RmDir path -> reportOutput path
 
     -- I/O
-    Protocol.SymLink target linkPath -> reportOutput linkPath >> reportInput target
+    Protocol.SymLink target linkPath -> reportOutput linkPath >> reportInput AccessTypeFull target
     Protocol.Link src dest ->
       failCmd $ unwords ["Hard links not supported:", show src, "->", show dest]
       -- TODO: Record the fact it's a link
       --reportOutput dest >> reportInput src
 
     -- inputs
-    Protocol.Open path Protocol.OpenReadMode _creationMode -> reportInput path
-    Protocol.Access path _mode -> reportInput path
-    Protocol.Stat path -> reportInput path
-    Protocol.LStat path -> reportInput path
-    Protocol.OpenDir path -> reportInput path
-    Protocol.ReadLink path -> reportInput path
+    Protocol.Open path Protocol.OpenReadMode _creationMode -> reportInput AccessTypeFull path
+    Protocol.Access path _mode -> reportInput AccessTypeModeOnly path
+    Protocol.Stat path -> reportInput AccessTypeFull path
+    Protocol.LStat path -> reportInput AccessTypeFull path
+    Protocol.OpenDir path -> reportInput AccessTypeFull path
+    Protocol.ReadLink path -> reportInput AccessTypeModeOnly path
   where
     failCmd = E.throwTo (ecThreadId ec) . InvalidCmdOperation
     reason = Protocol.showFunc msg ++ " done by " ++ show (ecCmd ec)
-    reportInput fullPath = handleInput =<< Dir.makeRelativeToCurrentDirectory fullPath
-    handleInput path
+
+    reportInput accessType fullPath =
+      handleInput accessType =<<
+      Dir.makeRelativeToCurrentDirectory fullPath
+    reportOutput fullPath =
+      recordOutput ec =<<
+      Dir.makeRelativeToCurrentDirectory fullPath
+
+    forwardExceptions =
+      flip E.catch $ \e@E.SomeException {} -> E.throwTo (ecThreadId ec) e
+    handleInput accessType path
       | inputIgnored path = sendGo conn
         -- There's no problem for a target to read its own outputs
         -- freely:
@@ -226,16 +243,17 @@ handleCmdMsg buildsome conn ec msg =
         actualOutputs <- recordedOutputs ec
         if path `S.member` actualOutputs
           then sendGo conn
-          else do
+          else (`E.finally` sendGo conn) $ forwardExceptions $ do
+            slaves <- makeSlavesForAccessType accessType buildsome Implicit reason (ecParents ec) path
             -- Temporarily paused, so we can temporarily release parallelism
             -- semaphore
-            withReleasedParallelism buildsome
-              (need buildsome Implicit reason (ecParents ec) [path])
-              `E.catch` (\e@E.SomeException {} -> E.throwTo (ecThreadId ec) e)
-              `E.finally` sendGo conn
-            unless (isLegalOutput (ecTarget ec) path) $ recordInput ec path
-    reportOutput fullPath =
-      recordOutput ec =<< Dir.makeRelativeToCurrentDirectory fullPath
+            unless (null slaves) $ withReleasedParallelism buildsome $
+              traverse_ slaveWait slaves
+            unless (isLegalOutput (ecTarget ec) path) $
+              recordInput ec accessType path
+
+inputIgnored :: FilePath -> Bool
+inputIgnored path = "/dev" `isPrefixOf` path
 
 pairWithTargetRep :: Target -> (TargetRep, Target)
 pairWithTargetRep target = (computeTargetRep target, target)
@@ -317,35 +335,52 @@ assertExists buildsome path msg
     doesExist <- fileExists path
     unless doesExist $ fail msg
 
+makeDirectSlave :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO (Maybe Slave)
+makeDirectSlave buildsome explicitness reason parents path =
+  case buildMapFind (bsBuildMaps buildsome) path of
+  Nothing -> do
+    when (explicitness == Explicit) $
+      assertExists buildsome path $
+      concat ["No rule to build ", show path, " (", reason, ")"]
+    return Nothing
+  Just tgt -> do
+    slave <- getSlaveForTarget buildsome reason parents tgt
+    Just <$> case explicitness of
+      Implicit -> return slave
+      Explicit -> verifyFileGetsCreated slave
+  where
+    verifyFileGetsCreated slave = do
+      wrappedExecution <-
+        wrapAsync (slaveExecution slave) $ \() ->
+        assertExists buildsome path $ concat
+          [ show path
+          , " explicitly demanded but was not "
+          , "created by its target rule" ]
+      return slave { slaveExecution = wrappedExecution }
+
+makeChildSlaves :: Buildsome -> Reason -> Parents -> FilePath -> IO [Slave]
+makeChildSlaves buildsome reason parents path
+  | not (null childPatterns) =
+    fail "Read directory on directory with patterns: Enumeration of pattern outputs not supported yet"
+  | otherwise =
+    traverse (getSlaveForTarget buildsome reason parents)
+    childTargets
+  where
+    -- TODO: Abstract this with buildMapsFindChildren, extract BuildMaps to its own module?
+    BuildMaps _ childrenMap = bsBuildMaps buildsome
+    DirectoryBuildMap childTargets childPatterns = M.findWithDefault mempty path childrenMap
+
+makeSlavesForAccessType :: AccessType -> Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
+makeSlavesForAccessType accessType buildsome explicitness reason parents path =
+  case accessType of
+  AccessTypeFull -> makeSlaves buildsome explicitness reason parents path
+  AccessTypeModeOnly -> maybeToList <$> makeDirectSlave buildsome explicitness reason parents path
+
 makeSlaves :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
 makeSlaves buildsome explicitness reason parents path = do
-  mSlave <- traverse (mkTargetSlave reason) $ buildMapFind buildMaps path
-  case (explicitness, mSlave) of
-    (Explicit, Nothing) -> assertExists buildsome path $ concat ["No rule to build ", show path, " (", reason, ")"]
-    _ -> return ()
-  childSlaves <- traverse (mkTargetSlave (reason ++ "(Container directory)")) childTargets
-
-  unless (null childPatterns) $ fail "Read directory on directory with patterns: Enumeration of pattern outputs not supported yet"
-
-  return (maybeToList mSlave ++ childSlaves)
-  where
-    DirectoryBuildMap childTargets childPatterns = M.findWithDefault mempty path childrenMap
-    -- TODO: Abstract this with buildMapsFindChildren, extract BuildMaps to its own module?
-    buildMaps@(BuildMaps _ childrenMap) = bsBuildMaps buildsome
-    verifyExplicitness slave =
-      case explicitness of
-      Implicit -> return slave
-      Explicit -> do
-        wrappedExecution <- async $ do
-          wait (slaveExecution slave)
-          assertExists buildsome path $ concat
-            [ show path
-            , " explicitly demanded but was not "
-            , "created by its target rule" ]
-        return slave { slaveExecution = wrappedExecution }
-    mkTargetSlave nuancedReason (targetRep, target) =
-      verifyExplicitness =<<
-      getSlaveForTarget buildsome nuancedReason parents targetRep target
+  mSlave <- makeDirectSlave buildsome explicitness reason parents path
+  childs <- makeChildSlaves buildsome (reason ++ "(Container directory)") parents path
+  return $ maybeToList mSlave ++ childs
 
 handleLegalUnspecifiedOutputs :: DeleteUnspecifiedOutputs -> Target -> [FilePath] -> IO ()
 handleLegalUnspecifiedOutputs policy target paths = do
@@ -394,8 +429,20 @@ targetKey :: Target -> ByteString
 targetKey target =
   MD5.hash $ BS.pack (unlines (targetCmds target)) -- TODO: Canonicalize commands (whitespace/etc)
 
+newtype FileMode = FileMode Int
+  deriving (Generic, Show)
+instance Binary FileMode
+
+data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
+  deriving (Generic, Show)
+instance Binary InputAccess
+
+inputAccessToType :: InputAccess -> AccessType
+inputAccessToType InputAccessModeOnly {} = AccessTypeModeOnly
+inputAccessToType InputAccessFull {} = AccessTypeFull
+
 data ExecutionLog = ExecutionLog
-  { _elInputsDescs :: Map FilePath FileDesc
+  { _elInputsDescs :: Map FilePath InputAccess
   , _elOutputsDescs :: Map FilePath FileDesc
   } deriving (Generic, Show)
 instance Binary ExecutionLog
@@ -406,15 +453,18 @@ setKey buildsome key val = Sophia.setValue (bsDb buildsome) key $ runPut $ put v
 getKey :: Binary a => Buildsome -> ByteString -> IO (Maybe a)
 getKey buildsome key = fmap (runGet get) <$> Sophia.getValue (bsDb buildsome) key
 
-saveExecutionLog :: Buildsome -> Target -> Map FilePath (Maybe FileStatus) -> Set FilePath -> IO ()
-saveExecutionLog buildsome target inputsMStats outputs = do
-  inputsDescs <- M.traverseWithKey fileDescOfMStat inputsMStats
+saveExecutionLog :: Buildsome -> Target -> Map FilePath (AccessType, Maybe FileStatus) -> Set FilePath -> IO ()
+saveExecutionLog buildsome target inputs outputs = do
+  inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
     forM (S.toList outputs) $ \outPath -> do
       fileDesc <- getFileDesc outPath
       return (outPath, fileDesc)
   let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs)
   setKey buildsome (targetKey target) execLog
+  where
+    inputAccess path (AccessTypeFull, mStat) = InputAccessFull <$> fileDescOfMStat path mStat
+    inputAccess path (AccessTypeModeOnly, mStat) = InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
@@ -422,32 +472,40 @@ targetAllInputs target =
 
 applyExecutionLog ::
   Buildsome -> Target -> Parents -> ExecutionLog ->
-  IO (Either (String, FilePath, FileDesc, FileDesc) ())
+  IO (Either (String, FilePath) ())
 applyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsDescs) =
   runEitherT $ do
     liftIO waitForInputs
 
-    verifyNoChange "input" inputsDescs
+    forM_ (M.toList inputsDescs) $ \(filePath, oldInputAccess) ->
+      case oldInputAccess of
+        InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     filePath oldDesc
+        InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc filePath oldModeDesc
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
-    verifyNoChange "output" outputsDescs
+    forM_ (M.toList outputsDescs) $ \(filePath, oldDesc) -> do
+      compareToNewDesc "output" getFileDesc filePath oldDesc
 
     liftIO $ verifyTargetOutputs buildsome (M.keysSet outputsDescs) target
     where
+      compareToNewDesc str getNewDesc filePath oldDesc = do
+        newDesc <- liftIO $ getNewDesc filePath
+        when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
       waitForInputs = do
         -- TODO: This is good for parallelism, but bad if the set of
         -- inputs changed, as it may build stuff that's no longer
         -- required:
+
         let reason = "Recorded dependency of " ++ show (targetOutputs target)
-        speculativeSlaves <- concat <$> mapM (makeSlaves buildsome Implicit reason parents) (M.keys inputsDescs)
+        speculativeSlaves <-
+          fmap concat $ forM (M.toList inputsDescs) $ \(inputPath, inputAccess) ->
+          makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit reason parents inputPath
+
         let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
         hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
+
         traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
-      verifyNoChange str descs =
-        forM_ (M.toList descs) $ \(filePath, oldDesc) -> do
-          newDesc <- liftIO $ getFileDesc filePath
-          when (oldDesc /= newDesc) $ left (str, filePath, oldDesc, newDesc) -- fail entire computation
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -460,7 +518,7 @@ findApplyExecutionLog buildsome target parents = do
     Just executionLog -> do
       res <- applyExecutionLog buildsome target parents executionLog
       case res of
-        Left (str, filePath, _oldDesc, _newDesc) -> do
+        Left (str, filePath) -> do
           putStrLn $ concat
             ["Execution log of ", show (targetOutputs target), " did not match because ", str, ": ", show filePath, " changed"]
           return False
@@ -474,8 +532,8 @@ showParents = concatMap showParent
     showParent (targetRep, reason) = concat ["\n-> ", show targetRep, " (", reason, ")"]
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: Buildsome -> Reason -> Parents -> TargetRep -> Target -> IO Slave
-getSlaveForTarget buildsome reason parents targetRep target
+getSlaveForTarget :: Buildsome -> Reason -> Parents -> (TargetRep, Target) -> IO Slave
+getSlaveForTarget buildsome reason parents (targetRep, target)
   | any ((== targetRep) . fst) parents = fail $ "Target loop: " ++ showParents newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
@@ -507,7 +565,8 @@ spawnSlave buildsome target reason parents restoreMask = do
         need buildsome Explicit
           ("Hint from " ++ show (take 1 (targetOutputs target))) parents
           (targetAllInputs target)
-        (inputsLists, outputsLists) <- withAllocatedParallelism buildsome $ do
+        (inputsLists, outputsLists) <-
+          withAllocatedParallelism buildsome $ do
           unzip <$> mapM (runCmd buildsome target reason parents) (targetCmds target)
         let inputs = M.unions inputsLists
             outputs = S.unions outputsLists
@@ -566,7 +625,7 @@ deleteRemovedOutputs buildsome = do
 
 runCmd ::
   Buildsome -> Target -> Reason -> Parents -> String ->
-  IO (Map FilePath (Maybe FileStatus), Set FilePath)
+  IO (Map FilePath (AccessType, Maybe FileStatus), Set FilePath)
 runCmd buildsome target reason parents cmd = do
   registerOutputs buildsome (targetOutputs target)
 

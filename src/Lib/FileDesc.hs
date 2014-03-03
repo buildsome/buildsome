@@ -1,18 +1,25 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# OPTIONS -fno-warn-orphans #-}
 module Lib.FileDesc
   ( FileDesc(..)
   , fileDescOfMStat
   , getFileDesc
+  , FileModeDesc(..)
+  , fileModeDescOfMStat
+  , getFileModeDesc
   ) where
 
 import Control.Applicative ((<$>))
 import Control.Monad
-import Data.Binary (Binary)
+import Data.Binary (Binary(..))
+import Data.Binary.Get (getWord32le)
+import Data.Binary.Put (putWord32le)
 import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
 import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus, catchDoesNotExist)
-import System.Posix.Files (FileStatus, isRegularFile, isDirectory, isSymbolicLink, modificationTime, readSymbolicLink)
+import System.Posix.Files (FileStatus, isRegularFile, isDirectory, isSymbolicLink, modificationTime, readSymbolicLink, fileMode)
+import System.Posix.Types (FileMode, CMode(..))
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -28,6 +35,23 @@ data FileDesc
            -- valid input or output of a build step
   deriving (Generic, Eq, Show)
 instance Binary FileDesc
+
+data FileModeDesc = FileModeDesc FileMode | NoFileMode
+  deriving (Generic, Eq, Show)
+instance Binary FileModeDesc
+
+instance Binary CMode where
+  get = CMode <$> getWord32le
+  put (CMode x) = putWord32le x
+
+fileModeDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileModeDesc
+fileModeDescOfMStat path oldMStat = do
+  newMStat <- getMFileStatus path
+  when ((fileMode <$> newMStat) /= (fileMode <$> oldMStat)) $ fail $
+    show path ++ " changed during build!"
+  case newMStat of
+    Nothing -> return NoFileMode
+    Just stat -> return $ FileModeDesc $ fileMode stat
 
 fileDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileDesc
 fileDescOfMStat path oldMStat = do
@@ -67,3 +91,6 @@ fileDescOfMStat path oldMStat = do
 
 getFileDesc :: FilePath -> IO FileDesc
 getFileDesc path = fileDescOfMStat path =<< getMFileStatus path
+
+getFileModeDesc :: FilePath -> IO FileModeDesc
+getFileModeDesc path = fileModeDescOfMStat path =<< getMFileStatus path
