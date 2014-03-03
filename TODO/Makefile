@@ -1,3 +1,5 @@
+"leaked" stuff to be per all cmds, not per cmd
+
 * Patterns need to support multiple outputs
 
 * Paths relative/absolute/etc?
