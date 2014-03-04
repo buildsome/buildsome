@@ -143,15 +143,16 @@ serve buildsome conn = do
         Nothing -> do
           let cmdIds = M.keys runningCmds
           fail $ "Bad slave id: " ++ show cmdId ++ " mismatches all: " ++ show cmdIds
-        Just ec -> handleCmdConnection buildsome conn ec
+        Just ec -> handleCmdConnection buildsome fullTidStr conn ec
       where
-        [_pidStr, _tidStr, cmdId] = BS.split ':' pidCmdId
+        fullTidStr = BS.unpack pidStr ++ ":" ++ BS.unpack tidStr
+        [pidStr, tidStr, cmdId] = BS.split ':' pidCmdId
 
 maxMsgSize :: Int
 maxMsgSize = 8192
 
-handleCmdConnection :: Buildsome -> Socket -> ExecutingCommand -> IO ()
-handleCmdConnection buildsome conn ec = do
+handleCmdConnection :: Buildsome -> String -> Socket -> ExecutingCommand -> IO ()
+handleCmdConnection buildsome tidStr conn ec = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   connFinishedMVar <- newEmptyMVar
@@ -159,7 +160,7 @@ handleCmdConnection buildsome conn ec = do
   protect connFinishedMVar $ do
     sendGo conn
     recvLoop_ maxMsgSize
-      (handleCmdMsg buildsome conn ec . Protocol.parseMsg) conn
+      (handleCmdMsg buildsome tidStr conn ec . Protocol.parseMsg) conn
   where
     protect mvar act = act `E.finally` putMVar mvar ()
 
@@ -192,8 +193,8 @@ higherAccessType AccessTypeModeOnly AccessTypeModeOnly = AccessTypeModeOnly
 higherAccessType _ _ = AccessTypeFull
 
 handleCmdMsg ::
-  Buildsome -> Socket -> ExecutingCommand -> Protocol.Func -> IO ()
-handleCmdMsg buildsome conn ec msg =
+  Buildsome -> String -> Socket -> ExecutingCommand -> Protocol.Func -> IO ()
+handleCmdMsg buildsome _tidStr conn ec msg = do
   case msg of
     -- outputs
     Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
@@ -569,6 +570,7 @@ spawnSlave buildsome target reason parents restoreMask = do
     then Slave target <$> async (return ())
     else do
       execution <- async . annotate . restoreMask $ do
+        putStrLn $ concat ["{ ", show (targetOutputs target)]
         mapM_ removeFileAllowNotExists $ targetOutputs target
         need buildsome Explicit
           ("Hint from " ++ show (take 1 (targetOutputs target))) parents
@@ -582,6 +584,7 @@ spawnSlave buildsome target reason parents restoreMask = do
         outputs <- readIORef outputsRef
         verifyTargetOutputs buildsome outputs target
         saveExecutionLog buildsome target inputs outputs
+        putStrLn $ concat ["} ", show (targetOutputs target)]
       return $ Slave target execution
   where
     annotate = annotateException ("build failure of " ++ show (targetOutputs target))
@@ -648,10 +651,10 @@ runCmd buildsome target reason parents inputsRef outputsRef cmd = do
   let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
   tid <- myThreadId
   let ec = ExecutingCommand cmd tid target parents inputsRef outputsRef activeConnections
-  putStrLn $ concat ["{ ", show cmd, ": ", reason]
+  putStrLn $ concat ["  { ", show cmd, ": ", reason]
   atomicModifyIORef_ (bsRunningCmds buildsome) $ M.insert cmdId ec
   shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildsome cmdId) cmd
-  putStrLn $ concat ["} ", show cmd]
+  putStrLn $ concat ["  } ", show cmd]
 
   -- Give all connections a chance to complete and perhaps fail
   -- this execution:
