@@ -34,7 +34,7 @@ import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Argv0 (getArgv0)
-import System.FilePath (takeDirectory, (<.>))
+import System.FilePath (takeDirectory, (<.>), joinPath, splitPath)
 import System.Posix.Files (FileStatus)
 import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
@@ -226,12 +226,15 @@ handleCmdMsg buildsome conn ec msg =
     failCmd = E.throwTo (ecThreadId ec) . InvalidCmdOperation
     reason = Protocol.showFunc msg ++ " done by " ++ show (ecCmd ec)
 
+    wrapAction = (`E.finally` sendGo conn) . forwardExceptions
     reportInput accessType fullPath =
+      wrapAction $
       handleInput accessType =<<
-      Dir.makeRelativeToCurrentDirectory fullPath
+      canonicalizePath fullPath
     reportOutput fullPath =
+      wrapAction $
       recordOutput ec =<<
-      Dir.makeRelativeToCurrentDirectory fullPath
+      canonicalizePath fullPath
 
     forwardExceptions =
       flip E.catch $ \e@E.SomeException {} -> E.throwTo (ecThreadId ec) e
@@ -243,7 +246,7 @@ handleCmdMsg buildsome conn ec msg =
         actualOutputs <- recordedOutputs ec
         if path `S.member` actualOutputs
           then sendGo conn
-          else (`E.finally` sendGo conn) $ forwardExceptions $ do
+          else do
             slaves <- makeSlavesForAccessType accessType buildsome Implicit reason (ecParents ec) path
             -- Temporarily paused, so we can temporarily release parallelism
             -- semaphore
@@ -251,6 +254,19 @@ handleCmdMsg buildsome conn ec msg =
               traverse_ slaveWait slaves
             unless (isLegalOutput (ecTarget ec) path) $
               recordInput ec accessType path
+
+removeRedundantParents :: FilePath -> FilePath
+removeRedundantParents = joinPath . go . splitPath
+  where
+    go [] = []
+    go (x:xs) =
+      case go xs of
+      "../":rest -> rest
+      "..":rest -> rest
+      rest -> x:rest
+
+canonicalizePath :: FilePath -> IO FilePath
+canonicalizePath = Dir.makeRelativeToCurrentDirectory . removeRedundantParents
 
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
