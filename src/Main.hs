@@ -256,7 +256,9 @@ handleCmdMsg buildsome conn ec msg =
               recordInput ec accessType path
 
 canonicalizePath :: FilePath -> IO FilePath
-canonicalizePath = Dir.makeRelativeToCurrentDirectory . removeRedundantParents
+canonicalizePath path = do
+  curDir <- Dir.getCurrentDirectory
+  Dir.makeRelativeToCurrentDirectory $ removeRedundantParents (curDir </> path)
 
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
