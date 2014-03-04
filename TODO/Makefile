@@ -1,4 +1,4 @@
-* Allow $X and not just ${X}
+* Make sure all paths are canonicalized as relative to Makefile directory
 
 * Paths relative/absolute/etc?
 
