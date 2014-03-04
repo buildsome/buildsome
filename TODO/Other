@@ -1,9 +1,7 @@
 * Features:
-  * .gitignore
   * replay stdout/stderr
 
 * Bugs:
-  * Missing verification about used targets/etc when using execution log?
   * Wrong FS input model:
     * mode-only-inputs, (rely on mode only)
       content-only-inputs (rely on content + dirchildren but not on the stat),
@@ -13,13 +11,14 @@
       have an input dependency on the link content AND the file behind
       it
 
+    * Only report *successful* outputs? Or perhaps report as inputs,
+      output operations that failed due to FS state?
+
 * Refactoring:
   * Extract an abstract HookedFileSystem module that runs the server,
     and has a: makeEnv that generates a job id that the server responds
     to, and gives the needed env vars to add.
 
-* Only report *successful* outputs? Or perhaps report as inputs,
-  output operations that failed due to FS state?
 
 * C-side can be given allowed outputs rules and fail anything else
 
