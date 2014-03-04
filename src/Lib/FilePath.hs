@@ -3,14 +3,13 @@ module Lib.FilePath (removeRedundantParents, splitFileName, (</>)) where
 import qualified System.FilePath as FilePath
 
 removeRedundantParents :: FilePath -> FilePath
-removeRedundantParents = FilePath.joinPath . go . FilePath.splitPath
+removeRedundantParents =
+  FilePath.joinPath . foldr step [] . map FilePath.dropTrailingPathSeparator . FilePath.splitPath
   where
-    go [] = []
-    go (x:xs) =
-      case go xs of
-      "../":rest -> rest
-      "..":rest -> rest
-      rest -> x:rest
+    step "/" xs = "/" : xs
+    step ".." xs = ".." : xs
+    step _ ("..":xs) = xs
+    step x xs = x:xs
 
 splitFileName :: FilePath -> (FilePath, String)
 splitFileName path = (FilePath.dropTrailingPathSeparator dir, file)
