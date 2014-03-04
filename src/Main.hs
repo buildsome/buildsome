@@ -26,7 +26,7 @@ import Lib.Binary (runGet, runPut)
 import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc, FileModeDesc, fileModeDescOfMStat, getFileModeDesc)
-import Lib.FilePath ((</>))
+import Lib.FilePath ((</>), removeRedundantParents)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
 import Lib.Process (shellCmdVerify)
@@ -34,7 +34,7 @@ import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Argv0 (getArgv0)
-import System.FilePath (takeDirectory, (<.>), joinPath, splitPath)
+import System.FilePath (takeDirectory, (<.>))
 import System.Posix.Files (FileStatus)
 import System.Posix.Process (getProcessID)
 import qualified Control.Concurrent.MSem as MSem
@@ -254,16 +254,6 @@ handleCmdMsg buildsome conn ec msg =
               traverse_ slaveWait slaves
             unless (isLegalOutput (ecTarget ec) path) $
               recordInput ec accessType path
-
-removeRedundantParents :: FilePath -> FilePath
-removeRedundantParents = joinPath . go . splitPath
-  where
-    go [] = []
-    go (x:xs) =
-      case go xs of
-      "../":rest -> rest
-      "..":rest -> rest
-      rest -> x:rest
 
 canonicalizePath :: FilePath -> IO FilePath
 canonicalizePath = Dir.makeRelativeToCurrentDirectory . removeRedundantParents
