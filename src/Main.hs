@@ -289,35 +289,50 @@ toBuildMaps makefile = BuildMaps buildMap childrenMap
       | (outputPath, target) <- outputs ]
 
 withBuildsome ::
-  Sophia.Db -> Int -> Makefile -> DeleteUnspecifiedOutputs ->
+  Sophia.Db -> Makefile -> Opt ->
   FilePath -> (Buildsome -> IO a) -> IO a
-withBuildsome db parallelism makefile deleteUnspecifiedOutput ldPreloadPath body = do
+withBuildsome db makefile opt ldPreloadPath body = do
   runningCmds <- newIORef M.empty
   slaveMapByRepPath <- newIORef M.empty
   bsPid <- getProcessID
   let serverFilename = "/tmp/efbuild-" ++ show bsPid
   curJobId <- newIORef 0
   semaphore <- MSem.new parallelism
-  let buildsome =
-        Buildsome
-        { bsRunningCmds = runningCmds
-        , bsSlaveByRepPath = slaveMapByRepPath
-        , bsAddress = serverFilename
-        , bsLdPreloadPath = ldPreloadPath
-        , bsBuildMaps = toBuildMaps makefile
-        , bsCurJobId = curJobId
-        , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
-        , bsRestrictedParallelism = semaphore
-        , bsDb = db
-        , bsMakefile = makefile
-        }
+  let
+    buildsome =
+      Buildsome
+      { bsRunningCmds = runningCmds
+      , bsSlaveByRepPath = slaveMapByRepPath
+      , bsAddress = serverFilename
+      , bsLdPreloadPath = ldPreloadPath
+      , bsBuildMaps = toBuildMaps makefile
+      , bsCurJobId = curJobId
+      , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
+      , bsRestrictedParallelism = semaphore
+      , bsDb = db
+      , bsMakefile = makefile
+      }
 
-  withUnixSeqPacketListener serverFilename $ \listener ->
+  finalUpdateGitIgnore buildsome $
+    withUnixSeqPacketListener serverFilename $ \listener ->
     AsyncContext.new $ \ctx -> do
       _ <- AsyncContext.spawn ctx $ forever $ do
         (conn, _srcAddr) <- Sock.accept listener
         AsyncContext.spawn ctx $ serve buildsome conn
       body buildsome
+  where
+    finalUpdateGitIgnore buildsome
+      | writeGitIgnore = (`E.finally` updateGitIgnore buildsome makefilePath)
+      | otherwise = id
+    parallelism = fromMaybe 1 mParallelism
+    Opt makefilePath mParallelism writeGitIgnore deleteUnspecifiedOutput = opt
+
+updateGitIgnore :: Buildsome -> FilePath -> IO ()
+updateGitIgnore buildsome makefilePath = do
+  outputs <- getRegisteredOutputs buildsome
+  let gitIgnorePath = takeDirectory makefilePath </> ".gitignore"
+      extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
+  writeFile gitIgnorePath $ unlines $ extraIgnored ++ S.toList outputs
 
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
@@ -578,6 +593,7 @@ spawnSlave buildsome target reason parents restoreMask = do
             (targetCmds target)
         inputs <- readIORef inputsRef
         outputs <- readIORef outputsRef
+        registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
         verifyTargetOutputs buildsome outputs target
         saveExecutionLog buildsome target inputs outputs
         putStrLn $ concat ["} ", show (targetOutputs target)]
@@ -588,18 +604,18 @@ spawnSlave buildsome target reason parents restoreMask = do
 registeredOutputsKey :: ByteString
 registeredOutputsKey = BS.pack "outputs"
 
-getRegisteredOutputs :: Buildsome -> IO [FilePath]
+getRegisteredOutputs :: Buildsome -> IO (Set FilePath)
 getRegisteredOutputs buildsome =
-  fromMaybe [] <$> getKey buildsome registeredOutputsKey
+  fromMaybe S.empty <$> getKey buildsome registeredOutputsKey
 
-setRegisteredOutputs :: Buildsome -> [FilePath] -> IO ()
+setRegisteredOutputs :: Buildsome -> Set FilePath -> IO ()
 setRegisteredOutputs buildsome outputs =
   setKey buildsome registeredOutputsKey outputs
 
-registerOutputs :: Buildsome -> [FilePath] -> IO ()
+registerOutputs :: Buildsome -> Set FilePath -> IO ()
 registerOutputs buildsome outputPaths = do
   outputs <- getRegisteredOutputs buildsome
-  setRegisteredOutputs buildsome $ outputPaths ++ outputs
+  setRegisteredOutputs buildsome $ outputPaths <> outputs
 
 buildMapFind :: BuildMaps -> FilePath -> Maybe (TargetRep, Target)
 buildMapFind (BuildMaps buildMap childrenMap) outputPath =
@@ -622,14 +638,14 @@ deleteRemovedOutputs :: Buildsome -> IO ()
 deleteRemovedOutputs buildsome = do
   outputs <- getRegisteredOutputs buildsome
   liveOutputs <-
-    fmap concat .
-    forM outputs $ \output ->
+    fmap mconcat .
+    forM (S.toList outputs) $ \output ->
       case buildMapFind (bsBuildMaps buildsome) output of
-      Just _ -> return [output]
+      Just _ -> return $ S.singleton output
       Nothing -> do
         putStrLn $ "Removing old output: " ++ show output
         removeFileAllowNotExists output
-        return []
+        return S.empty
   setRegisteredOutputs buildsome liveOutputs
 
 runCmd ::
@@ -639,8 +655,6 @@ runCmd ::
   IORef (Set FilePath) ->
   String -> IO ()
 runCmd buildsome target reason parents inputsRef outputsRef cmd = do
-  registerOutputs buildsome (targetOutputs target)
-
   activeConnections <- newIORef []
 
   cmdIdNum <- nextJobId buildsome
@@ -670,15 +684,16 @@ withDb dbFileName body = do
     Sophia.withDb env $ \db ->
       body db
 
+buildDbFilename :: FilePath -> FilePath
+buildDbFilename = (<.> "db")
+
 main :: IO ()
 main = do
-  Opt makefileName mparallelism deleteUnspecifiedOutput <- getOpt
-  let buildDbFilename = makefileName <.> "db"
-      parallelism = fromMaybe 1 mparallelism
-  makefile <- Makefile.parse makefileName
-  withDb buildDbFilename $ \db -> do
+  opt <- getOpt
+  makefile <- Makefile.parse (optMakefilePath opt)
+  withDb (buildDbFilename (optMakefilePath opt)) $ \db -> do
     ldPreloadPath <- getLdPreloadPath
-    withBuildsome db parallelism makefile deleteUnspecifiedOutput ldPreloadPath $
+    withBuildsome db makefile opt ldPreloadPath $
       \buildsome -> do
       deleteRemovedOutputs buildsome
       case makefileTargets makefile of
