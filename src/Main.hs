@@ -227,33 +227,30 @@ handleCmdMsg buildsome _tidStr conn ec msg = do
     failCmd = E.throwTo (ecThreadId ec) . InvalidCmdOperation
     reason = Protocol.showFunc msg ++ " done by " ++ show (ecCmd ec)
 
-    reportInput accessType fullPath =
-      forwardExceptions $
-      handleInput accessType =<<
-      canonicalizePath fullPath
+    reportInput accessType fullPath = do
+      (`E.finally` sendGo conn) $ forwardExceptions $
+        handleInput accessType =<<
+        canonicalizePath fullPath
     reportOutput fullPath =
       forwardExceptions $
       recordOutput ec =<<
       canonicalizePath fullPath
-
     forwardExceptions =
       flip E.catch $ \e@E.SomeException {} -> E.throwTo (ecThreadId ec) e
     handleInput accessType path
-      | inputIgnored path = sendGo conn
+      | inputIgnored path = return ()
         -- There's no problem for a target to read its own outputs
         -- freely:
       | otherwise = do
         actualOutputs <- recordedOutputs ec
-        if path `S.member` actualOutputs
-          then sendGo conn
-          else (`E.finally` sendGo conn) $ forwardExceptions $ do
-            slaves <- makeSlavesForAccessType accessType buildsome Implicit reason (ecParents ec) path
-            -- Temporarily paused, so we can temporarily release parallelism
-            -- semaphore
-            unless (null slaves) $ withReleasedParallelism buildsome $
-              traverse_ slaveWait slaves
-            unless (isLegalOutput (ecTarget ec) path) $
-              recordInput ec accessType path
+        unless (path `S.member` actualOutputs) $ do
+          slaves <- makeSlavesForAccessType accessType buildsome Implicit reason (ecParents ec) path
+          -- Temporarily paused, so we can temporarily release parallelism
+          -- semaphore
+          unless (null slaves) $ withReleasedParallelism buildsome $
+            traverse_ slaveWait slaves
+          unless (isLegalOutput (ecTarget ec) path) $
+            recordInput ec accessType path
 
 canonicalizePath :: FilePath -> IO FilePath
 canonicalizePath path = do
