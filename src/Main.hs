@@ -227,13 +227,12 @@ handleCmdMsg buildsome _tidStr conn ec msg = do
     failCmd = E.throwTo (ecThreadId ec) . InvalidCmdOperation
     reason = Protocol.showFunc msg ++ " done by " ++ show (ecCmd ec)
 
-    wrapAction = (`E.finally` sendGo conn) . forwardExceptions
     reportInput accessType fullPath =
-      wrapAction $
+      forwardExceptions $
       handleInput accessType =<<
       canonicalizePath fullPath
     reportOutput fullPath =
-      wrapAction $
+      forwardExceptions $
       recordOutput ec =<<
       canonicalizePath fullPath
 
@@ -247,7 +246,7 @@ handleCmdMsg buildsome _tidStr conn ec msg = do
         actualOutputs <- recordedOutputs ec
         if path `S.member` actualOutputs
           then sendGo conn
-          else do
+          else (`E.finally` sendGo conn) $ forwardExceptions $ do
             slaves <- makeSlavesForAccessType accessType buildsome Implicit reason (ecParents ec) path
             -- Temporarily paused, so we can temporarily release parallelism
             -- semaphore
