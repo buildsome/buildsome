@@ -1,13 +1,22 @@
-* .gitignore
+* Features:
+  * .gitignore
+  * replay stdout/stderr
 
-* Extract an abstract HookedFileSystem module that runs the server,
-  and has a: makeEnv that generates a job id that the server responds
-  to, and gives the needed env vars to add.
+* Bugs:
+  * Missing verification about used targets/etc when using execution log?
+  * Wrong FS input model:
+    * mode-only-inputs, (rely on mode only)
+      content-only-inputs (rely on content + dirchildren but not on the stat),
+      full-inputs (rely on stat + content + dirchildren)
 
-* When file is symlink, read of it should need the stuff behind it (except in ReadLink and LStat?)
+    * When file is symlink, everything except lstat/readlink need to
+      have an input dependency on the link content AND the file behind
+      it
 
-* Verification about used targets/etc, also when using execution log
-* replay stdout/stderr
+* Refactoring:
+  * Extract an abstract HookedFileSystem module that runs the server,
+    and has a: makeEnv that generates a job id that the server responds
+    to, and gives the needed env vars to add.
 
 * Only report *successful* outputs? Or perhaps report as inputs,
   output operations that failed due to FS state?
