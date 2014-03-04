@@ -7,7 +7,7 @@ import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT, evalStateT)
-import Data.Char (isAlpha, isAlphaNum)
+import Data.Char (isAlphaNum)
 import Data.Either (partitionEithers)
 import Data.List (partition, isInfixOf)
 import Data.Map (Map)
@@ -83,7 +83,7 @@ escapeSequence = do
   return [esc, code]
 
 ident :: Monad m => ParserG u m String
-ident = (:) <$> P.satisfy isAlphaEx <*> P.many (P.satisfy isAlphaNumEx)
+ident = P.many1 (P.satisfy isAlphaNumEx)
 
 metaVarId ::
   Monad m => [FilePath] -> [FilePath] -> [FilePath] ->
@@ -133,7 +133,7 @@ preserveMetavar =
 -- '$' already parsed
 variable :: Parser String
 variable = do
-  varName <- P.char '{' *> ident <* P.char '}'
+  varName <- (P.char '{' *> ident <* P.char '}') <|> ((:[]) <$> P.satisfy isAlphaNumEx)
   mResult <- lift $ State.gets $ M.lookup varName
   case mResult of
     Nothing -> do
@@ -144,11 +144,11 @@ variable = do
 
 -- Inside a single line
 interpolateString :: Monad m => ParserG u m String -> ParserG u m String
-interpolateString var =
+interpolateString dollarHandler =
   concat <$> P.many (literalString '\'' <|> interpolatedChar)
   where
     interpolatedChar =
-      escapeSequence <|> (P.char '$' *> var) <|>
+      escapeSequence <|> (P.char '$' *> dollarHandler) <|>
       (: []) <$> P.satisfy (/= '\n')
 
 type IncludePath = FilePath
@@ -223,10 +223,8 @@ noiseLines =
 cmdLine :: Parser String
 cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t') *>
-    interpolateString var <* skipLineSuffix
+    interpolateString (variable <|> preserveMetavar) <* skipLineSuffix
   ) <?> "cmd line"
-  where
-    var = variable <|> preserveMetavar
 
 -- TODO: Better canonization
 canonizeCmdLines :: [String] -> [String]
@@ -325,16 +323,13 @@ properEof = do
     [] -> return ()
     _ -> fail "EOF but includers still pending"
 
-isAlphaEx :: Char -> Bool
-isAlphaEx x = isAlpha x || x == '_'
-
 isAlphaNumEx :: Char -> Bool
 isAlphaNumEx x = isAlphaNum x || x == '_'
 
-setVariable :: Parser ()
-setVariable = do
+varAssignment :: Parser ()
+varAssignment = do
   varName <- P.try $ ident <* P.char '='
-  value <- interpolateString variable
+  value <- interpolateString (variable <|> preserveMetavar)
   lift $ State.modify (M.insert varName value)
 
 makefile :: Parser Makefile
@@ -342,7 +337,7 @@ makefile =
   mkMakefile . concat <$>
   ( beginningOfLine *> -- due to beginning of file
     noiseLines *>
-    ( (([] <$ properEof) <|> ((: []) <$> target) <|> ([] <$ setVariable))
+    ( (([] <$ properEof) <|> ((: []) <$> target) <|> ([] <$ varAssignment))
       `P.sepBy` (newline *> noiseLines)
     ) <*
     P.optional (newline *> noiseLines) <*
