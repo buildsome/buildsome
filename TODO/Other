@@ -1,8 +1,6 @@
 * Scan upwards for Makefile at root to use with curdir as parameter by default
 
 * Bugs:
-  * .gitignore paths must be relative to the .gitignore (and Makefile) directory
-
   * Wrong FS input model:
     * mode-only-inputs, (rely on mode only)
       content-only-inputs (rely on content + dirchildren but not on the stat),
