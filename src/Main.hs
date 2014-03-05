@@ -27,7 +27,7 @@ import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs, printStdouts)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
-import System.FilePath (takeDirectory, (<.>))
+import System.FilePath (takeDirectory, (<.>), makeRelative)
 import System.Posix.Files (FileStatus)
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
@@ -119,9 +119,12 @@ withBuildsome db makefile opt body = do
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
   outputs <- Db.readRegisteredOutputs (bsDb buildsome)
-  let gitIgnorePath = takeDirectory makefilePath </> ".gitignore"
+  let dir = takeDirectory makefilePath
+      gitIgnorePath = dir </> ".gitignore"
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
-  writeFile gitIgnorePath $ unlines $ extraIgnored ++ S.toList outputs
+  writeFile gitIgnorePath $ unlines $
+    map (makeRelative dir) $
+    extraIgnored ++ S.toList outputs
 
 need :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
 need buildsome explicitness reason parents paths = do
