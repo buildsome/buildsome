@@ -350,6 +350,10 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
 buildTarget :: Buildsome -> Target -> Reason -> Parents -> IO ()
 buildTarget buildsome target reason parents = do
   putStrLn $ concat ["{ ", show (targetOutputs target), " (", reason, ")"]
+
+  -- TODO: Register each created subdirectory as an output?
+  mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
+
   mapM_ removeFileAllowNotExists $ targetOutputs target
   need buildsome Explicit
     ("Hint from " ++ show (take 1 (targetOutputs target))) parents
