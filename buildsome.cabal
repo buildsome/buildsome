@@ -26,6 +26,7 @@ executable buildsome
                ,     Lib.AsyncContext
                ,     Lib.Async
                ,     Lib.AnnotatedException
+               ,     Lib.BuildMaps
                ,     Lib.ByteString
                ,     Lib.IORef
                ,     Lib.List

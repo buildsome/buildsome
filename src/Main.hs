@@ -9,9 +9,9 @@ import Control.Monad.Trans.Either
 import Data.Binary (Binary, get, put)
 import Data.ByteString (ByteString)
 import Data.IORef
-import Data.List (isPrefixOf, isSuffixOf, partition, nub)
+import Data.List (isPrefixOf, isSuffixOf, partition)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, maybeToList, mapMaybe)
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
@@ -19,12 +19,13 @@ import GHC.Generics (Generic)
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
 import Lib.Binary (runGet, runPut)
+import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FSHook (FSHook)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc, FileModeDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), removeRedundantParents)
 import Lib.IORef (atomicModifyIORef'_)
-import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
+import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.FilePath (takeDirectory, (<.>))
 import System.Posix.Files (FileStatus)
@@ -38,11 +39,7 @@ import qualified Database.Sophia as Sophia
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
 import qualified System.Directory as Dir
-
-newtype TargetRep = TargetRep FilePath -- We use the minimum output path as the target key/representative
-  deriving (Eq, Ord, Show)
-computeTargetRep :: Target -> TargetRep
-computeTargetRep = TargetRep . minimum . targetOutputs
+import qualified Lib.BuildMaps as BuildMaps
 
 data Explicitness = Explicit | Implicit
   deriving (Eq)
@@ -51,20 +48,6 @@ type Parents = [(TargetRep, Reason)]
 type Reason = String
 
 newtype Slave = Slave { slaveExecution :: Async () }
-
-data DirectoryBuildMap = DirectoryBuildMap
-  { dbmTargets :: [(TargetRep, Target)]
-  , dbmPatterns :: [Pattern]
-  }
-instance Monoid DirectoryBuildMap where
-  mempty = DirectoryBuildMap mempty mempty
-  mappend (DirectoryBuildMap x0 x1) (DirectoryBuildMap y0 y1) =
-    DirectoryBuildMap (mappend x0 y0) (mappend x1 y1)
-
-data BuildMaps = BuildMaps
-  { _bmBuildMap :: Map FilePath (TargetRep, Target) -- output paths -> min(representative) path and original spec
-  , _bmChildrenMap :: Map FilePath DirectoryBuildMap
-  }
 
 data Buildsome = Buildsome
   { bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
@@ -115,34 +98,6 @@ canonicalizePath path = do
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
 
-pairWithTargetRep :: Target -> (TargetRep, Target)
-pairWithTargetRep target = (computeTargetRep target, target)
-
-toBuildMaps :: Makefile -> BuildMaps
-toBuildMaps makefile = BuildMaps buildMap childrenMap
-  where
-    outputs =
-      [ (outputPath, target)
-      | target <- makefileTargets makefile
-      , outputPath <- targetOutputs target
-      ]
-    childrenMap =
-      M.fromListWith mappend $
-
-      [ (takeDirectory outputPath, mempty { dbmTargets = [pairWithTargetRep target] })
-      | (outputPath, target) <- outputs
-      ] ++
-
-      [ (outPatDir, mempty { dbmPatterns = [targetPattern] })
-      | targetPattern <- makefilePatterns makefile
-      , outPatDir <- nub (map Makefile.filePatternDirectory (targetOutputs targetPattern))
-      ]
-
-    buildMap =
-      M.fromListWithKey (\path -> error $ "Overlapping output paths for: " ++ show path)
-      [ (outputPath, pairWithTargetRep target)
-      | (outputPath, target) <- outputs ]
-
 withBuildsome ::
   Sophia.Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome db makefile opt body = do
@@ -153,7 +108,7 @@ withBuildsome db makefile opt body = do
       buildsome =
         Buildsome
         { bsSlaveByRepPath = slaveMapByRepPath
-        , bsBuildMaps = toBuildMaps makefile
+        , bsBuildMaps = BuildMaps.make makefile
         , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
         , bsRestrictedParallelism = semaphore
         , bsDb = db
@@ -190,7 +145,7 @@ assertExists buildsome path msg
 
 makeDirectSlave :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO (Maybe Slave)
 makeDirectSlave buildsome explicitness reason parents path =
-  case buildMapFind (bsBuildMaps buildsome) path of
+  case BuildMaps.find (bsBuildMaps buildsome) path of
   Nothing -> do
     when (explicitness == Explicit) $
       assertExists buildsome path $
@@ -473,30 +428,13 @@ registerOutputs buildsome outputPaths = do
   outputs <- getRegisteredOutputs buildsome
   setRegisteredOutputs buildsome $ outputPaths <> outputs
 
-buildMapFind :: BuildMaps -> FilePath -> Maybe (TargetRep, Target)
-buildMapFind (BuildMaps buildMap childrenMap) outputPath =
-  -- Allow specific/direct matches to override pattern matches
-  directMatch `mplus` patternMatch
-  where
-    directMatch = outputPath `M.lookup` buildMap
-    patterns = dbmPatterns $ M.findWithDefault mempty (takeDirectory outputPath) childrenMap
-    patternMatch =
-      case mapMaybe (Makefile.instantiatePatternByOutput outputPath) patterns of
-      [] -> Nothing
-      [target] -> Just (computeTargetRep target, target)
-      targets ->
-        error $ concat
-        [ "Multiple matching patterns: ", show outputPath
-        , " (", show (map targetOutputs targets), ")"
-        ]
-
 deleteRemovedOutputs :: Buildsome -> IO ()
 deleteRemovedOutputs buildsome = do
   outputs <- getRegisteredOutputs buildsome
   liveOutputs <-
     fmap mconcat .
     forM (S.toList outputs) $ \output ->
-      case buildMapFind (bsBuildMaps buildsome) output of
+      case BuildMaps.find (bsBuildMaps buildsome) output of
       Just _ -> return $ S.singleton output
       Nothing -> do
         putStrLn $ "Removing old output: " ++ show output
