@@ -50,10 +50,7 @@ data Explicitness = Explicit | Implicit
 type Parents = [(TargetRep, Reason)]
 type Reason = String
 
-data Slave = Slave
-  { _slaveTarget :: Target
-  , slaveExecution :: Async ()
-  }
+newtype Slave = Slave { slaveExecution :: Async () }
 
 data DirectoryBuildMap = DirectoryBuildMap
   { dbmTargets :: [(TargetRep, Target)]
@@ -436,7 +433,7 @@ spawnSlave :: Buildsome -> Target -> Reason -> Parents -> (IO () -> IO ()) -> IO
 spawnSlave buildsome target reason parents restoreMask = do
   success <- findApplyExecutionLog buildsome target parents
   if success
-    then Slave target <$> async (return ())
+    then Slave <$> async (return ())
     else do
       execution <- async . annotate . restoreMask $ do
         putStrLn $ concat ["{ ", show (targetOutputs target), " (", reason, ")"]
@@ -456,7 +453,7 @@ spawnSlave buildsome target reason parents restoreMask = do
         verifyTargetOutputs buildsome outputs target
         saveExecutionLog buildsome target inputs outputs stdOutputs
         putStrLn $ concat ["} ", show (targetOutputs target)]
-      return $ Slave target execution
+      return $ Slave execution
   where
     annotate = annotateException ("build failure of " ++ show (targetOutputs target))
 
