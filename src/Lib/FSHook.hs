@@ -1,26 +1,23 @@
-{-# LANGUAGE DeriveGeneric #-}
 module Lib.FSHook
   ( FSHook
   , with
   , AccessType(..), higherAccessType
   , AccessDoc
   , runCommand
-  , StdOutputs(..), printStdouts
   ) where
 
 import Control.Applicative ((<$>))
 import Control.Concurrent (ThreadId, myThreadId)
 import Control.Concurrent.MVar
 import Control.Monad
-import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
 import Filesystem.Path.CurrentOS (encodeString)
-import GHC.Generics (Generic)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
+import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Network.Socket (Socket)
 import System.Argv0 (getArgv0)
 import System.Exit (ExitCode(..))
@@ -38,12 +35,6 @@ import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
 
 type AccessDoc = String
-
-data StdOutputs = StdOutputs
-  { _stdOut :: ByteString
-  , _stdErr :: ByteString
-  } deriving (Generic, Show)
-instance Binary StdOutputs
 
 type JobId = ByteString
 
@@ -71,18 +62,6 @@ data FSHook = FSHook
   , fsHookLdPreloadPath :: FilePath
   , fsHookServerAddress :: FilePath
   }
-
--- TODO: Where to place StdOutputs and printStdouts
-printStdouts :: StdOutputs -> IO ()
-printStdouts (StdOutputs stdout stderr) = do
-  showOutput "STDOUT" stdout
-  showOutput "STDERR" stderr
-  where
-    showOutput name bs
-      | BS.null bs = return ()
-      | otherwise = do
-        putStrLn (name ++ ":")
-        BS.putStr bs
 
 nextJobId :: FSHook -> IO Int
 nextJobId fsHook =

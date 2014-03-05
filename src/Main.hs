@@ -26,6 +26,7 @@ import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc, FileModeDesc, fileM
 import Lib.FilePath ((</>), canonicalizePath)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
+import Lib.StdOutputs (StdOutputs, printStdouts)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.FilePath (takeDirectory, (<.>))
 import System.Posix.Files (FileStatus)
@@ -246,7 +247,7 @@ inputAccessToType InputAccessFull {} = FSHook.AccessTypeFull
 data ExecutionLog = ExecutionLog
   { _elInputsDescs :: Map FilePath InputAccess
   , _elOutputsDescs :: Map FilePath FileDesc
-  , _elStdoutputs :: [FSHook.StdOutputs] -- Of each command
+  , _elStdoutputs :: [StdOutputs] -- Of each command
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 
@@ -258,7 +259,7 @@ getKey buildsome key = fmap (runGet get) <$> Sophia.getValue (bsDb buildsome) ke
 
 saveExecutionLog ::
   Buildsome -> Target -> Map FilePath (FSHook.AccessType, Maybe FileStatus) -> Set FilePath ->
-  [FSHook.StdOutputs] -> IO ()
+  [StdOutputs] -> IO ()
 saveExecutionLog buildsome target inputs outputs stdOutputs = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
@@ -278,7 +279,7 @@ targetAllInputs target =
 -- Already verified that the execution log is a match
 applyExecutionLog ::
   Buildsome -> TargetType FilePath FilePath ->
-  Set FilePath -> [FSHook.StdOutputs] -> IO ()
+  Set FilePath -> [StdOutputs] -> IO ()
 applyExecutionLog buildsome target outputs stdOutputs
   | length (targetCmds target) /= length stdOutputs =
     fail $ unwords
@@ -287,7 +288,7 @@ applyExecutionLog buildsome target outputs stdOutputs
   | otherwise = do
     forM_ (zip (targetCmds target) stdOutputs) $ \(cmd, outs) -> do
       putStrLn $ "{ REPLAY of " ++ show cmd
-      FSHook.printStdouts outs
+      printStdouts outs
 
     verifyTargetOutputs buildsome outputs target
 
@@ -437,7 +438,7 @@ runCmd ::
   -- TODO: Clean this arg list up
   IORef (Map FilePath (FSHook.AccessType, Maybe FileStatus)) ->
   IORef (Set FilePath) ->
-  String -> IO FSHook.StdOutputs
+  String -> IO StdOutputs
 runCmd buildsome target parents inputsRef outputsRef cmd = do
   putStrLn $ concat ["  { ", show cmd, ": "]
   let

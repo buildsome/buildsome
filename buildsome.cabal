@@ -25,6 +25,7 @@ executable buildsome
   other-modules:     Opts
                ,     Lib.AsyncContext
                ,     Lib.Async
+               ,     Lib.StdOutputs
                ,     Lib.AnnotatedException
                ,     Lib.BuildMaps
                ,     Lib.ByteString
