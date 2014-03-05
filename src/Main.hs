@@ -347,6 +347,26 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
       newParents = (targetRep, reason) : parents
       resultIntoMVar mvar x = putMVar mvar x >> return x
 
+buildTarget :: Buildsome -> Target -> Reason -> Parents -> IO ()
+buildTarget buildsome target reason parents = do
+  putStrLn $ concat ["{ ", show (targetOutputs target), " (", reason, ")"]
+  mapM_ removeFileAllowNotExists $ targetOutputs target
+  need buildsome Explicit
+    ("Hint from " ++ show (take 1 (targetOutputs target))) parents
+    (targetAllInputs target)
+  inputsRef <- newIORef M.empty
+  outputsRef <- newIORef S.empty
+  stdOutputs <-
+    withAllocatedParallelism buildsome $
+    mapM (runCmd buildsome target parents inputsRef outputsRef)
+    (targetCmds target)
+  inputs <- readIORef inputsRef
+  outputs <- readIORef outputsRef
+  registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
+  verifyTargetOutputs buildsome outputs target
+  saveExecutionLog buildsome target inputs outputs stdOutputs
+  putStrLn $ concat ["} ", show (targetOutputs target)]
+
 -- Spawn a new slave for a target
 spawnSlave :: Buildsome -> Target -> Reason -> Parents -> (IO () -> IO ()) -> IO Slave
 spawnSlave buildsome target reason parents restoreMask = do
@@ -354,24 +374,7 @@ spawnSlave buildsome target reason parents restoreMask = do
   if success
     then Slave <$> async (return ())
     else do
-      execution <- async . annotate . restoreMask $ do
-        putStrLn $ concat ["{ ", show (targetOutputs target), " (", reason, ")"]
-        mapM_ removeFileAllowNotExists $ targetOutputs target
-        need buildsome Explicit
-          ("Hint from " ++ show (take 1 (targetOutputs target))) parents
-          (targetAllInputs target)
-        inputsRef <- newIORef M.empty
-        outputsRef <- newIORef S.empty
-        stdOutputs <-
-          withAllocatedParallelism buildsome $
-          mapM (runCmd buildsome target parents inputsRef outputsRef)
-          (targetCmds target)
-        inputs <- readIORef inputsRef
-        outputs <- readIORef outputsRef
-        registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
-        verifyTargetOutputs buildsome outputs target
-        saveExecutionLog buildsome target inputs outputs stdOutputs
-        putStrLn $ concat ["} ", show (targetOutputs target)]
+      execution <- async . annotate . restoreMask $ buildTarget buildsome target reason parents
       return $ Slave execution
   where
     annotate = annotateException ("build failure of " ++ show (targetOutputs target))
