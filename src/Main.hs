@@ -169,9 +169,8 @@ makeChildSlaves buildsome reason parents path
     traverse (getSlaveForTarget buildsome reason parents)
     childTargets
   where
-    -- TODO: Abstract this with buildMapsFindChildren, extract BuildMaps to its own module?
-    BuildMaps _ childrenMap = bsBuildMaps buildsome
-    DirectoryBuildMap childTargets childPatterns = M.findWithDefault mempty path childrenMap
+    DirectoryBuildMap childTargets childPatterns =
+      BuildMaps.findDirectory (bsBuildMaps buildsome) path
 
 makeSlavesForAccessType ::
   FSHook.AccessType -> Buildsome -> Explicitness -> Reason ->

@@ -3,6 +3,7 @@ module Lib.BuildMaps
   , DirectoryBuildMap(..)
   , BuildMaps(..)
   , make, find
+  , findDirectory
   ) where
 
 import Control.Monad
@@ -51,6 +52,10 @@ find (BuildMaps buildMap childrenMap) outputPath =
         , " (", show (map targetOutputs targets), ")"
         ]
 
+findDirectory :: BuildMaps -> FilePath -> DirectoryBuildMap
+findDirectory (BuildMaps _ childrenMap) path =
+  M.findWithDefault mempty path childrenMap
+
 make :: Makefile -> BuildMaps
 make makefile = BuildMaps buildMap childrenMap
   where
@@ -77,4 +82,3 @@ make makefile = BuildMaps buildMap childrenMap
       M.fromListWithKey (\path -> error $ "Overlapping output paths for: " ++ show path)
       [ (outputPath, pairWithTargetRep target)
       | (outputPath, target) <- outputs ]
-
