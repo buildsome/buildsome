@@ -1,6 +1,3 @@
-* Features:
-  * replay stdout/stderr
-
 * Bugs:
   * Wrong FS input model:
     * mode-only-inputs, (rely on mode only)
