@@ -23,6 +23,7 @@ executable buildsome
   main-is:           Main.hs
   ghc-options:       -threaded -Wall -O2
   other-modules:     Opts
+               ,     Db
                ,     Lib.AccessType
                ,     Lib.AsyncContext
                ,     Lib.Async

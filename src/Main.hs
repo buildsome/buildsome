@@ -1,4 +1,5 @@
-{-# LANGUAGE DeriveGeneric #-}
+module Main (main) where
+
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
@@ -6,8 +7,6 @@ import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Either
-import Data.Binary (Binary, get, put)
-import Data.ByteString (ByteString)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf, partition)
 import Data.Map.Strict (Map)
@@ -15,15 +14,14 @@ import Data.Maybe (fromMaybe, maybeToList)
 import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
-import GHC.Generics (Generic)
+import Db (Db)
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
-import Lib.Binary (runGet, runPut)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FSHook (FSHook)
-import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc, FileModeDesc, fileModeDescOfMStat, getFileModeDesc)
+import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), canonicalizePath)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
@@ -33,11 +31,9 @@ import System.FilePath (takeDirectory, (<.>))
 import System.Posix.Files (FileStatus)
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
-import qualified Crypto.Hash.MD5 as MD5
-import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import qualified Database.Sophia as Sophia
+import qualified Db
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
@@ -56,7 +52,7 @@ data Buildsome = Buildsome
   , bsDeleteUnspecifiedOutput :: DeleteUnspecifiedOutputs
   , bsBuildMaps :: BuildMaps
   , bsRestrictedParallelism :: MSem Int
-  , bsDb :: Sophia.Db
+  , bsDb :: Db
   , bsMakefile :: Makefile
   , bsFsHook :: FSHook
   }
@@ -95,8 +91,7 @@ recordInput inputsRef accessType path = do
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
 
-withBuildsome ::
-  Sophia.Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
+withBuildsome :: Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   semaphore <- MSem.new parallelism
@@ -123,7 +118,7 @@ withBuildsome db makefile opt body = do
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
-  outputs <- getRegisteredOutputs buildsome
+  outputs <- Db.readRegisteredOutputs (bsDb buildsome)
   let gitIgnorePath = takeDirectory makefilePath </> ".gitignore"
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
   writeFile gitIgnorePath $ unlines $ extraIgnored ++ S.toList outputs
@@ -233,31 +228,6 @@ verifyTargetOutputs buildsome outputs target = do
     allUnspecified = S.toList $ outputs `S.difference` specified
     specified = S.fromList $ targetOutputs target
 
-targetKey :: Target -> ByteString
-targetKey target =
-  MD5.hash $ BS.pack (unlines (targetCmds target)) -- TODO: Canonicalize commands (whitespace/etc)
-
-data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
-  deriving (Generic, Show)
-instance Binary InputAccess
-
-inputAccessToType :: InputAccess -> AccessType
-inputAccessToType InputAccessModeOnly {} = AccessTypeModeOnly
-inputAccessToType InputAccessFull {} = AccessTypeFull
-
-data ExecutionLog = ExecutionLog
-  { _elInputsDescs :: Map FilePath InputAccess
-  , _elOutputsDescs :: Map FilePath FileDesc
-  , _elStdoutputs :: [StdOutputs] -- Of each command
-  } deriving (Generic, Show)
-instance Binary ExecutionLog
-
-setKey :: Binary a => Buildsome -> ByteString -> a -> IO ()
-setKey buildsome key val = Sophia.setValue (bsDb buildsome) key $ runPut $ put val
-
-getKey :: Binary a => Buildsome -> ByteString -> IO (Maybe a)
-getKey buildsome key = fmap (runGet get) <$> Sophia.getValue (bsDb buildsome) key
-
 saveExecutionLog ::
   Buildsome -> Target -> Map FilePath (AccessType, Maybe FileStatus) -> Set FilePath ->
   [StdOutputs] -> IO ()
@@ -267,11 +237,11 @@ saveExecutionLog buildsome target inputs outputs stdOutputs = do
     forM (S.toList outputs) $ \outPath -> do
       fileDesc <- getFileDesc outPath
       return (outPath, fileDesc)
-  let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs) stdOutputs
-  setKey buildsome (targetKey target) execLog
+  Db.writeExecutionLog (bsDb buildsome) target $
+    Db.ExecutionLog inputsDescs (M.fromList outputDescPairs) stdOutputs
   where
-    inputAccess path (AccessTypeFull, mStat) = InputAccessFull <$> fileDescOfMStat path mStat
-    inputAccess path (AccessTypeModeOnly, mStat) = InputAccessModeOnly <$> fileModeDescOfMStat path mStat
+    inputAccess path (AccessTypeFull, mStat) = Db.InputAccessFull <$> fileDescOfMStat path mStat
+    inputAccess path (AccessTypeModeOnly, mStat) = Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
@@ -294,15 +264,15 @@ applyExecutionLog buildsome target outputs stdOutputs
     verifyTargetOutputs buildsome outputs target
 
 tryApplyExecutionLog ::
-  Buildsome -> Target -> Parents -> ExecutionLog ->
+  Buildsome -> Target -> Parents -> Db.ExecutionLog ->
   IO (Either (String, FilePath) ())
-tryApplyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsDescs stdOutputs) = do
+tryApplyExecutionLog buildsome target parents (Db.ExecutionLog inputsDescs outputsDescs stdOutputs) = do
   waitForInputs
   runEitherT $ do
     forM_ (M.toList inputsDescs) $ \(filePath, oldInputAccess) ->
       case oldInputAccess of
-        InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     filePath oldDesc
-        InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc filePath oldModeDesc
+        Db.InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     filePath oldDesc
+        Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc filePath oldModeDesc
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
@@ -316,6 +286,8 @@ tryApplyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsD
     compareToNewDesc str getNewDesc filePath oldDesc = do
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
+    inputAccessToType Db.InputAccessModeOnly {} = AccessTypeModeOnly
+    inputAccessToType Db.InputAccessFull {} = AccessTypeFull
     waitForInputs = do
       -- TODO: This is good for parallelism, but bad if the set of
       -- inputs changed, as it may build stuff that's no longer
@@ -335,7 +307,7 @@ tryApplyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsD
 -- in order
 findApplyExecutionLog :: Buildsome -> Target -> Parents -> IO Bool
 findApplyExecutionLog buildsome target parents = do
-  mExecutionLog <- getKey buildsome (targetKey target)
+  mExecutionLog <- Db.readExecutionLog (bsDb buildsome) target
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return False
@@ -404,25 +376,14 @@ spawnSlave buildsome target reason parents restoreMask = do
   where
     annotate = annotateException ("build failure of " ++ show (targetOutputs target))
 
-registeredOutputsKey :: ByteString
-registeredOutputsKey = BS.pack "outputs"
-
-getRegisteredOutputs :: Buildsome -> IO (Set FilePath)
-getRegisteredOutputs buildsome =
-  fromMaybe S.empty <$> getKey buildsome registeredOutputsKey
-
-setRegisteredOutputs :: Buildsome -> Set FilePath -> IO ()
-setRegisteredOutputs buildsome outputs =
-  setKey buildsome registeredOutputsKey outputs
-
 registerOutputs :: Buildsome -> Set FilePath -> IO ()
 registerOutputs buildsome outputPaths = do
-  outputs <- getRegisteredOutputs buildsome
-  setRegisteredOutputs buildsome $ outputPaths <> outputs
+  outputs <- Db.readRegisteredOutputs (bsDb buildsome)
+  Db.writeRegisteredOutputs (bsDb buildsome) $ outputPaths <> outputs
 
 deleteRemovedOutputs :: Buildsome -> IO ()
 deleteRemovedOutputs buildsome = do
-  outputs <- getRegisteredOutputs buildsome
+  outputs <- Db.readRegisteredOutputs (bsDb buildsome)
   liveOutputs <-
     fmap mconcat .
     forM (S.toList outputs) $ \output ->
@@ -432,7 +393,7 @@ deleteRemovedOutputs buildsome = do
         putStrLn $ "Removing old output: " ++ show output
         removeFileAllowNotExists output
         return S.empty
-  setRegisteredOutputs buildsome liveOutputs
+  Db.writeRegisteredOutputs (bsDb buildsome) liveOutputs
 
 runCmd ::
   Buildsome -> Target -> Parents ->
@@ -469,13 +430,6 @@ runCmd buildsome target parents inputsRef outputsRef cmd = do
   putStrLn $ concat ["  } ", show cmd]
   return stdOutputs
 
-withDb :: FilePath -> (Sophia.Db -> IO a) -> IO a
-withDb dbFileName body = do
-  Sophia.withEnv $ \env -> do
-    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation dbFileName
-    Sophia.withDb env $ \db ->
-      body db
-
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
 
@@ -483,7 +437,7 @@ main :: IO ()
 main = do
   opt <- getOpt
   makefile <- Makefile.parse (optMakefilePath opt)
-  withDb (buildDbFilename (optMakefilePath opt)) $ \db -> do
+  Db.with (buildDbFilename (optMakefilePath opt)) $ \db -> do
     withBuildsome db makefile opt $
       \buildsome -> do
       deleteRemovedOutputs buildsome
