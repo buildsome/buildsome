@@ -23,7 +23,7 @@ import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FSHook (FSHook)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc, FileModeDesc, fileModeDescOfMStat, getFileModeDesc)
-import Lib.FilePath ((</>), removeRedundantParents)
+import Lib.FilePath ((</>), canonicalizePath)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
@@ -36,10 +36,10 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
+import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
 import qualified System.Directory as Dir
-import qualified Lib.BuildMaps as BuildMaps
 
 data Explicitness = Explicit | Implicit
   deriving (Eq)
@@ -89,11 +89,6 @@ recordInput inputsRef accessType path = do
     M.insertWith
     (\_ (oldAccessType, oldMStat) ->
      (FSHook.higherAccessType accessType oldAccessType, oldMStat)) path (accessType, mstat)
-
-canonicalizePath :: FilePath -> IO FilePath
-canonicalizePath path = do
-  curDir <- Dir.getCurrentDirectory
-  Dir.makeRelativeToCurrentDirectory $ removeRedundantParents (curDir </> path)
 
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
