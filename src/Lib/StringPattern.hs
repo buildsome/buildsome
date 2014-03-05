@@ -19,7 +19,7 @@ newtype Match = Match
   }
 
 match :: StringPattern -> String -> Maybe Match
-match (StringPattern prefix suffix) string = do
+match (StringPattern prefix suffix) string =
   Match <$> (unprefixed prefix string >>= unsuffixed suffix)
 
 plug :: Match -> StringPattern -> String

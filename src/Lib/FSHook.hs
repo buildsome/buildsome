@@ -109,7 +109,7 @@ sendGo :: Socket -> IO ()
 sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 
 handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Func -> IO ()
-handleJobMsg _tidStr conn job msg = do
+handleJobMsg _tidStr conn job msg =
   case msg of
     -- outputs
     Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
@@ -141,7 +141,7 @@ handleJobMsg _tidStr conn job msg = do
   where
     actDesc = Protocol.showFunc msg ++ " done by " ++ show (jobCmd job)
     forwardExceptions =
-      flip E.catch $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
+      E.handle $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
     reportInput accessType path =
       (`E.finally` sendGo conn) $
       forwardExceptions $ jobHandleInput job accessType actDesc path
@@ -175,8 +175,7 @@ shellCmdVerify inheritEnvs newEnvs cmd = do
   let stdouts = StdOutputs stdout stderr
   printStdouts stdouts
   case exitCode of
-    ExitFailure {} -> do
-      fail $ concat [show cmd, " failed!"]
+    ExitFailure {} -> fail $ show cmd ++ " failed!"
     _ -> return stdouts
 
 runCommand :: FSHook -> String -> InputHandler -> OutputHandler -> IO StdOutputs

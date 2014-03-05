@@ -10,7 +10,7 @@ main = do
   [dbDir] <- getArgs
   withEnv $ \env -> do
     openDir env ReadOnly DisallowCreation dbDir
-    withDb env $ \db -> do
+    withDb env $ \db ->
       withCursor db Sophia.GT "" $ \cursor -> do
         rows <- fetchCursorAll cursor
         forM rows $ \(key, val) ->

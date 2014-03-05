@@ -69,6 +69,9 @@ showFunc (SymLink target linkpath) = unwords ["symlink:", show target, show link
 showFunc (Link src dest) = unwords ["link:", show src, show dest]
 showFunc (Chown path uid gid) = unwords ["chown:", show path, show uid, show gid]
 
+{-# ANN module "HLint: ignore Use ++" #-}
+{-# ANN module "HLint: ignore Use camelCase" #-}
+
 mAX_PATH :: Int
 mAX_PATH = 256
 
@@ -119,7 +122,7 @@ parseMsgLazy = runGet $ do
   let (_name, getter) = funcs ! fromIntegral funcId
   func <- getter
   finished <- isEmpty
-  when (not finished) $ fail "Unexpected trailing input in message"
+  unless finished $ fail "Unexpected trailing input in message"
   return func
 
 strictToLazy :: BS.ByteString -> BSL.ByteString

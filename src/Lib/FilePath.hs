@@ -5,7 +5,7 @@ import qualified System.FilePath as FilePath
 
 removeRedundantParents :: FilePath -> FilePath
 removeRedundantParents =
-  FilePath.joinPath . foldr step [] . map FilePath.dropTrailingPathSeparator . FilePath.splitPath
+  FilePath.joinPath . foldr (step . FilePath.dropTrailingPathSeparator) [] . FilePath.splitPath
   where
     step "/" xs = "/" : xs
     step ".." xs = ".." : xs

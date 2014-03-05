@@ -274,19 +274,18 @@ tryApplyExecutionLog buildsome target parents (Db.ExecutionLog inputsDescs outpu
   runEitherT $ do
     forM_ (M.toList inputsDescs) $ \(filePath, oldInputAccess) ->
       case oldInputAccess of
-        Db.InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     filePath oldDesc
-        Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc filePath oldModeDesc
+        Db.InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     (filePath, oldDesc)
+        Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc (filePath, oldModeDesc)
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
-    forM_ (M.toList outputsDescs) $ \(filePath, oldDesc) -> do
-      compareToNewDesc "output" getFileDesc filePath oldDesc
+    mapM_ (compareToNewDesc "output" getFileDesc) $ M.toList outputsDescs
 
     liftIO $
       applyExecutionLog buildsome target
       (M.keysSet outputsDescs) stdOutputs
   where
-    compareToNewDesc str getNewDesc filePath oldDesc = do
+    compareToNewDesc str getNewDesc (filePath, oldDesc) = do
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
     inputAccessToType Db.InputAccessModeOnly {} = AccessTypeModeOnly
@@ -334,18 +333,16 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
   | any ((== targetRep) . fst) parents = fail $ "Target loop: " ++ showParents newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
-    E.mask $ \restoreMask -> do
-      getSlave <-
-        atomicModifyIORef (bsSlaveByRepPath buildsome) $
-        \oldSlaveMap ->
-        case M.lookup targetRep oldSlaveMap of
-        Nothing ->
-          ( M.insert targetRep newSlaveMVar oldSlaveMap
-          , resultIntoMVar newSlaveMVar =<<
-            spawnSlave buildsome target reason newParents restoreMask
-          )
-        Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
-      getSlave
+    E.mask $ \restoreMask -> join $
+      atomicModifyIORef (bsSlaveByRepPath buildsome) $
+      \oldSlaveMap ->
+      case M.lookup targetRep oldSlaveMap of
+      Nothing ->
+        ( M.insert targetRep newSlaveMVar oldSlaveMap
+        , resultIntoMVar newSlaveMVar =<<
+          spawnSlave buildsome target reason newParents restoreMask
+        )
+      Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
     where
       newParents = (targetRep, reason) : parents
       resultIntoMVar mvar x = putMVar mvar x >> return x
@@ -372,7 +369,7 @@ buildTarget buildsome target reason parents = do
   registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
   verifyTargetOutputs buildsome outputs target
   saveExecutionLog buildsome target inputs outputs stdOutputs
-  putStrLn $ concat ["} ", show (targetOutputs target)]
+  putStrLn $ "} " ++ show (targetOutputs target)
 
 -- Spawn a new slave for a target
 spawnSlave :: Buildsome -> Target -> Reason -> Parents -> (IO () -> IO ()) -> IO Slave
@@ -437,7 +434,7 @@ runCmd buildsome target parents inputsRef outputsRef cmd = do
   stdOutputs <-
     FSHook.runCommand (bsFsHook buildsome) cmd
     handleInputRaw handleOutputRaw
-  putStrLn $ concat ["  } ", show cmd]
+  putStrLn $ "  } " ++ show cmd
   return stdOutputs
 
 buildDbFilename :: FilePath -> FilePath
@@ -447,7 +444,7 @@ main :: IO ()
 main = do
   opt <- getOpt
   makefile <- Makefile.parse (optMakefilePath opt)
-  Db.with (buildDbFilename (optMakefilePath opt)) $ \db -> do
+  Db.with (buildDbFilename (optMakefilePath opt)) $ \db ->
     withBuildsome db makefile opt $
       \buildsome -> do
       deleteRemovedOutputs buildsome

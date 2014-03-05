@@ -243,7 +243,7 @@ targetPattern outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
   cmdLines <- P.many cmdLine
-  return $ Target
+  return Target
     { targetOutputs = map mkOutputPattern outputPaths
     , targetInputs = inputPats
     , targetOrderOnlyInputs = orderOnlyInputPats
@@ -271,7 +271,7 @@ targetSimple :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
 targetSimple outputPaths inputPaths orderOnlyInputs = do
   cmdLines <- P.many cmdLine
   -- Immediately interpolate cmdLine metaVars (after having expanded ordinary vars):
-  return $ interpolateCmds Nothing $ Target
+  return $ interpolateCmds Nothing Target
     { targetOutputs = outputPaths
     , targetInputs = inputPaths
     , targetOrderOnlyInputs = orderOnlyInputs

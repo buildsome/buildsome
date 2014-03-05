@@ -46,7 +46,7 @@ getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
 getKey (Db db) key = fmap (runGet get) <$> Sophia.getValue db key
 
 with :: FilePath -> (Db -> IO a) -> IO a
-with dbFileName body = do
+with dbFileName body =
   Sophia.withEnv $ \env -> do
     Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation dbFileName
     Sophia.withDb env $ \db ->
@@ -60,12 +60,10 @@ readRegisteredOutputs db =
   fromMaybe S.empty <$> getKey db registeredOutputsKey
 
 writeRegisteredOutputs :: Db -> Set FilePath -> IO ()
-writeRegisteredOutputs db outputs =
-  setKey db registeredOutputsKey outputs
+writeRegisteredOutputs db = setKey db registeredOutputsKey
 
 writeExecutionLog :: Db -> Target -> ExecutionLog -> IO ()
-writeExecutionLog db target execLog =
-  setKey db (targetKey target) execLog
+writeExecutionLog db = setKey db . targetKey
 
 readExecutionLog :: Db -> Target -> IO (Maybe ExecutionLog)
 readExecutionLog db = getKey db . targetKey

@@ -14,8 +14,8 @@ type Env = [(String, String)]
 
 -- | Create a process, and kill it when leaving the given code section
 withProcess :: CreateProcess -> ((Maybe Handle, Maybe Handle, Maybe Handle, ProcessHandle) -> IO a) -> IO a
-withProcess params body =
-  E.bracket (createProcess params) terminate body
+withProcess params =
+  E.bracket (createProcess params) terminate
   where
     terminate (mStdin, mStdout, mStderr, processHandle) = do
       (traverse_ . traverse_) hClose [mStdin, mStdout, mStderr]

@@ -4,7 +4,7 @@ module Lib.Sock
   , withUnixSeqPacketListener
   ) where
 
-import Control.Monad (when)
+import Control.Monad (unless)
 import Network.Socket (Socket)
 import System.Directory (removeFile)
 import qualified Control.Exception as E
@@ -15,7 +15,7 @@ import qualified Network.Socket.ByteString as SockBS
 recvLoop_ :: Int -> (BS.ByteString -> IO ()) -> Socket -> IO ()
 recvLoop_ maxFrameSize f sock = do
   frame <- SockBS.recv sock maxFrameSize
-  when (not (BS.null frame)) $ do
+  unless (BS.null frame) $ do
     f frame
     recvLoop_ maxFrameSize f sock
 

@@ -67,7 +67,7 @@ fileDescOfMStat path oldMStat = do
     _ -> return Nothing
   -- Verify file did not change since we took its first mtime:
   newMStat <- getMFileStatus path
-  when (not (compareMTimes oldMStat newMStat)) $ fail $
+  unless (compareMTimes oldMStat newMStat) $ fail $
     show path ++ " changed during build!"
   case newMStat of
     Nothing -> return NoFile
