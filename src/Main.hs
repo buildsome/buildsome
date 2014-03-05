@@ -235,10 +235,6 @@ targetKey :: Target -> ByteString
 targetKey target =
   MD5.hash $ BS.pack (unlines (targetCmds target)) -- TODO: Canonicalize commands (whitespace/etc)
 
-newtype FileMode = FileMode Int
-  deriving (Generic, Show)
-instance Binary FileMode
-
 data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
   deriving (Generic, Show)
 instance Binary InputAccess
