@@ -16,6 +16,7 @@ import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
 import GHC.Generics (Generic)
+import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
 import Lib.Binary (runGet, runPut)
@@ -81,7 +82,7 @@ isLegalOutput target path =
   path `elem` targetOutputs target ||
   allowedUnspecifiedOutput path
 
-recordInput :: IORef (Map FilePath (FSHook.AccessType, Maybe FileStatus)) -> FSHook.AccessType -> FilePath -> IO ()
+recordInput :: IORef (Map FilePath (AccessType, Maybe FileStatus)) -> AccessType -> FilePath -> IO ()
 recordInput inputsRef accessType path = do
   mstat <- getMFileStatus path
   atomicModifyIORef'_ inputsRef $
@@ -89,7 +90,7 @@ recordInput inputsRef accessType path = do
     -- the final mtime to the oldest one
     M.insertWith
     (\_ (oldAccessType, oldMStat) ->
-     (FSHook.higherAccessType accessType oldAccessType, oldMStat)) path (accessType, mstat)
+     (max accessType oldAccessType, oldMStat)) path (accessType, mstat)
 
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
@@ -174,13 +175,13 @@ makeChildSlaves buildsome reason parents path
       BuildMaps.findDirectory (bsBuildMaps buildsome) path
 
 makeSlavesForAccessType ::
-  FSHook.AccessType -> Buildsome -> Explicitness -> Reason ->
+  AccessType -> Buildsome -> Explicitness -> Reason ->
   Parents -> FilePath -> IO [Slave]
 makeSlavesForAccessType accessType buildsome explicitness reason parents path =
   case accessType of
-  FSHook.AccessTypeFull ->
+  AccessTypeFull ->
     makeSlaves buildsome explicitness reason parents path
-  FSHook.AccessTypeModeOnly ->
+  AccessTypeModeOnly ->
     maybeToList <$> makeDirectSlave buildsome explicitness reason parents path
 
 makeSlaves :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
@@ -240,9 +241,9 @@ data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
   deriving (Generic, Show)
 instance Binary InputAccess
 
-inputAccessToType :: InputAccess -> FSHook.AccessType
-inputAccessToType InputAccessModeOnly {} = FSHook.AccessTypeModeOnly
-inputAccessToType InputAccessFull {} = FSHook.AccessTypeFull
+inputAccessToType :: InputAccess -> AccessType
+inputAccessToType InputAccessModeOnly {} = AccessTypeModeOnly
+inputAccessToType InputAccessFull {} = AccessTypeFull
 
 data ExecutionLog = ExecutionLog
   { _elInputsDescs :: Map FilePath InputAccess
@@ -258,7 +259,7 @@ getKey :: Binary a => Buildsome -> ByteString -> IO (Maybe a)
 getKey buildsome key = fmap (runGet get) <$> Sophia.getValue (bsDb buildsome) key
 
 saveExecutionLog ::
-  Buildsome -> Target -> Map FilePath (FSHook.AccessType, Maybe FileStatus) -> Set FilePath ->
+  Buildsome -> Target -> Map FilePath (AccessType, Maybe FileStatus) -> Set FilePath ->
   [StdOutputs] -> IO ()
 saveExecutionLog buildsome target inputs outputs stdOutputs = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
@@ -269,8 +270,8 @@ saveExecutionLog buildsome target inputs outputs stdOutputs = do
   let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs) stdOutputs
   setKey buildsome (targetKey target) execLog
   where
-    inputAccess path (FSHook.AccessTypeFull, mStat) = InputAccessFull <$> fileDescOfMStat path mStat
-    inputAccess path (FSHook.AccessTypeModeOnly, mStat) = InputAccessModeOnly <$> fileModeDescOfMStat path mStat
+    inputAccess path (AccessTypeFull, mStat) = InputAccessFull <$> fileDescOfMStat path mStat
+    inputAccess path (AccessTypeModeOnly, mStat) = InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
@@ -436,7 +437,7 @@ deleteRemovedOutputs buildsome = do
 runCmd ::
   Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
-  IORef (Map FilePath (FSHook.AccessType, Maybe FileStatus)) ->
+  IORef (Map FilePath (AccessType, Maybe FileStatus)) ->
   IORef (Set FilePath) ->
   String -> IO StdOutputs
 runCmd buildsome target parents inputsRef outputsRef cmd = do

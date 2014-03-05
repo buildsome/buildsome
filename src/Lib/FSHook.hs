@@ -1,7 +1,6 @@
 module Lib.FSHook
   ( FSHook
   , with
-  , AccessType(..), higherAccessType
   , AccessDoc
   , runCommand
   ) where
@@ -14,6 +13,7 @@ import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
 import Filesystem.Path.CurrentOS (encodeString)
+import Lib.AccessType (AccessType(..))
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
@@ -37,13 +37,6 @@ import qualified System.Directory as Dir
 type AccessDoc = String
 
 type JobId = ByteString
-
-data AccessType
-  = AccessTypeFull -- open, stat, opendir, etc.  Depend on the content, and if directory, on the file listing
-  | AccessTypeModeOnly -- access, readlink.  Depend on its existence/permission-modes only. If directory, does not depend on file listing
-higherAccessType :: AccessType -> AccessType -> AccessType
-higherAccessType AccessTypeModeOnly AccessTypeModeOnly = AccessTypeModeOnly
-higherAccessType _ _ = AccessTypeFull
 
 type InputHandler = AccessType -> AccessDoc -> FilePath -> IO ()
 type OutputHandler = AccessDoc -> FilePath -> IO ()
