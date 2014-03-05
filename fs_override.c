@@ -41,8 +41,8 @@ static int connect_master(void)
     char *env_sockaddr = getenv(PREFIX "MASTER_UNIX_SOCKADDR");
     ASSERT(env_sockaddr);
 
-    char *env_slave_id = getenv(PREFIX "CMD_ID");
-    ASSERT(env_slave_id);
+    char *env_job_id = getenv(PREFIX "JOB_ID");
+    ASSERT(env_job_id);
 
     struct sockaddr_un addr = {
         .sun_family = AF_UNIX,
@@ -55,9 +55,9 @@ static int connect_master(void)
     ASSERT(0 == connect_rc);
 
     #define HELLO "HELLO, I AM: "
-    char hello[strlen(HELLO) + strlen(env_slave_id) + 16];
+    char hello[strlen(HELLO) + strlen(env_job_id) + 16];
     hello[sizeof hello-1] = 0;
-    int len = snprintf(hello, sizeof hello-1, HELLO "%d:%d:%s", getpid(), gettid(), env_slave_id);
+    int len = snprintf(hello, sizeof hello-1, HELLO "%d:%d:%s", getpid(), gettid(), env_job_id);
     ssize_t send_rc = send(fd, hello, len, 0);
     ASSERT(send_rc == len);
     return fd;

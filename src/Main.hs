@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveGeneric, DeriveDataTypeable, GeneralizedNewtypeDeriving #-}
 import Control.Applicative ((<$>))
-import Control.Concurrent (ThreadId, myThreadId)
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
@@ -18,26 +17,19 @@ import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
-import Filesystem.Path.CurrentOS (encodeString)
 import GHC.Generics (Generic)
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
 import Lib.Binary (runGet, runPut)
-import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
+import Lib.FSHook (FSHook)
 import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc, FileModeDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), removeRedundantParents)
-import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
+import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
-import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
-import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
-import System.Argv0 (getArgv0)
-import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (<.>))
 import System.Posix.Files (FileStatus)
-import System.Posix.Process (getProcessID)
-import System.Process (CmdSpec(..))
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
@@ -45,12 +37,8 @@ import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
-import qualified Lib.AsyncContext as AsyncContext
+import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
-import qualified Lib.Process as Process
-import qualified Lib.Protocol as Protocol
-import qualified Network.Socket as Sock
-import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
 
 newtype TargetRep = TargetRep FilePath -- We use the minimum output path as the target key/representative
@@ -63,23 +51,10 @@ data Explicitness = Explicit | Implicit
 
 type Parents = [(TargetRep, Reason)]
 type Reason = String
-type CmdId = ByteString
 
 data Slave = Slave
   { _slaveTarget :: Target
   , slaveExecution :: Async ()
-  }
-
-data ExecutingCommand = ExecutingCommand
-  { ecCmd :: String
-  , ecThreadId :: ThreadId
-  , ecTarget :: Target
-  , ecParents :: Parents
-  , -- For each input file, record modification time before input is
-    -- used, to compare it after cmd is done
-    ecInputs :: IORef (Map FilePath (AccessType, Maybe FileStatus))
-  , ecOutputs :: IORef (Set FilePath)
-  , ecActiveConnections :: IORef [MVar ()]
   }
 
 data DirectoryBuildMap = DirectoryBuildMap
@@ -97,23 +72,17 @@ data BuildMaps = BuildMaps
   }
 
 data Buildsome = Buildsome
-  { bsRunningCmds :: IORef (Map CmdId ExecutingCommand)
-  , bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
-  , bsAddress :: FilePath -- unix socket server
-  , bsLdPreloadPath :: FilePath
+  { bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
   , bsDeleteUnspecifiedOutput :: DeleteUnspecifiedOutputs
   , bsBuildMaps :: BuildMaps
-  , bsCurJobId :: IORef Int
   , bsRestrictedParallelism :: MSem Int
   , bsDb :: Sophia.Db
   , bsMakefile :: Makefile
+  , bsFsHook :: FSHook
   }
 
 slaveWait :: Slave -> IO ()
 slaveWait = wait . slaveExecution
-
-sendGo :: Socket -> IO ()
-sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 
 -- | Opposite of MSem.with
 localSemSignal :: MSem Int -> IO a -> IO a
@@ -133,125 +102,19 @@ isLegalOutput target path =
   path `elem` targetOutputs target ||
   allowedUnspecifiedOutput path
 
-serve :: Buildsome -> Socket -> IO ()
-serve buildsome conn = do
-  helloLine <- SockBS.recv conn 1024
-  case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
-    Nothing -> fail $ "Bad connection started with: " ++ show helloLine
-    Just pidCmdId -> do
-      runningCmds <- readIORef (bsRunningCmds buildsome)
-      case M.lookup cmdId runningCmds of
-        Nothing -> do
-          let cmdIds = M.keys runningCmds
-          fail $ "Bad slave id: " ++ show cmdId ++ " mismatches all: " ++ show cmdIds
-        Just ec -> handleCmdConnection buildsome fullTidStr conn ec
-      where
-        fullTidStr = BS.unpack pidStr ++ ":" ++ BS.unpack tidStr
-        [pidStr, tidStr, cmdId] = BS.split ':' pidCmdId
-
-maxMsgSize :: Int
-maxMsgSize = 8192
-
-handleCmdConnection :: Buildsome -> String -> Socket -> ExecutingCommand -> IO ()
-handleCmdConnection buildsome tidStr conn ec = do
-  -- This lets us know for sure that by the time the slave dies,
-  -- we've seen its connection
-  connFinishedMVar <- newEmptyMVar
-  atomicModifyIORef_ (ecActiveConnections ec) (connFinishedMVar:)
-  protect connFinishedMVar $ do
-    sendGo conn
-    recvLoop_ maxMsgSize
-      (handleCmdMsg buildsome tidStr conn ec . Protocol.parseMsg) conn
-  where
-    protect mvar act = act `E.finally` putMVar mvar ()
-
-recordInput :: ExecutingCommand -> AccessType -> FilePath -> IO ()
-recordInput ec accessType path = do
+recordInput :: IORef (Map FilePath (FSHook.AccessType, Maybe FileStatus)) -> FSHook.AccessType -> FilePath -> IO ()
+recordInput inputsRef accessType path = do
   mstat <- getMFileStatus path
-  atomicModifyIORef'_ (ecInputs ec) $
+  atomicModifyIORef'_ inputsRef $
     -- Keep the older mtime in the map, and we'll eventually compare
     -- the final mtime to the oldest one
     M.insertWith
     (\_ (oldAccessType, oldMStat) ->
-     (higherAccessType accessType oldAccessType, oldMStat)) path (accessType, mstat)
-
-recordOutput :: ExecutingCommand -> FilePath -> IO ()
-recordOutput ec path =
-  atomicModifyIORef'_ (ecOutputs ec) $ S.insert path
-
-recordedOutputs :: ExecutingCommand -> IO (Set FilePath)
-recordedOutputs = readIORef . ecOutputs
+     (FSHook.higherAccessType accessType oldAccessType, oldMStat)) path (accessType, mstat)
 
 data InvalidCmdOperation = InvalidCmdOperation String
   deriving (Show, Typeable)
 instance E.Exception InvalidCmdOperation
-
-data AccessType
-  = AccessTypeFull -- open, stat, opendir, etc.  Depend on the content, and if directory, on the file listing
-  | AccessTypeModeOnly -- access, readlink.  Depend on its existence/permission-modes only. If directory, does not depend on file listing
-higherAccessType :: AccessType -> AccessType -> AccessType
-higherAccessType AccessTypeModeOnly AccessTypeModeOnly = AccessTypeModeOnly
-higherAccessType _ _ = AccessTypeFull
-
-handleCmdMsg ::
-  Buildsome -> String -> Socket -> ExecutingCommand -> Protocol.Func -> IO ()
-handleCmdMsg buildsome _tidStr conn ec msg = do
-  case msg of
-    -- outputs
-    Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
-    Protocol.Open path _ (Protocol.Create _) -> reportOutput path
-    Protocol.Creat path _ -> reportOutput path
-    Protocol.Rename a b -> reportOutput a >> reportOutput b
-    Protocol.Unlink path -> reportOutput path
-    Protocol.Truncate path _ -> reportOutput path
-    Protocol.Chmod path _ -> reportOutput path
-    Protocol.Chown path _ _ -> reportOutput path
-    Protocol.MkNod path _ _ -> reportOutput path -- TODO: Special mkNod handling?
-    Protocol.MkDir path _ -> reportOutput path
-    Protocol.RmDir path -> reportOutput path
-
-    -- I/O
-    Protocol.SymLink target linkPath -> reportOutput linkPath >> reportInput AccessTypeFull target
-    Protocol.Link src dest ->
-      failCmd $ unwords ["Hard links not supported:", show src, "->", show dest]
-      -- TODO: Record the fact it's a link
-      --reportOutput dest >> reportInput src
-
-    -- inputs
-    Protocol.Open path Protocol.OpenReadMode _creationMode -> reportInput AccessTypeFull path
-    Protocol.Access path _mode -> reportInput AccessTypeModeOnly path
-    Protocol.Stat path -> reportInput AccessTypeFull path
-    Protocol.LStat path -> reportInput AccessTypeFull path
-    Protocol.OpenDir path -> reportInput AccessTypeFull path
-    Protocol.ReadLink path -> reportInput AccessTypeModeOnly path
-  where
-    failCmd = E.throwTo (ecThreadId ec) . InvalidCmdOperation
-    reason = Protocol.showFunc msg ++ " done by " ++ show (ecCmd ec)
-
-    reportInput accessType fullPath = do
-      (`E.finally` sendGo conn) $ forwardExceptions $
-        handleInput accessType =<<
-        canonicalizePath fullPath
-    reportOutput fullPath =
-      forwardExceptions $
-      recordOutput ec =<<
-      canonicalizePath fullPath
-    forwardExceptions =
-      flip E.catch $ \e@E.SomeException {} -> E.throwTo (ecThreadId ec) e
-    handleInput accessType path
-      | inputIgnored path = return ()
-        -- There's no problem for a target to read its own outputs
-        -- freely:
-      | otherwise = do
-        actualOutputs <- recordedOutputs ec
-        unless (path `S.member` actualOutputs) $ do
-          slaves <- makeSlavesForAccessType accessType buildsome Implicit reason (ecParents ec) path
-          -- Temporarily paused, so we can temporarily release parallelism
-          -- semaphore
-          unless (null slaves) $ withReleasedParallelism buildsome $
-            traverse_ slaveWait slaves
-          unless (isLegalOutput (ecTarget ec) path) $
-            recordInput ec accessType path
 
 canonicalizePath :: FilePath -> IO FilePath
 canonicalizePath path = do
@@ -290,41 +153,28 @@ toBuildMaps makefile = BuildMaps buildMap childrenMap
       | (outputPath, target) <- outputs ]
 
 withBuildsome ::
-  Sophia.Db -> Makefile -> Opt ->
-  FilePath -> (Buildsome -> IO a) -> IO a
-withBuildsome db makefile opt ldPreloadPath body = do
-  runningCmds <- newIORef M.empty
+  Sophia.Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
+withBuildsome db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
-  bsPid <- getProcessID
-  let serverFilename = "/tmp/efbuild-" ++ show bsPid
-  curJobId <- newIORef 0
   semaphore <- MSem.new parallelism
-  let
-    buildsome =
-      Buildsome
-      { bsRunningCmds = runningCmds
-      , bsSlaveByRepPath = slaveMapByRepPath
-      , bsAddress = serverFilename
-      , bsLdPreloadPath = ldPreloadPath
-      , bsBuildMaps = toBuildMaps makefile
-      , bsCurJobId = curJobId
-      , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
-      , bsRestrictedParallelism = semaphore
-      , bsDb = db
-      , bsMakefile = makefile
-      }
-
-  finalUpdateGitIgnore buildsome $
-    withUnixSeqPacketListener serverFilename $ \listener ->
-    AsyncContext.new $ \ctx -> do
-      _ <- AsyncContext.spawn ctx $ forever $ do
-        (conn, _srcAddr) <- Sock.accept listener
-        AsyncContext.spawn ctx $ serve buildsome conn
-      body buildsome
+  FSHook.with $ \fsHook -> do
+    let
+      buildsome =
+        Buildsome
+        { bsSlaveByRepPath = slaveMapByRepPath
+        , bsBuildMaps = toBuildMaps makefile
+        , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
+        , bsRestrictedParallelism = semaphore
+        , bsDb = db
+        , bsMakefile = makefile
+        , bsFsHook = fsHook
+        }
+    body buildsome
+      `E.finally` maybeUpdateGitIgnore buildsome
   where
-    finalUpdateGitIgnore buildsome
-      | writeGitIgnore = (`E.finally` updateGitIgnore buildsome makefilePath)
-      | otherwise = id
+    maybeUpdateGitIgnore buildsome
+      | writeGitIgnore = updateGitIgnore buildsome makefilePath
+      | otherwise = return ()
     parallelism = fromMaybe 1 mParallelism
     Opt makefilePath mParallelism writeGitIgnore deleteUnspecifiedOutput = opt
 
@@ -334,15 +184,6 @@ updateGitIgnore buildsome makefilePath = do
   let gitIgnorePath = takeDirectory makefilePath </> ".gitignore"
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
   writeFile gitIgnorePath $ unlines $ extraIgnored ++ S.toList outputs
-
-getLdPreloadPath :: IO FilePath
-getLdPreloadPath = do
-  argv0 <- encodeString <$> getArgv0
-  Dir.canonicalizePath (takeDirectory argv0 </> "fs_override.so")
-
-nextJobId :: Buildsome -> IO Int
-nextJobId buildsome =
-  atomicModifyIORef (bsCurJobId buildsome) $ \oldJobId -> (oldJobId+1, oldJobId)
 
 need :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
 need buildsome explicitness reason parents paths = do
@@ -391,11 +232,15 @@ makeChildSlaves buildsome reason parents path
     BuildMaps _ childrenMap = bsBuildMaps buildsome
     DirectoryBuildMap childTargets childPatterns = M.findWithDefault mempty path childrenMap
 
-makeSlavesForAccessType :: AccessType -> Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
+makeSlavesForAccessType ::
+  FSHook.AccessType -> Buildsome -> Explicitness -> Reason ->
+  Parents -> FilePath -> IO [Slave]
 makeSlavesForAccessType accessType buildsome explicitness reason parents path =
   case accessType of
-  AccessTypeFull -> makeSlaves buildsome explicitness reason parents path
-  AccessTypeModeOnly -> maybeToList <$> makeDirectSlave buildsome explicitness reason parents path
+  FSHook.AccessTypeFull ->
+    makeSlaves buildsome explicitness reason parents path
+  FSHook.AccessTypeModeOnly ->
+    maybeToList <$> makeDirectSlave buildsome explicitness reason parents path
 
 makeSlaves :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
 makeSlaves buildsome explicitness reason parents path = do
@@ -458,20 +303,14 @@ data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
   deriving (Generic, Show)
 instance Binary InputAccess
 
-inputAccessToType :: InputAccess -> AccessType
-inputAccessToType InputAccessModeOnly {} = AccessTypeModeOnly
-inputAccessToType InputAccessFull {} = AccessTypeFull
-
-data StdOutputs = StdOutputs
-  { _stdOut :: ByteString
-  , _stdErr :: ByteString
-  } deriving (Generic, Show)
-instance Binary StdOutputs
+inputAccessToType :: InputAccess -> FSHook.AccessType
+inputAccessToType InputAccessModeOnly {} = FSHook.AccessTypeModeOnly
+inputAccessToType InputAccessFull {} = FSHook.AccessTypeFull
 
 data ExecutionLog = ExecutionLog
   { _elInputsDescs :: Map FilePath InputAccess
   , _elOutputsDescs :: Map FilePath FileDesc
-  , _elStdoutputs :: [StdOutputs] -- Of each command
+  , _elStdoutputs :: [FSHook.StdOutputs] -- Of each command
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 
@@ -482,8 +321,8 @@ getKey :: Binary a => Buildsome -> ByteString -> IO (Maybe a)
 getKey buildsome key = fmap (runGet get) <$> Sophia.getValue (bsDb buildsome) key
 
 saveExecutionLog ::
-  Buildsome -> Target -> Map FilePath (AccessType, Maybe FileStatus) -> Set FilePath ->
-  [StdOutputs] -> IO ()
+  Buildsome -> Target -> Map FilePath (FSHook.AccessType, Maybe FileStatus) -> Set FilePath ->
+  [FSHook.StdOutputs] -> IO ()
 saveExecutionLog buildsome target inputs outputs stdOutputs = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
@@ -493,8 +332,8 @@ saveExecutionLog buildsome target inputs outputs stdOutputs = do
   let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs) stdOutputs
   setKey buildsome (targetKey target) execLog
   where
-    inputAccess path (AccessTypeFull, mStat) = InputAccessFull <$> fileDescOfMStat path mStat
-    inputAccess path (AccessTypeModeOnly, mStat) = InputAccessModeOnly <$> fileModeDescOfMStat path mStat
+    inputAccess path (FSHook.AccessTypeFull, mStat) = InputAccessFull <$> fileDescOfMStat path mStat
+    inputAccess path (FSHook.AccessTypeModeOnly, mStat) = InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
@@ -503,7 +342,7 @@ targetAllInputs target =
 -- Already verified that the execution log is a match
 applyExecutionLog ::
   Buildsome -> TargetType FilePath FilePath ->
-  Set FilePath -> [StdOutputs] -> IO ()
+  Set FilePath -> [FSHook.StdOutputs] -> IO ()
 applyExecutionLog buildsome target outputs stdOutputs
   | length (targetCmds target) /= length stdOutputs =
     fail $ unwords
@@ -512,7 +351,7 @@ applyExecutionLog buildsome target outputs stdOutputs
   | otherwise = do
     forM_ (zip (targetCmds target) stdOutputs) $ \(cmd, outs) -> do
       putStrLn $ "{ REPLAY of " ++ show cmd
-      showStdouts outs
+      FSHook.printStdouts outs
 
     verifyTargetOutputs buildsome outputs target
 
@@ -606,7 +445,7 @@ spawnSlave buildsome target reason parents restoreMask = do
     then Slave target <$> async (return ())
     else do
       execution <- async . annotate . restoreMask $ do
-        putStrLn $ concat ["{ ", show (targetOutputs target)]
+        putStrLn $ concat ["{ ", show (targetOutputs target), " (", reason, ")"]
         mapM_ removeFileAllowNotExists $ targetOutputs target
         need buildsome Explicit
           ("Hint from " ++ show (take 1 (targetOutputs target))) parents
@@ -615,7 +454,7 @@ spawnSlave buildsome target reason parents restoreMask = do
         outputsRef <- newIORef S.empty
         stdOutputs <-
           withAllocatedParallelism buildsome $
-          mapM (runCmd buildsome target reason parents inputsRef outputsRef)
+          mapM (runCmd buildsome target parents inputsRef outputsRef)
           (targetCmds target)
         inputs <- readIORef inputsRef
         outputs <- readIORef outputsRef
@@ -674,57 +513,40 @@ deleteRemovedOutputs buildsome = do
         return S.empty
   setRegisteredOutputs buildsome liveOutputs
 
-showStdouts :: StdOutputs -> IO ()
-showStdouts (StdOutputs stdout stderr) = do
-  showOutput "STDOUT" stdout
-  showOutput "STDERR" stderr
-  where
-    showOutput name bs
-      | BS.null bs = return ()
-      | otherwise = do
-        putStrLn (name ++ ":")
-        BS.putStr bs
-
-shellCmdVerify :: [String] -> Process.Env -> String -> IO StdOutputs
-shellCmdVerify inheritEnvs newEnvs cmd = do
-  (exitCode, stdout, stderr) <-
-    Process.getOutputs (ShellCommand cmd) inheritEnvs newEnvs
-  let stdouts = StdOutputs stdout stderr
-  showStdouts stdouts
-  case exitCode of
-    ExitFailure {} -> do
-      fail $ concat [show cmd, " failed!"]
-    _ -> return stdouts
-
 runCmd ::
-  Buildsome -> Target -> Reason -> Parents ->
+  Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
-  IORef (Map FilePath (AccessType, Maybe FileStatus)) ->
+  IORef (Map FilePath (FSHook.AccessType, Maybe FileStatus)) ->
   IORef (Set FilePath) ->
-  String -> IO StdOutputs
-runCmd buildsome target reason parents inputsRef outputsRef cmd = do
-  activeConnections <- newIORef []
+  String -> IO FSHook.StdOutputs
+runCmd buildsome target parents inputsRef outputsRef cmd = do
+  putStrLn $ concat ["  { ", show cmd, ": "]
+  let
+    handleInputRaw accessType actDesc rawPath =
+      handleInput accessType actDesc =<< canonicalizePath rawPath
+    handleInput accessType actDesc path
+      | inputIgnored path = return ()
+      | otherwise = do
+        actualOutputs <- readIORef outputsRef
+        -- There's no problem for a target to read its own outputs freely:
+        unless (path `S.member` actualOutputs) $ do
+          slaves <- makeSlavesForAccessType accessType buildsome Implicit actDesc parents path
+          -- Temporarily paused, so we can temporarily release parallelism
+          -- semaphore
+          unless (null slaves) $ withReleasedParallelism buildsome $
+            traverse_ slaveWait slaves
+          unless (isLegalOutput target path) $
+            recordInput inputsRef accessType path
+    handleOutputRaw actDesc rawPath =
+      handleOutput actDesc =<< canonicalizePath rawPath
+    handleOutput _actDesc path =
+      atomicModifyIORef'_ outputsRef $ S.insert path
 
-  cmdIdNum <- nextJobId buildsome
-  let cmdId = BS.pack ("cmd" ++ show cmdIdNum)
-  tid <- myThreadId
-  let ec = ExecutingCommand cmd tid target parents inputsRef outputsRef activeConnections
-  putStrLn $ concat ["  { ", show cmd, ": ", reason]
-  atomicModifyIORef_ (bsRunningCmds buildsome) $ M.insert cmdId ec
-  stdOutputs <- shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildsome cmdId) cmd
+  stdOutputs <-
+    FSHook.runCommand (bsFsHook buildsome) cmd
+    handleInputRaw handleOutputRaw
   putStrLn $ concat ["  } ", show cmd]
-
-  -- Give all connections a chance to complete and perhaps fail
-  -- this execution:
-  mapM_ readMVar =<< readIORef activeConnections
   return stdOutputs
-
-mkEnvVars :: Buildsome -> ByteString -> Process.Env
-mkEnvVars buildsome cmdId =
-    [ ("LD_PRELOAD", bsLdPreloadPath buildsome)
-    , ("EFBUILD_MASTER_UNIX_SOCKADDR", bsAddress buildsome)
-    , ("EFBUILD_CMD_ID", BS.unpack cmdId)
-    ]
 
 withDb :: FilePath -> (Sophia.Db -> IO a) -> IO a
 withDb dbFileName body = do
@@ -741,8 +563,7 @@ main = do
   opt <- getOpt
   makefile <- Makefile.parse (optMakefilePath opt)
   withDb (buildDbFilename (optMakefilePath opt)) $ \db -> do
-    ldPreloadPath <- getLdPreloadPath
-    withBuildsome db makefile opt ldPreloadPath $
+    withBuildsome db makefile opt $
       \buildsome -> do
       deleteRemovedOutputs buildsome
       case makefileTargets makefile of
