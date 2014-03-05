@@ -1,4 +1,4 @@
-module Lib.Process (shellCmdVerify, getOutputs, Env) where
+module Lib.Process (getOutputs, Env) where
 
 import Control.Concurrent.Async
 import Control.Monad
@@ -45,18 +45,3 @@ getOutputs cmd inheritedEnvs envs = do
         stdout <- wait stdoutReader
         stderr <- wait stderrReader
         return (exitCode, stdout, stderr)
-
-shellCmdVerify :: [String] -> Env -> String -> IO ()
-shellCmdVerify inheritEnvs newEnvs cmd = do
-  (exitCode, stdout, stderr) <- getOutputs (ShellCommand cmd) inheritEnvs newEnvs
-  showOutput "STDOUT" stdout
-  showOutput "STDERR" stderr
-  case exitCode of
-    ExitFailure {} -> fail $ concat [show cmd, " failed!"]
-    _ -> return ()
-  where
-    showOutput name bs
-      | BS.null bs = return ()
-      | otherwise = do
-        putStrLn (name ++ ":")
-        BS.putStr bs

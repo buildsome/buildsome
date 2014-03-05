@@ -29,14 +29,15 @@ import Lib.FileDesc (FileDesc, fileDescOfMStat, getFileDesc, FileModeDesc, fileM
 import Lib.FilePath ((</>), removeRedundantParents)
 import Lib.IORef (atomicModifyIORef_, atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
-import Lib.Process (shellCmdVerify)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.Argv0 (getArgv0)
+import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (<.>))
 import System.Posix.Files (FileStatus)
 import System.Posix.Process (getProcessID)
+import System.Process (CmdSpec(..))
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
@@ -461,9 +462,16 @@ inputAccessToType :: InputAccess -> AccessType
 inputAccessToType InputAccessModeOnly {} = AccessTypeModeOnly
 inputAccessToType InputAccessFull {} = AccessTypeFull
 
+data StdOutputs = StdOutputs
+  { _stdOut :: ByteString
+  , _stdErr :: ByteString
+  } deriving (Generic, Show)
+instance Binary StdOutputs
+
 data ExecutionLog = ExecutionLog
   { _elInputsDescs :: Map FilePath InputAccess
   , _elOutputsDescs :: Map FilePath FileDesc
+  , _elStdoutputs :: [StdOutputs] -- Of each command
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 
@@ -473,14 +481,16 @@ setKey buildsome key val = Sophia.setValue (bsDb buildsome) key $ runPut $ put v
 getKey :: Binary a => Buildsome -> ByteString -> IO (Maybe a)
 getKey buildsome key = fmap (runGet get) <$> Sophia.getValue (bsDb buildsome) key
 
-saveExecutionLog :: Buildsome -> Target -> Map FilePath (AccessType, Maybe FileStatus) -> Set FilePath -> IO ()
-saveExecutionLog buildsome target inputs outputs = do
+saveExecutionLog ::
+  Buildsome -> Target -> Map FilePath (AccessType, Maybe FileStatus) -> Set FilePath ->
+  [StdOutputs] -> IO ()
+saveExecutionLog buildsome target inputs outputs stdOutputs = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
     forM (S.toList outputs) $ \outPath -> do
       fileDesc <- getFileDesc outPath
       return (outPath, fileDesc)
-  let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs)
+  let execLog = ExecutionLog inputsDescs (M.fromList outputDescPairs) stdOutputs
   setKey buildsome (targetKey target) execLog
   where
     inputAccess path (AccessTypeFull, mStat) = InputAccessFull <$> fileDescOfMStat path mStat
@@ -490,13 +500,28 @@ targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
 
+-- Already verified that the execution log is a match
 applyExecutionLog ::
+  Buildsome -> TargetType FilePath FilePath ->
+  Set FilePath -> [StdOutputs] -> IO ()
+applyExecutionLog buildsome target outputs stdOutputs
+  | length (targetCmds target) /= length stdOutputs =
+    fail $ unwords
+    ["Invalid recorded standard outputs:", show target, show stdOutputs]
+
+  | otherwise = do
+    forM_ (zip (targetCmds target) stdOutputs) $ \(cmd, outs) -> do
+      putStrLn $ "{ REPLAY of " ++ show cmd
+      showStdouts outs
+
+    verifyTargetOutputs buildsome outputs target
+
+tryApplyExecutionLog ::
   Buildsome -> Target -> Parents -> ExecutionLog ->
   IO (Either (String, FilePath) ())
-applyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsDescs) =
+tryApplyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsDescs stdOutputs) = do
+  waitForInputs
   runEitherT $ do
-    liftIO waitForInputs
-
     forM_ (M.toList inputsDescs) $ \(filePath, oldInputAccess) ->
       case oldInputAccess of
         InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     filePath oldDesc
@@ -507,25 +532,27 @@ applyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsDesc
     forM_ (M.toList outputsDescs) $ \(filePath, oldDesc) -> do
       compareToNewDesc "output" getFileDesc filePath oldDesc
 
-    liftIO $ verifyTargetOutputs buildsome (M.keysSet outputsDescs) target
-    where
-      compareToNewDesc str getNewDesc filePath oldDesc = do
-        newDesc <- liftIO $ getNewDesc filePath
-        when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
-      waitForInputs = do
-        -- TODO: This is good for parallelism, but bad if the set of
-        -- inputs changed, as it may build stuff that's no longer
-        -- required:
+    liftIO $
+      applyExecutionLog buildsome target
+      (M.keysSet outputsDescs) stdOutputs
+  where
+    compareToNewDesc str getNewDesc filePath oldDesc = do
+      newDesc <- liftIO $ getNewDesc filePath
+      when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
+    waitForInputs = do
+      -- TODO: This is good for parallelism, but bad if the set of
+      -- inputs changed, as it may build stuff that's no longer
+      -- required:
 
-        let reason = "Recorded dependency of " ++ show (targetOutputs target)
-        speculativeSlaves <-
-          fmap concat $ forM (M.toList inputsDescs) $ \(inputPath, inputAccess) ->
-          makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit reason parents inputPath
+      let reason = "Recorded dependency of " ++ show (targetOutputs target)
+      speculativeSlaves <-
+        fmap concat $ forM (M.toList inputsDescs) $ \(inputPath, inputAccess) ->
+        makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit reason parents inputPath
 
-        let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
-        hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
+      let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
+      hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
 
-        traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
+      traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -536,15 +563,13 @@ findApplyExecutionLog buildsome target parents = do
     Nothing -> -- No previous execution log
       return False
     Just executionLog -> do
-      res <- applyExecutionLog buildsome target parents executionLog
+      res <- tryApplyExecutionLog buildsome target parents executionLog
       case res of
         Left (str, filePath) -> do
           putStrLn $ concat
             ["Execution log of ", show (targetOutputs target), " did not match because ", str, ": ", show filePath, " changed"]
           return False
-        Right () -> do
-          putStrLn $ "Execution log match for: " ++ show (targetOutputs target)
-          return True
+        Right () -> return True
 
 showParents :: Parents -> String
 showParents = concatMap showParent
@@ -588,14 +613,15 @@ spawnSlave buildsome target reason parents restoreMask = do
           (targetAllInputs target)
         inputsRef <- newIORef M.empty
         outputsRef <- newIORef S.empty
-        withAllocatedParallelism buildsome $
-          mapM_ (runCmd buildsome target reason parents inputsRef outputsRef)
-            (targetCmds target)
+        stdOutputs <-
+          withAllocatedParallelism buildsome $
+          mapM (runCmd buildsome target reason parents inputsRef outputsRef)
+          (targetCmds target)
         inputs <- readIORef inputsRef
         outputs <- readIORef outputsRef
         registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
         verifyTargetOutputs buildsome outputs target
-        saveExecutionLog buildsome target inputs outputs
+        saveExecutionLog buildsome target inputs outputs stdOutputs
         putStrLn $ concat ["} ", show (targetOutputs target)]
       return $ Slave target execution
   where
@@ -648,12 +674,34 @@ deleteRemovedOutputs buildsome = do
         return S.empty
   setRegisteredOutputs buildsome liveOutputs
 
+showStdouts :: StdOutputs -> IO ()
+showStdouts (StdOutputs stdout stderr) = do
+  showOutput "STDOUT" stdout
+  showOutput "STDERR" stderr
+  where
+    showOutput name bs
+      | BS.null bs = return ()
+      | otherwise = do
+        putStrLn (name ++ ":")
+        BS.putStr bs
+
+shellCmdVerify :: [String] -> Process.Env -> String -> IO StdOutputs
+shellCmdVerify inheritEnvs newEnvs cmd = do
+  (exitCode, stdout, stderr) <-
+    Process.getOutputs (ShellCommand cmd) inheritEnvs newEnvs
+  let stdouts = StdOutputs stdout stderr
+  showStdouts stdouts
+  case exitCode of
+    ExitFailure {} -> do
+      fail $ concat [show cmd, " failed!"]
+    _ -> return stdouts
+
 runCmd ::
   Buildsome -> Target -> Reason -> Parents ->
   -- TODO: Clean this arg list up
   IORef (Map FilePath (AccessType, Maybe FileStatus)) ->
   IORef (Set FilePath) ->
-  String -> IO ()
+  String -> IO StdOutputs
 runCmd buildsome target reason parents inputsRef outputsRef cmd = do
   activeConnections <- newIORef []
 
@@ -663,12 +711,13 @@ runCmd buildsome target reason parents inputsRef outputsRef cmd = do
   let ec = ExecutingCommand cmd tid target parents inputsRef outputsRef activeConnections
   putStrLn $ concat ["  { ", show cmd, ": ", reason]
   atomicModifyIORef_ (bsRunningCmds buildsome) $ M.insert cmdId ec
-  shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildsome cmdId) cmd
+  stdOutputs <- shellCmdVerify ["HOME", "PATH"] (mkEnvVars buildsome cmdId) cmd
   putStrLn $ concat ["  } ", show cmd]
 
   -- Give all connections a chance to complete and perhaps fail
   -- this execution:
   mapM_ readMVar =<< readIORef activeConnections
+  return stdOutputs
 
 mkEnvVars :: Buildsome -> ByteString -> Process.Env
 mkEnvVars buildsome cmdId =
