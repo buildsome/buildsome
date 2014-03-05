@@ -11,11 +11,6 @@
     * Only report *successful* outputs? Or perhaps report as inputs,
       output operations that failed due to FS state?
 
-* Refactoring:
-  * Extract an abstract HookedFileSystem module that runs the server,
-    and has a: makeEnv that generates a job id that the server responds
-    to, and gives the needed env vars to add.
-
 
 * C-side can be given allowed outputs rules and fail anything else
 
