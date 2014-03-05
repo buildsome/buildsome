@@ -8,7 +8,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Either
 import Data.Binary (Binary, get, put)
 import Data.ByteString (ByteString)
-import Data.Foldable (traverse_)
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf, partition, nub)
 import Data.Map.Strict (Map)
@@ -183,7 +182,7 @@ updateGitIgnore buildsome makefilePath = do
 need :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
 need buildsome explicitness reason parents paths = do
   slaves <- concat <$> mapM (makeSlaves buildsome explicitness reason parents) paths
-  traverse_ slaveWait slaves
+  mapM_ slaveWait slaves
 
 assertExists :: Buildsome -> FilePath -> String -> IO ()
 assertExists buildsome path msg
@@ -386,7 +385,7 @@ tryApplyExecutionLog buildsome target parents (ExecutionLog inputsDescs outputsD
       let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
       hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
 
-      traverse_ slaveWait (speculativeSlaves ++ hintedSlaves)
+      mapM_ slaveWait (speculativeSlaves ++ hintedSlaves)
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -529,7 +528,7 @@ runCmd buildsome target parents inputsRef outputsRef cmd = do
           -- Temporarily paused, so we can temporarily release parallelism
           -- semaphore
           unless (null slaves) $ withReleasedParallelism buildsome $
-            traverse_ slaveWait slaves
+            mapM_ slaveWait slaves
           unless (isLegalOutput target path) $
             recordInput inputsRef accessType path
     handleOutputRaw actDesc rawPath =
