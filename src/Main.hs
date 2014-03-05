@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric, DeriveDataTypeable, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
@@ -16,7 +16,6 @@ import Data.Maybe (fromMaybe, maybeToList, mapMaybe)
 import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
-import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
@@ -111,10 +110,6 @@ recordInput inputsRef accessType path = do
     M.insertWith
     (\_ (oldAccessType, oldMStat) ->
      (FSHook.higherAccessType accessType oldAccessType, oldMStat)) path (accessType, mstat)
-
-data InvalidCmdOperation = InvalidCmdOperation String
-  deriving (Show, Typeable)
-instance E.Exception InvalidCmdOperation
 
 canonicalizePath :: FilePath -> IO FilePath
 canonicalizePath path = do
