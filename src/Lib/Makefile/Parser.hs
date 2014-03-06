@@ -47,25 +47,18 @@ horizSpaces1 = P.skipMany1 horizSpace
 comment :: Monad m => ParserG u m ()
 comment = void $ P.char '#' *> P.many (P.satisfy (/= '\n'))
 
-filepath :: Monad m => ParserG u m FilePath
-filepath = P.many1 $ P.noneOf ":#| \t\r\n"
-
 skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
 
--- Parsec's sepBy cannot handle the separator following the sequence
--- without a following element:
-sepBy :: Monad m => ParserG u m a -> ParserG u m () -> ParserG u m [a]
-item `sepBy` sep = sepBy1 item sep <|> return []
+filepaths :: Parser [FilePath]
+filepaths = words <$> interpolateVariables ":#|\n"
 
-sepBy1 :: Monad m => ParserG u m a -> ParserG u m () -> ParserG u m [a]
-item `sepBy1` sep = (:) <$> item <*> P.many (P.try (sep >> item))
-
-filepaths :: Monad m => ParserG u m [FilePath]
-filepaths = filepath `sepBy` horizSpaces1
-
-filepaths1 :: Monad m => ParserG u m [FilePath]
-filepaths1 = filepath `sepBy1` horizSpaces1
+filepaths1 :: Parser [FilePath]
+filepaths1 = do
+  paths <- words <$> interpolateVariables ":#|\n"
+  if null paths
+    then fail "need at least 1 file path"
+    else return paths
 
 literalString :: Monad m => Char -> ParserG u m String
 literalString delimiter = do
