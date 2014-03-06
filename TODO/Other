@@ -1,3 +1,6 @@
+* CWD should always be set to the Makefile itself, so everything
+  should be relative to the Makefile
+
 * Scan upwards for Makefile at root to use with curdir as parameter by default
 
 * Bugs:
