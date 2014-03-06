@@ -95,11 +95,12 @@ withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO
 withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   semaphore <- MSem.new parallelism
+  buildMaps <- BuildMaps.make <$> Makefile.onMakefilePaths canonicalizePath makefile
   let
     buildsome =
       Buildsome
       { bsSlaveByRepPath = slaveMapByRepPath
-      , bsBuildMaps = BuildMaps.make makefile
+      , bsBuildMaps = buildMaps
       , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
       , bsRestrictedParallelism = semaphore
       , bsDb = db
