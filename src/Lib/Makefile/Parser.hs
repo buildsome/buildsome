@@ -99,7 +99,7 @@ metaVarId outputPaths inputPaths ooInputPaths mStem =
   | Just stem <- [mStem]
   ]
   where
-    getFirst err paths = fromMaybe err $ listToMaybe paths
+    getFirst err paths = fromMaybe (error err) $ listToMaybe paths
     firstOutput toString = toString $ getFirst "No first output for @ variable" outputPaths
     firstInput  toString = toString $ getFirst "No first input for < variable"  inputPaths
     allInputs   toString = unwords $ map toString inputPaths
