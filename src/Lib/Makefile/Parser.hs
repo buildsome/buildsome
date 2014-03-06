@@ -43,14 +43,11 @@ horizSpaces1 = P.skipMany1 horizSpace
 comment :: Monad m => ParserG u m ()
 comment = void $ P.char '#' *> P.many (P.satisfy (/= '\n'))
 
-tillEndOfLine :: Monad m => ParserG u m String
-tillEndOfLine = concat <$> P.many (escapeSequence <|> ((:[]) <$> P.noneOf "#")) <* P.optional comment
+filepath :: Monad m => ParserG u m FilePath
+filepath = P.many1 $ P.noneOf ":#| \t\r\n"
 
 skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
-
-filepath :: Monad m => ParserG u m FilePath
-filepath = P.many1 $ P.satisfy $ \x -> x `notElem` ":#| \t\r\n"
 
 -- Parsec's sepBy cannot handle the separator following the sequence
 -- without a following element:
@@ -157,7 +154,7 @@ includeLine :: Monad m => ParserG u m IncludePath
 includeLine = do
   fileNameStr <-
     P.try (horizSpaces *> P.string "include" *> horizSpace) *>
-    horizSpaces *> (literalString '"' <|> (wrap <$> tillEndOfLine))
+    horizSpaces *> (literalString '"' <|> (wrap <$> filepath))
   skipLineSuffix
   case reads fileNameStr of
     [(path, "")] -> return path
