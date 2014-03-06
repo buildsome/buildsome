@@ -1,4 +1,4 @@
-* Variable assignment should not expand variables, only recursively do so later at var expansion
+* Variable expansion in "include"
 
 * {} expansions after variable expansions
 
