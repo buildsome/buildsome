@@ -1,6 +1,5 @@
 module Lib.FilePath
-  ( removeRedundantParents
-  , splitFileName
+  ( splitFileName
   , canonicalizePath
   , (</>)
   ) where
@@ -8,9 +7,13 @@ module Lib.FilePath
 import qualified System.Directory as Dir
 import qualified System.FilePath as FilePath
 
-removeRedundantParents :: FilePath -> FilePath
-removeRedundantParents =
-  FilePath.joinPath . foldr (step . FilePath.dropTrailingPathSeparator) [] . FilePath.splitPath
+removeRedundantComponents :: FilePath -> FilePath
+removeRedundantComponents =
+  FilePath.joinPath .
+  foldr step [] .
+  filter (/= ".") .
+  map FilePath.dropTrailingPathSeparator .
+  FilePath.splitPath
   where
     step "/" xs = "/" : xs
     step ".." xs = ".." : xs
@@ -29,4 +32,4 @@ x </> y = x FilePath.</> y
 canonicalizePath :: FilePath -> IO FilePath
 canonicalizePath path = do
   curDir <- Dir.getCurrentDirectory
-  Dir.makeRelativeToCurrentDirectory $ removeRedundantParents (curDir </> path)
+  Dir.makeRelativeToCurrentDirectory $ removeRedundantComponents (curDir </> path)
