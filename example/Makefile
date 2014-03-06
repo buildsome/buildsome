@@ -1,12 +1,26 @@
-all: out/a out/subdir.list other
+all: out/a out/subdir.list needsm other
 
 include "inc/other.Makefile"
 
-CFLAGS=-g -Wall
+CFLAGS=-g -Wall -Wextra
+LDFLAGS=-g -Wall
+CC=gcc
 
-# Linkage
+COMPILE=${CC} -c -o $@ $< ${CFLAGS}
+LINK=${CC} -o $@ $^ ${LDFLAGS}
+
+out/%.o: %.c
+	${COMPILE}
+
 out/a: out/a.o out/b.o | a.h
-	gcc -o out/a $^ ${CFLAGS}
+	${LINK}
+
+needsm.o: needsm.c
+	${COMPILE}
+
+LDFLAGS=-g -Wall -lm
+needsm: needsm.o
+	${LINK}
 
 out/auto.h:
 	python generate.py
@@ -16,8 +30,5 @@ out/subdir.list:
 
 subdir/a:
 	echo hi > subdir/a
-
-out/%.o: %.c
-	gcc -c -o $@ $< ${CFLAGS}
 
 .PHONY: all
