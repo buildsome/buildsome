@@ -468,7 +468,7 @@ main = FSHook.with $ \fsHook -> do
   Dir.setCurrentDirectory cwd
   makefile <- Makefile.parse file
   Db.with (buildDbFilename file) $ \db ->
-    withBuildsome makefilePath fsHook db makefile opt $
+    withBuildsome file fsHook db makefile opt $
       \buildsome -> do
       deleteRemovedOutputs buildsome
       case makefileTargets makefile of
