@@ -13,6 +13,7 @@ import Data.List (partition, isInfixOf)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Lib.FilePath (splitFileName, (</>))
+import Lib.List (unprefixed)
 import Lib.Makefile.Types
 import Lib.Parsec (parseFromFile, showErr)
 import System.FilePath (takeDirectory, takeFileName)
@@ -174,8 +175,7 @@ includeLine = do
 
 runInclude :: IncludePath -> Parser ()
 runInclude rawIncludedPath = do
-  curPath <- takeDirectory . P.sourceName <$> P.getPosition
-  let includedPath = curPath </> rawIncludedPath
+  includedPath <- computeIncludePath
   eFileContent <- liftIO $ E.try $ readFile includedPath
   case eFileContent of
     Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e
@@ -185,6 +185,15 @@ runInclude rawIncludedPath = do
         , P.statePos = Pos.initialPos includedPath
         , P.stateUser = (P.statePos oldState, P.stateInput oldState) : P.stateUser oldState
         }
+  where
+    computeIncludePath =
+      case unprefixed "ROOT/" rawIncludedPath of
+      Nothing -> do
+        curPath <- takeDirectory . P.sourceName <$> P.getPosition
+        return $ curPath </> rawIncludedPath
+      Just pathSuffix -> do
+        primaryMakePath <- P.sourceName . fst . last <$> P.getState
+        return $ takeDirectory primaryMakePath </> pathSuffix
 
 returnToIncluder :: Parser ()
 returnToIncluder =
