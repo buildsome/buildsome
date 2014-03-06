@@ -15,7 +15,7 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Lib.FilePath (splitFileName, (</>))
 import Lib.List (unprefixed)
 import Lib.Makefile.Types
-import Lib.Parsec (parseFromFile, showErr)
+import Lib.Parsec (parseFromFile, showErr, showPos)
 import System.FilePath (takeDirectory, takeFileName)
 import System.IO (hPutStrLn, stderr)
 import Text.Parsec ((<?>))
@@ -141,7 +141,9 @@ interpolateVariables stopChars = do
         , (:[]) <$> P.satisfy isAlphaNumEx
         ]
       case M.lookup varName varsEnv of
-        Nothing -> fail $ "No such variable: " ++ show varName
+        Nothing -> do
+          pos <- P.getPosition
+          error $ showPos pos ++ ": No such variable: " ++ show varName
         Just val ->
           either (fail . show) return $
           P.runParser interpolate () "" val
