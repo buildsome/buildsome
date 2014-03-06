@@ -198,19 +198,19 @@ returnToIncluder =
     State posStack rootDir <- P.getState
     case posStack of
       [] -> fail "Don't steal eof"
-      ((pos, input) : rest) ->
+      ((pos, input) : rest) -> do
         void $ P.setParserState P.State
           { P.statePos = pos
           , P.stateInput = input
           , P.stateUser = State rest rootDir
           }
-    -- "include" did not eat the end of line, so when we return here,
-    -- we'll be before the newline, and we'll read a fake empty line
-    -- here, but no big deal
+        -- "include" did not eat the end of line (if one existed) so lets
+        -- read it here
+        P.optional (P.char '\n') <?> "newline after include statement"
 
 beginningOfLine :: Parser ()
 beginningOfLine = do
-  mIncludePath <- P.optionMaybe $ includeLine <* P.optional (P.char '\n')
+  mIncludePath <- P.optionMaybe includeLine
   case mIncludePath of
     Just includePath -> runInclude includePath *> beginningOfLine
     Nothing -> -- A line that begins with eof can still lead to a new line in the includer
