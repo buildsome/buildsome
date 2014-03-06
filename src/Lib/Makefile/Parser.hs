@@ -127,15 +127,22 @@ preserveMetavar =
   where
     char4 a b c d = [a, b, c, d]
 
--- '$' already parsed
-variable :: Monad m => Vars -> ParserG u m String
-variable varsEnv = do
-  varName <- (P.char '{' *> ident <* P.char '}') <|> ((:[]) <$> P.satisfy isAlphaNumEx)
-  case M.lookup varName varsEnv of
-    Nothing -> fail $ "No such variable: " ++ show varName
-    Just val ->
-      P.runParserT (interpolateVariables varsEnv) () "" val
-      >>= either (fail . show) return
+interpolateVariables :: Parser String
+interpolateVariables = do
+  varsEnv <- lift State.get
+  let
+    interpolate :: Monad m => ParserG u m String
+    interpolate = interpolateString (variable <|> preserveMetavar)
+    variable :: Monad m => ParserG u m String
+    variable = do
+      -- '$' already parsed
+      varName <- (P.char '{' *> ident <* P.char '}') <|> ((:[]) <$> P.satisfy isAlphaNumEx)
+      case M.lookup varName varsEnv of
+        Nothing -> fail $ "No such variable: " ++ show varName
+        Just val ->
+          either (fail . show) return $
+          P.runParser interpolate () "" val
+  interpolate
 
 -- Inside a single line
 interpolateString :: Monad m => ParserG u m String -> ParserG u m String
@@ -144,10 +151,7 @@ interpolateString dollarHandler =
   where
     interpolatedChar =
       escapeSequence <|> (P.char '$' *> dollarHandler) <|>
-      (: []) <$> P.satisfy (/= '\n')
-
-interpolateVariables :: Monad m => Vars -> ParserG u m String
-interpolateVariables varsEnv = interpolateString (variable varsEnv <|> preserveMetavar)
+      (: []) <$> P.noneOf "#\n"
 
 type IncludePath = FilePath
 
@@ -221,11 +225,10 @@ noiseLines =
     eol = skipLineSuffix *> newline
 
 cmdLine :: Parser String
-cmdLine = do
-  varsEnv <- lift State.get
+cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t') *>
-      interpolateVariables varsEnv <* skipLineSuffix
-    ) <?> "cmd line"
+    interpolateVariables <* skipLineSuffix
+  ) <?> "cmd line"
 
 -- TODO: Better canonization
 canonizeCmdLines :: [String] -> [String]
