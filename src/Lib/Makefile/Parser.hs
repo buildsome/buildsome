@@ -127,12 +127,10 @@ preserveMetavar =
 interpolateVariables :: String -> Parser String
 interpolateVariables stopChars = do
   varsEnv <- lift State.get
-  State includeStack rootDir <- P.getState
+  curDir <- takeDirectory . P.sourceName <$> P.getPosition
   let
-    myFilePath =
-      head $ map (takeDirectory . P.sourceName . fst) includeStack ++ [rootDir]
     curDirVar :: Monad m => ParserG u m String
-    curDirVar = myFilePath <$ P.char '.'
+    curDirVar = curDir <$ P.char '.'
     interpolate :: Monad m => ParserG u m String
     interpolate = interpolateString stopChars (curDirVar <|> variable <|> preserveMetavar)
     variable :: Monad m => ParserG u m String
