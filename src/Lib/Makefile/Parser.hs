@@ -127,12 +127,12 @@ preserveMetavar =
   where
     char4 a b c d = [a, b, c, d]
 
-interpolateVariables :: Parser String
-interpolateVariables = do
+interpolateVariables :: String -> Parser String
+interpolateVariables stopChars = do
   varsEnv <- lift State.get
   let
     interpolate :: Monad m => ParserG u m String
-    interpolate = interpolateString (variable <|> preserveMetavar)
+    interpolate = interpolateString stopChars (variable <|> preserveMetavar)
     variable :: Monad m => ParserG u m String
     variable = do
       -- '$' already parsed
@@ -145,27 +145,27 @@ interpolateVariables = do
   interpolate
 
 -- Inside a single line
-interpolateString :: Monad m => ParserG u m String -> ParserG u m String
-interpolateString dollarHandler =
-  concat <$> P.many (literalString '\'' <|> interpolatedChar)
+interpolateString :: Monad m => [Char] -> ParserG u m String -> ParserG u m String
+interpolateString stopChars dollarHandler =
+  concatMany (literalString '\'' <|> doubleQuotes <|> interpolatedChar stopChars)
   where
-    interpolatedChar =
+    concatMany x = concat <$> P.many x
+    doubleQuotes = doubleQuoted <$> P.char '"' <*> concatMany (interpolatedChar "\"\n") <*> P.char '"'
+    doubleQuoted begin chars end = concat [[begin], chars, [end]]
+    interpolatedChar stopChars' =
       escapeSequence <|> (P.char '$' *> dollarHandler) <|>
-      (: []) <$> P.noneOf "#\n"
+      (: []) <$> P.noneOf stopChars'
 
 type IncludePath = FilePath
 
-includeLine :: Monad m => ParserG u m IncludePath
+includeLine :: Parser IncludePath
 includeLine = do
   fileNameStr <-
     P.try (horizSpaces *> P.string "include" *> horizSpace) *>
-    horizSpaces *> (literalString '"' <|> (wrap <$> filepath))
-  skipLineSuffix
+    horizSpaces *> interpolateVariables " #\n" <* skipLineSuffix
   case reads fileNameStr of
     [(path, "")] -> return path
-    _ -> P.unexpected $ "Malformed include statement: " ++ show fileNameStr
-  where
-    wrap x = concat ["\"", x, "\""]
+    _ -> return fileNameStr
 
 runInclude :: IncludePath -> Parser ()
 runInclude rawIncludedPath = do
@@ -227,7 +227,7 @@ noiseLines =
 cmdLine :: Parser String
 cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t') *>
-    interpolateVariables <* skipLineSuffix
+    interpolateVariables "#\n" <* skipLineSuffix
   ) <?> "cmd line"
 
 -- TODO: Better canonization
@@ -269,7 +269,7 @@ interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds) =
   where
     interpolateMetavars = P.runParser cmdInterpolate () (show tgt)
     cmdInterpolate =
-      interpolateString $ metaVariable outputs inputs ooInputs mStem
+      interpolateString "#\n" $ metaVariable outputs inputs ooInputs mStem
 
 targetSimple :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
 targetSimple outputPaths inputPaths orderOnlyInputs = do
