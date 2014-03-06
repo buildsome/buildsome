@@ -12,10 +12,10 @@ CC=gcc
 COMPILE=${CC} -c -o $@ $< ${CFLAGS}
 LINK=${CC} -o $@ $^ ${LDFLAGS}
 
-out/%.o: %.c
+$./out/%.o: $./%.c
 	${COMPILE}
 
-out/a: out/a.o out/b.o | a.h
+out/a: out/a.o out/b.o | $./a.h
 	${LINK}
 
 needsm.o: needsm.c
