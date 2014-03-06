@@ -138,14 +138,15 @@ interpolateVariables stopChars = do
   let
     myFilePath =
       head $ map (takeDirectory . P.sourceName . fst) includeStack ++ [rootDir]
+    curDirVar :: Monad m => ParserG u m String
+    curDirVar = myFilePath <$ P.char '.'
     interpolate :: Monad m => ParserG u m String
-    interpolate = interpolateString stopChars (variable <|> preserveMetavar)
+    interpolate = interpolateString stopChars (curDirVar <|> variable <|> preserveMetavar)
     variable :: Monad m => ParserG u m String
     variable = do
       -- '$' already parsed
       varName <- P.choice
-        [ myFilePath <$ P.char '.'
-        , P.char '{' *> ident <* P.char '}'
+        [ P.char '{' *> ident <* P.char '}'
         , (:[]) <$> P.satisfy isAlphaNumEx
         ]
       case M.lookup varName varsEnv of
