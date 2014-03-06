@@ -14,7 +14,7 @@ import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Lib.FilePath (splitFileName, (</>))
 import Lib.Makefile.Types
-import Lib.Parsec (parseFromFile, showErr, showPos)
+import Lib.Parsec (parseFromFile, showErr)
 import System.FilePath (takeDirectory, takeFileName)
 import System.IO (hPutStrLn, stderr)
 import Text.Parsec ((<?>))
@@ -128,16 +128,14 @@ preserveMetavar =
     char4 a b c d = [a, b, c, d]
 
 -- '$' already parsed
-variable :: Parser String
-variable = do
+variable :: Monad m => Vars -> ParserG u m String
+variable varsEnv = do
   varName <- (P.char '{' *> ident <* P.char '}') <|> ((:[]) <$> P.satisfy isAlphaNumEx)
-  mResult <- lift $ State.gets $ M.lookup varName
-  case mResult of
-    Nothing -> do
-      posStr <- showPos <$> P.getPosition
-      liftIO $ hPutStrLn stderr $ posStr ++ ": No such variable: " ++ show varName
-      fail "No such variable"
-    Just val -> return val
+  case M.lookup varName varsEnv of
+    Nothing -> fail $ "No such variable: " ++ show varName
+    Just val ->
+      P.runParserT (interpolateVariables varsEnv) () "" val
+      >>= either (fail . show) return
 
 -- Inside a single line
 interpolateString :: Monad m => ParserG u m String -> ParserG u m String
@@ -147,6 +145,9 @@ interpolateString dollarHandler =
     interpolatedChar =
       escapeSequence <|> (P.char '$' *> dollarHandler) <|>
       (: []) <$> P.satisfy (/= '\n')
+
+interpolateVariables :: Monad m => Vars -> ParserG u m String
+interpolateVariables varsEnv = interpolateString (variable varsEnv <|> preserveMetavar)
 
 type IncludePath = FilePath
 
@@ -220,10 +221,11 @@ noiseLines =
     eol = skipLineSuffix *> newline
 
 cmdLine :: Parser String
-cmdLine =
+cmdLine = do
+  varsEnv <- lift State.get
   ( P.try (newline *> noiseLines *> P.char '\t') *>
-    interpolateString (variable <|> preserveMetavar) <* skipLineSuffix
-  ) <?> "cmd line"
+      interpolateVariables varsEnv <* skipLineSuffix
+    ) <?> "cmd line"
 
 -- TODO: Better canonization
 canonizeCmdLines :: [String] -> [String]
@@ -328,7 +330,8 @@ isAlphaNumEx x = isAlphaNum x || x == '_'
 varAssignment :: Parser ()
 varAssignment = do
   varName <- P.try $ ident <* P.char '='
-  value <- interpolateString (variable <|> preserveMetavar)
+  value <- concat <$> P.many (escapeSequence <|> ((:[]) <$> P.noneOf "#\n"))
+  skipLineSuffix
   lift $ State.modify (M.insert varName value)
 
 makefile :: Parser Makefile
