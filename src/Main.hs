@@ -91,8 +91,8 @@ recordInput inputsRef accessType path = do
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
 
-withBuildsome :: FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
-withBuildsome fsHook db makefile opt body = do
+withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
+withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   semaphore <- MSem.new parallelism
   let
@@ -113,7 +113,7 @@ withBuildsome fsHook db makefile opt body = do
       | writeGitIgnore = updateGitIgnore buildsome makefilePath
       | otherwise = return ()
     parallelism = fromMaybe 1 mParallelism
-    Opt makefilePath mParallelism writeGitIgnore deleteUnspecifiedOutput = opt
+    Opt _mMakefile mParallelism writeGitIgnore deleteUnspecifiedOutput = opt
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
@@ -439,15 +439,35 @@ runCmd buildsome target parents inputsRef outputsRef cmd = do
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
 
+findMakefile :: IO FilePath
+findMakefile = do
+  cwd <- Dir.getCurrentDirectory
+  let
+    -- NOTE: Excludes root (which is probably fine)
+    parents = takeWhile (/= "/") $ iterate takeDirectory cwd
+    candidates = map (</> filename) parents
+  -- Use EitherT with Left short-circuiting when found, and Right
+  -- falling through to the end of the loop:
+  res <- runEitherT $ mapM_ check candidates
+  case res of
+    Left found -> Dir.makeRelativeToCurrentDirectory found
+    Right () -> fail $ "Cannot find a file named " ++ show filename ++ " in this directory or any of its parents"
+  where
+    filename = "Makefile"
+    check path = do
+      exists <- liftIO $ Dir.doesFileExist path
+      when exists $ left path
+
 main :: IO ()
 main = FSHook.with $ \fsHook -> do
-  origOpt <- getOpt
-  let (cwd, file) = splitFileName $ optMakefilePath origOpt
+  opt <- getOpt
+  makefilePath <- maybe findMakefile return $ optMakefilePath opt
+  putStrLn $ "Using makefile: " ++ show makefilePath
+  let (cwd, file) = splitFileName makefilePath
   Dir.setCurrentDirectory cwd
   makefile <- Makefile.parse file
-  let relativeOpt = origOpt { optMakefilePath = file }
-  Db.with (buildDbFilename (optMakefilePath relativeOpt)) $ \db ->
-    withBuildsome fsHook db makefile relativeOpt $
+  Db.with (buildDbFilename file) $ \db ->
+    withBuildsome makefilePath fsHook db makefile opt $
       \buildsome -> do
       deleteRemovedOutputs buildsome
       case makefileTargets makefile of

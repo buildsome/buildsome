@@ -9,7 +9,7 @@ deleteUnspecifiedOutputs :: Bool -> DeleteUnspecifiedOutputs
 deleteUnspecifiedOutputs False = DontDeleteUnspecifiedOutputs
 deleteUnspecifiedOutputs True = DeleteUnspecifiedOutputs
 
-data Opt = Opt { optMakefilePath :: FilePath
+data Opt = Opt { optMakefilePath :: Maybe FilePath
                , optParallelism :: Maybe Int
                , optGitIgnore :: Bool
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
@@ -18,10 +18,17 @@ data Opt = Opt { optMakefilePath :: FilePath
 opt :: Read a => Mod OptionFields a -> Parser (Maybe a)
 opt = optional . option
 
+strOpt :: Mod OptionFields String -> Parser (Maybe String)
+strOpt = optional . strOption
+
 getOpt :: IO Opt
 getOpt = execParser opts
   where
-    parser = Opt <$> argument str (metavar "MakefilePath")
+    parser = Opt <$> strOpt (short 'f' <>
+                             long "file" <>
+                             long "makefile" <>
+                             metavar "file" <>
+                             help "Use file as a makefile.")
                  <*> opt (short 'j' <>
                           long "parallelism" <>
                           help "How many commands to execute in parallel")
