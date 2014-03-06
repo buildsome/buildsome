@@ -365,7 +365,7 @@ makefile =
 
 parse :: FilePath -> IO Makefile
 parse makefileName = do
-  parseAction <- parseFromFile makefile makefileName
+  parseAction <- parseFromFile makefile [] makefileName
   res <- evalStateT parseAction M.empty
   case res of
     Right x -> return x
