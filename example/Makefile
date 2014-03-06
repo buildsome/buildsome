@@ -15,7 +15,9 @@ LINK=${CC} -o $@ $^ ${LDFLAGS}
 $./out/%.o: $./%.c
 	${COMPILE}
 
-out/a: out/a.o out/b.o | $./a.h
+OBJS=out/a.o out/b.o
+
+out/a: ${OBJS} | $./a.h
 	${LINK}
 
 needsm.o: needsm.c
