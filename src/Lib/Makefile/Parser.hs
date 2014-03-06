@@ -130,13 +130,18 @@ preserveMetavar =
 interpolateVariables :: String -> Parser String
 interpolateVariables stopChars = do
   varsEnv <- lift State.get
+  myFilePath <- P.sourceName . fst . head <$> P.getState
   let
     interpolate :: Monad m => ParserG u m String
     interpolate = interpolateString stopChars (variable <|> preserveMetavar)
     variable :: Monad m => ParserG u m String
     variable = do
       -- '$' already parsed
-      varName <- (P.char '{' *> ident <* P.char '}') <|> ((:[]) <$> P.satisfy isAlphaNumEx)
+      varName <- P.choice
+        [ myFilePath <$ P.char '.'
+        , P.char '{' *> ident <* P.char '}'
+        , (:[]) <$> P.satisfy isAlphaNumEx
+        ]
       case M.lookup varName varsEnv of
         Nothing -> fail $ "No such variable: " ++ show varName
         Just val ->
