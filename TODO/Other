@@ -1,5 +1,3 @@
-* Scan upwards for Makefile at root to use with curdir as parameter by default
-
 * Bugs:
   * Wrong FS input model:
     * mode-only-inputs, (rely on mode only)
