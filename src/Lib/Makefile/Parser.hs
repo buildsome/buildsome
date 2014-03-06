@@ -349,12 +349,23 @@ varAssignment = do
   skipLineSuffix
   lift $ State.modify (M.insert varName value)
 
+echoStatement :: Parser ()
+echoStatement = do
+  P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string "echo" *> horizSpaces1
+  str <- interpolateVariables "#\n" <* skipLineSuffix
+  liftIO $ putStrLn $ "ECHO: " ++ str
+
 makefile :: Parser Makefile
 makefile =
   mkMakefile . concat <$>
   ( beginningOfLine *> -- due to beginning of file
     noiseLines *>
-    ( (([] <$ properEof) <|> ((: []) <$> target) <|> ([] <$ varAssignment))
+    ( P.choice
+      [ [] <$ properEof
+      , [] <$ echoStatement
+      , (: []) <$> target
+      , [] <$ varAssignment
+      ]
       `P.sepBy` (newline *> noiseLines)
     ) <*
     P.optional (newline *> noiseLines) <*

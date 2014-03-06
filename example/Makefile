@@ -12,6 +12,8 @@ CC=gcc
 COMPILE=${CC} -c -o $@ $< ${CFLAGS}
 LINK=${CC} -o $@ $^ ${LDFLAGS}
 
+echo $./out/%.o
+
 $./out/%.o: $./%.c
 	${COMPILE}
 
