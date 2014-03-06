@@ -1,6 +1,8 @@
 all: out/a out/subdir.list needsm other
 
-include "inc/other.Makefile"
+INCLUDE_DIR=inc
+
+include "${INCLUDE_DIR}/other.Makefile"
 
 CFLAGS=-g -Wall -Wextra
 LDFLAGS=-g -Wall
