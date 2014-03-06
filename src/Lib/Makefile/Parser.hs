@@ -40,11 +40,11 @@ horizSpaces = P.skipMany horizSpace
 horizSpaces1 :: Monad m => ParserG u m ()
 horizSpaces1 = P.skipMany1 horizSpace
 
-tillEndOfLine :: Monad m => ParserG u m String
-tillEndOfLine = P.many (P.satisfy (/= '\n'))
-
 comment :: Monad m => ParserG u m ()
-comment = void $ P.char '#' *> tillEndOfLine
+comment = void $ P.char '#' *> P.many (P.satisfy (/= '\n'))
+
+tillEndOfLine :: Monad m => ParserG u m String
+tillEndOfLine = concat <$> P.many (escapeSequence <|> ((:[]) <$> P.noneOf "#")) <* P.optional comment
 
 skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
