@@ -27,8 +27,9 @@ import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
-newtype State = State
+data State = State
   { _includeStack :: [(Pos.SourcePos, String)]
+  , _rootDirectory :: FilePath
   }
 type Vars = Map String String
 type Parser = P.ParsecT String State (StateT Vars IO)
@@ -133,9 +134,10 @@ preserveMetavar =
 interpolateVariables :: String -> Parser String
 interpolateVariables stopChars = do
   varsEnv <- lift State.get
-  State includeStack <- P.getState
+  State includeStack rootDir <- P.getState
   let
-    myFilePath = P.sourceName . fst $ head includeStack
+    myFilePath =
+      head $ map (takeDirectory . P.sourceName . fst) includeStack ++ [rootDir]
     interpolate :: Monad m => ParserG u m String
     interpolate = interpolateString stopChars (variable <|> preserveMetavar)
     variable :: Monad m => ParserG u m String
@@ -183,9 +185,9 @@ runInclude rawIncludedPath = do
   case eFileContent of
     Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e
     Right fileContent ->
-      void $ P.updateParserState $ \(P.State input pos (State includeStack)) ->
+      void $ P.updateParserState $ \(P.State input pos (State includeStack rootDir)) ->
         P.State fileContent (Pos.initialPos includedPath) $
-        State $ ((pos, input) : includeStack)
+        State ((pos, input) : includeStack) rootDir
   where
     computeIncludePath =
       case unprefixed "ROOT/" rawIncludedPath of
@@ -193,18 +195,21 @@ runInclude rawIncludedPath = do
         curPath <- takeDirectory . P.sourceName <$> P.getPosition
         return $ curPath </> rawIncludedPath
       Just pathSuffix -> do
-        State includeStack <- P.getState
-        return $ takeDirectory ((P.sourceName . fst . last) includeStack) </> pathSuffix
+        State _ rootDir <- P.getState
+        return $ rootDir </> pathSuffix
 
 returnToIncluder :: Parser ()
 returnToIncluder =
   P.eof *> do
-    State posStack <- P.getState
+    State posStack rootDir <- P.getState
     case posStack of
       [] -> fail "Don't steal eof"
       ((pos, input) : rest) ->
-        void $ P.setParserState
-        P.State { P.statePos = pos, P.stateInput = input, P.stateUser = State rest }
+        void $ P.setParserState P.State
+          { P.statePos = pos
+          , P.stateInput = input
+          , P.stateUser = State rest rootDir
+          }
     -- "include" did not eat the end of line, so when we return here,
     -- we'll be before the newline, and we'll read a fake empty line
     -- here, but no big deal
@@ -337,7 +342,7 @@ mkMakefile allTargets
 properEof :: Parser ()
 properEof = do
   P.eof
-  State posStack <- P.getState
+  State posStack _ <- P.getState
   case posStack of
     [] -> return ()
     _ -> fail "EOF but includers still pending"
@@ -366,7 +371,7 @@ makefile =
 
 parse :: FilePath -> IO Makefile
 parse makefileName = do
-  parseAction <- parseFromFile makefile (State []) makefileName
+  parseAction <- parseFromFile makefile (State [] (takeDirectory makefileName)) makefileName
   res <- evalStateT parseAction M.empty
   case res of
     Right x -> return x
