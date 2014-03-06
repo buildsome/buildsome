@@ -1,4 +1,9 @@
-module Lib.FilePath (removeRedundantParents, splitFileName, (</>), canonicalizePath) where
+module Lib.FilePath
+  ( removeRedundantParents
+  , splitFileName
+  , canonicalizePath
+  , (</>)
+  ) where
 
 import qualified System.Directory as Dir
 import qualified System.FilePath as FilePath
