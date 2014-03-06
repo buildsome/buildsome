@@ -12,7 +12,7 @@ import Data.Either (partitionEithers)
 import Data.List (partition, isInfixOf)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Lib.FilePath (splitFileName)
+import Lib.FilePath (splitFileName, (</>))
 import Lib.Makefile.Types
 import Lib.Parsec (parseFromFile, showErr, showPos)
 import System.FilePath (takeDirectory, takeFileName)
@@ -166,7 +166,9 @@ includeLine = do
     wrap x = concat ["\"", x, "\""]
 
 runInclude :: IncludePath -> Parser ()
-runInclude includedPath = do
+runInclude rawIncludedPath = do
+  curPath <- takeDirectory . P.sourceName <$> P.getPosition
+  let includedPath = curPath </> rawIncludedPath
   eFileContent <- liftIO $ E.try $ readFile includedPath
   case eFileContent of
     Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e

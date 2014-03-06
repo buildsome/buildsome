@@ -25,6 +25,7 @@ executable buildsome
   other-modules:     Opts
                ,     Db
                ,     Lib.AccessType
+               ,     Lib.Argv0
                ,     Lib.AsyncContext
                ,     Lib.Async
                ,     Lib.StdOutputs

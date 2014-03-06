@@ -5,21 +5,19 @@ module Lib.FSHook
   , runCommand
   ) where
 
-import Control.Applicative ((<$>))
 import Control.Concurrent (ThreadId, myThreadId)
 import Control.Concurrent.MVar
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
-import Filesystem.Path.CurrentOS (encodeString)
 import Lib.AccessType (AccessType(..))
+import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Network.Socket (Socket)
-import System.Argv0 (getArgv0)
 import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
@@ -33,6 +31,7 @@ import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
+import qualified System.IO.Error as IOError
 
 type AccessDoc = String
 
@@ -78,11 +77,6 @@ serve fsHook conn = do
 
 maxMsgSize :: Int
 maxMsgSize = 8192
-
-getLdPreloadPath :: IO FilePath
-getLdPreloadPath = do
-  argv0 <- encodeString <$> getArgv0
-  Dir.canonicalizePath (takeDirectory argv0 </> "fs_override.so")
 
 with :: (FSHook -> IO a) -> IO a
 with body = do
@@ -198,3 +192,12 @@ runCommand fsHook cmd handleInput handleOutput = do
   -- this execution:
   mapM_ readMVar =<< readIORef activeConnections
   return stdOutputs
+
+getLdPreloadPath :: IO FilePath
+getLdPreloadPath = do
+  argv0 <- getArgv0
+  Dir.canonicalizePath (takeDirectory argv0 </> "fs_override.so")
+    `E.catch` \e ->
+    if IOError.isDoesNotExistError e
+    then Dir.canonicalizePath "fs_override.so"
+    else E.throwIO e

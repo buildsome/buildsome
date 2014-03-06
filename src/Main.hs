@@ -22,7 +22,7 @@ import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
 import Lib.FSHook (FSHook)
 import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
-import Lib.FilePath ((</>), canonicalizePath)
+import Lib.FilePath ((</>), canonicalizePath, splitFileName)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs, printStdouts)
@@ -91,24 +91,23 @@ recordInput inputsRef accessType path = do
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
 
-withBuildsome :: Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
-withBuildsome db makefile opt body = do
+withBuildsome :: FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
+withBuildsome fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   semaphore <- MSem.new parallelism
-  FSHook.with $ \fsHook -> do
-    let
-      buildsome =
-        Buildsome
-        { bsSlaveByRepPath = slaveMapByRepPath
-        , bsBuildMaps = BuildMaps.make makefile
-        , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
-        , bsRestrictedParallelism = semaphore
-        , bsDb = db
-        , bsMakefile = makefile
-        , bsFsHook = fsHook
-        }
-    body buildsome
-      `E.finally` maybeUpdateGitIgnore buildsome
+  let
+    buildsome =
+      Buildsome
+      { bsSlaveByRepPath = slaveMapByRepPath
+      , bsBuildMaps = BuildMaps.make makefile
+      , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
+      , bsRestrictedParallelism = semaphore
+      , bsDb = db
+      , bsMakefile = makefile
+      , bsFsHook = fsHook
+      }
+  body buildsome
+    `E.finally` maybeUpdateGitIgnore buildsome
   where
     maybeUpdateGitIgnore buildsome
       | writeGitIgnore = updateGitIgnore buildsome makefilePath
@@ -441,11 +440,14 @@ buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
 
 main :: IO ()
-main = do
-  opt <- getOpt
-  makefile <- Makefile.parse (optMakefilePath opt)
-  Db.with (buildDbFilename (optMakefilePath opt)) $ \db ->
-    withBuildsome db makefile opt $
+main = FSHook.with $ \fsHook -> do
+  origOpt <- getOpt
+  let (cwd, file) = splitFileName $ optMakefilePath origOpt
+  Dir.setCurrentDirectory cwd
+  makefile <- Makefile.parse file
+  let relativeOpt = origOpt { optMakefilePath = file }
+  Db.with (buildDbFilename (optMakefilePath relativeOpt)) $ \db ->
+    withBuildsome fsHook db makefile relativeOpt $
       \buildsome -> do
       deleteRemovedOutputs buildsome
       case makefileTargets makefile of

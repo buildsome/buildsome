@@ -1,23 +1,23 @@
-all: example/out/a example/out/subdir.list other
+all: out/a out/subdir.list other
 
-include "example/other.Makefile"
+include "inc/other.Makefile"
 
 CFLAGS=-g -Wall
 
 # Linkage
-example/out/a: example/out/a.o example/out/b.o | example/a.h
-	gcc -o example/out/a $^ ${CFLAGS}
+out/a: out/a.o out/b.o | a.h
+	gcc -o out/a $^ ${CFLAGS}
 
-example/out/auto.h:
-	python example/generate.py
+out/auto.h:
+	python generate.py
 
-example/out/subdir.list:
-	ls -l example/subdir > $@
+out/subdir.list:
+	ls -l subdir > $@
 
-example/subdir/a:
-	echo hi > example/subdir/a
+subdir/a:
+	echo hi > subdir/a
 
-example/out/%.o: example/%.c
+out/%.o: %.c
 	gcc -c -o $@ $< ${CFLAGS}
 
 .PHONY: all
