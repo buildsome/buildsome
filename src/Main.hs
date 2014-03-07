@@ -473,6 +473,6 @@ main = FSHook.with $ \fsHook -> do
       deleteRemovedOutputs buildsome
       case makefileTargets makefile of
         [] -> putStrLn "Empty makefile, done nothing..."
-        (target:_) ->
-          need buildsome Explicit "First target in Makefile" [] $
-          take 1 (targetOutputs target)
+        (target:_) -> do
+          canonicalPaths <- mapM canonicalizePath $ take 1 $ targetOutputs target
+          need buildsome Explicit "First target in Makefile" [] canonicalPaths
