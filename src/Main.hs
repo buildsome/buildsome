@@ -483,5 +483,6 @@ main = FSHook.with $ \fsHook -> do
       case makefileTargets makefile of
         [] -> putStrLn "Empty makefile, done nothing..."
         (target:_) -> do
+          putStrLn $ "Building first (non-pattern) target in Makefile: " ++ show (targetOutputs target)
           canonicalPaths <- mapM canonicalizePath $ take 1 $ targetOutputs target
           need buildsome Explicit "First target in Makefile" [] canonicalPaths
