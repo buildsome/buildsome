@@ -3,6 +3,7 @@ module Lib.Protocol
   , OpenMode(..), showOpenMode
   , CreationMode(..), showCreationMode
   , Func(..), showFunc
+  , Invocation(..), showInvocation
   ) where
 
 import Control.Applicative
@@ -69,6 +70,14 @@ showFunc (SymLink target linkpath) = unwords ["symlink:", show target, show link
 showFunc (Link src dest) = unwords ["link:", show src, show dest]
 showFunc (Chown path uid gid) = unwords ["chown:", show path, show uid, show gid]
 
+data Invocation = Invocation
+  { invokedCwd :: FilePath
+  , invokedFunc :: Func
+  } deriving (Show)
+
+showInvocation :: Invocation -> String
+showInvocation (Invocation cwd func) = concat [showFunc func, " (in ", show cwd, ")"]
+
 {-# ANN module "HLint: ignore Use ++" #-}
 {-# ANN module "HLint: ignore Use camelCase" #-}
 
@@ -116,17 +125,18 @@ funcs =
   , (0x10010, ("chown", Chown <$> getPath <*> getWord32le <*> getWord32le))
   ]
 
-parseMsgLazy :: BSL.ByteString -> Func
+parseMsgLazy :: BSL.ByteString -> Invocation
 parseMsgLazy = runGet $ do
+  cwd <- getPath
   funcId <- getWord32le
   let (_name, getter) = funcs ! fromIntegral funcId
   func <- getter
   finished <- isEmpty
   unless finished $ fail "Unexpected trailing input in message"
-  return func
+  return $ Invocation cwd func
 
 strictToLazy :: BS.ByteString -> BSL.ByteString
 strictToLazy x = BSL.fromChunks [x]
 
-parseMsg :: BS.ByteString -> Func
+parseMsg :: BS.ByteString -> Invocation
 parseMsg = parseMsgLazy . strictToLazy

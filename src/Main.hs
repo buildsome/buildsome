@@ -419,8 +419,6 @@ runCmd ::
 runCmd buildsome target parents inputsRef outputsRef cmd = do
   putStrLn $ concat ["  { ", show cmd, ": "]
   let
-    handleInputRaw accessType actDesc rawPath =
-      handleInput accessType actDesc =<< canonicalizePath rawPath
     handleInput accessType actDesc path
       | inputIgnored path = return ()
       | otherwise = do
@@ -434,10 +432,15 @@ runCmd buildsome target parents inputsRef outputsRef cmd = do
             mapM_ slaveWait slaves
           unless (isLegalOutput target path) $
             recordInput inputsRef accessType path
-    handleOutputRaw actDesc rawPath =
-      handleOutput actDesc =<< canonicalizePath rawPath
     handleOutput _actDesc path =
       atomicModifyIORef'_ outputsRef $ S.insert path
+
+    handleInputRaw accessType actDesc rawCwd rawPath =
+      handleInput accessType actDesc =<<
+      canonicalizePath (rawCwd </> rawPath)
+    handleOutputRaw actDesc rawCwd rawPath =
+      handleOutput actDesc =<<
+      canonicalizePath (rawCwd </> rawPath)
 
   stdOutputs <-
     FSHook.runCommand (bsFsHook buildsome) cmd

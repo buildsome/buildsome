@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include <sys/syscall.h>
 
+#include <errno.h>
+
 #define SAFE_STRCPY(dest, src)      strlcpy(dest, src, sizeof (dest))
 
 #define MAX_FRAME_SIZE 8192
@@ -63,12 +65,28 @@ static int connect_master(void)
     return fd;
 }
 
+/* NOTE: This must be kept in sync with Protocol.hs */
+#define MAX_PATH 256
+
+static struct {
+    char cwd[MAX_PATH];
+} process_state = {""};
+
 static __thread struct {
     pid_t pid;
     int connection_fd;
 } thread_state = {-1, -1};
 
 static void await_go(void);
+
+static void initialize_process_state(void)
+{
+    if(0 != process_state.cwd[0]) return;
+    if(NULL == getcwd(process_state.cwd, sizeof process_state.cwd)) {
+        LOG("Failed to getcwd: %s", strerror(errno));
+        ASSERT(0);
+    }
+}
 
 static int connection(void)
 {
@@ -114,9 +132,6 @@ enum func {
     func_chown,
 };
 
-/* NOTE: This must be kept in sync with Protocol.hs */
-#define MAX_PATH 256
-
 /* func_open.flags */
 #define FLAG_WRITE 1
 #define FLAG_CREATE 2           /* func_open.mode is meaningful iff this flag */
@@ -158,15 +173,19 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
 
 #define AWAIT_CALL_REAL(msg, ...)               \
     do {                                        \
-        send_connection_await(PS(msg));         \
+        send_connection(PS(msg));               \
+        await_go();                             \
         SILENT_CALL_REAL(__VA_ARGS__);          \
     } while(0)
 
-#define DEFINE_MSG(msg, name)                   \
-    struct {                                    \
-        enum func func;                         \
-        struct func_##name args;                \
-    } msg = { .func = func_##name };
+#define DEFINE_MSG(msg, name)                                           \
+    initialize_process_state();                                         \
+    struct {                                                            \
+        char cwd[MAX_PATH];                                             \
+        enum func func;                                                 \
+        struct func_##name args;                                        \
+    } msg = { .func = func_##name };                                    \
+    SAFE_STRCPY(msg.cwd, process_state.cwd);
 
 #define CREATION_FLAGS (O_CREAT | O_EXCL)
 
@@ -293,12 +312,6 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
     SAFE_STRCPY(msg.args.path, path);
     msg.args.mode = mode;
     SEND_CALL_REAL(msg, int, creat, path, mode);
-}
-
-static void send_connection_await(const char *msg, size_t size)
-{
-    send_connection(msg, size);
-    await_go();
 }
 
 /* Depends on the full path */
@@ -434,6 +447,22 @@ DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
     msg.args.owner = owner;
     msg.args.group = group;
     SEND_CALL_REAL(msg, int, chown, path, owner, group);
+}
+
+int fchdir(int fd)
+{
+    (void)fd;
+    /* TODO: We need to track open of files and directories to know
+     * the path here */
+    LOG("fchdir is not supported!");
+    ASSERT(0);
+    return -1;
+}
+
+DEFINE_WRAPPER(int, chdir, (const char *path))
+{
+    SAFE_STRCPY(process_state.cwd, path);
+    SILENT_CALL_REAL(int, chdir, path);
 }
 
 /* TODO: Track utime? */
