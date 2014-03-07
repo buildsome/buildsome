@@ -1,3 +1,5 @@
+* Verify noone uses the Makefile pre-canonization of paths (remove from Buildsome record?)
+
 * Remember reason in execution log and re-tell it
 
 * Add "version number" on db format, and delete older db's?
