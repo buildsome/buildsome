@@ -131,19 +131,17 @@ need buildsome explicitness reason parents paths = do
   slaves <- concat <$> mapM (makeSlaves buildsome explicitness reason parents) paths
   mapM_ slaveWait slaves
 
-assertExists :: Buildsome -> FilePath -> String -> IO ()
-assertExists buildsome path msg
-  | path `elem` makefilePhonies (bsMakefile buildsome) = return ()
-  | otherwise = do
-    doesExist <- fileExists path
-    unless doesExist $ fail msg
+assertExists :: FilePath -> String -> IO ()
+assertExists path msg = do
+  doesExist <- fileExists path
+  unless doesExist $ fail msg
 
 makeDirectSlave :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO (Maybe Slave)
 makeDirectSlave buildsome explicitness reason parents path =
   case BuildMaps.find (bsBuildMaps buildsome) path of
   Nothing -> do
     when (explicitness == Explicit) $
-      assertExists buildsome path $
+      assertExists path $
       concat ["No rule to build ", show path, " (", reason, ")"]
     return Nothing
   Just tgt -> do
@@ -152,10 +150,12 @@ makeDirectSlave buildsome explicitness reason parents path =
       Implicit -> return slave
       Explicit -> verifyFileGetsCreated slave
   where
-    verifyFileGetsCreated slave = do
+    verifyFileGetsCreated slave
+      | path `elem` makefilePhonies (bsMakefile buildsome) = return slave
+      | otherwise = do
       wrappedExecution <-
         wrapAsync (slaveExecution slave) $ \() ->
-        assertExists buildsome path $ concat
+        assertExists path $ concat
           [ show path
           , " explicitly demanded but was not "
           , "created by its target rule" ]
