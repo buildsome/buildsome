@@ -107,12 +107,11 @@ withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO
 withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   semaphore <- MSem.new parallelism
-  buildMaps <- BuildMaps.make <$> Makefile.onMakefilePaths canonicalizePath makefile
   let
     buildsome =
       Buildsome
       { bsSlaveByRepPath = slaveMapByRepPath
-      , bsBuildMaps = buildMaps
+      , bsBuildMaps = BuildMaps.make makefile
       , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
       , bsRestrictedParallelism = semaphore
       , bsDb = db
@@ -475,7 +474,8 @@ main = FSHook.with $ \fsHook -> do
   putStrLn $ "Using makefile: " ++ show makefilePath
   let (cwd, file) = splitFileName makefilePath
   Dir.setCurrentDirectory cwd
-  makefile <- Makefile.parse file
+  origMakefile <- Makefile.parse file
+  makefile <- Makefile.onMakefilePaths canonicalizePath origMakefile
   Db.with (buildDbFilename file) $ \db ->
     withBuildsome file fsHook db makefile opt $
       \buildsome -> do
@@ -484,5 +484,4 @@ main = FSHook.with $ \fsHook -> do
         [] -> putStrLn "Empty makefile, done nothing..."
         (target:_) -> do
           putStrLn $ "Building first (non-pattern) target in Makefile: " ++ show (targetOutputs target)
-          canonicalPaths <- mapM canonicalizePath $ take 1 $ targetOutputs target
-          need buildsome Explicit "First target in Makefile" [] canonicalPaths
+          need buildsome Explicit "First target in Makefile" [] $ take 1 (targetOutputs target)
