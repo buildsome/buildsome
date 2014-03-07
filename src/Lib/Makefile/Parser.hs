@@ -1,3 +1,4 @@
+{-# LANGUAGE Rank2Types #-}
 module Lib.Makefile.Parser
   ( makefile, parse, interpolateCmds, metaVariable
   ) where
@@ -51,30 +52,31 @@ skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
 
 filepaths :: Parser [FilePath]
-filepaths = words <$> interpolateVariables ":#|\n"
+filepaths = words <$> interpolateVariables unescapedSequence ":#|\n"
 
 filepaths1 :: Parser [FilePath]
 filepaths1 = do
-  paths <- words <$> interpolateVariables ":#|\n"
+  paths <- words <$> interpolateVariables unescapedSequence ":#|\n"
   if null paths
     then fail "need at least 1 file path"
     else return paths
 
-literalString :: Monad m => Char -> ParserG u m String
-literalString delimiter = do
-  x <- P.char delimiter
-  str <- concat <$> P.many p
-  y <- P.char delimiter
-  return $ concat [[x], str, [y]]
-  where
-    p = escapeSequence <|>
-        ((: []) <$> P.satisfy (`notElem` ['\n', delimiter]))
-
 escapeSequence :: Monad m => ParserG u m String
-escapeSequence = do
-  esc <- P.char '\\'
-  code <- P.anyChar
-  return [esc, code]
+escapeSequence = build <$> P.char '\\' <*> P.anyChar
+  where
+    build x y = [x, y]
+
+unescapedChar :: Monad m => ParserG u m Char
+unescapedChar = P.char '\\' *> (unescape <$> P.anyChar)
+  where
+    unescape 'n' = '\n'
+    unescape 'r' = '\r'
+    unescape 't' = '\t'
+    unescape '\n' = ' '
+    unescape x = x
+
+unescapedSequence :: Monad m => ParserG u m String
+unescapedSequence = (:[]) <$> unescapedChar
 
 ident :: Monad m => ParserG u m String
 ident = P.many1 (P.satisfy isAlphaNumEx)
@@ -124,15 +126,15 @@ preserveMetavar =
   where
     char4 a b c d = [a, b, c, d]
 
-interpolateVariables :: String -> Parser String
-interpolateVariables stopChars = do
+interpolateVariables :: (forall u m. Monad m => ParserG u m String) -> String -> Parser String
+interpolateVariables escapeParse stopChars = do
   varsEnv <- lift State.get
   curDir <- takeDirectory . P.sourceName <$> P.getPosition
   let
     curDirVar :: Monad m => ParserG u m String
     curDirVar = curDir <$ P.char '.'
     interpolate :: Monad m => ParserG u m String
-    interpolate = interpolateString stopChars (curDirVar <|> variable <|> preserveMetavar)
+    interpolate = interpolateString escapeParse stopChars (curDirVar <|> variable <|> preserveMetavar)
     variable :: Monad m => ParserG u m String
     variable = do
       -- '$' already parsed
@@ -150,16 +152,25 @@ interpolateVariables stopChars = do
   interpolate
 
 -- Inside a single line
-interpolateString :: Monad m => [Char] -> ParserG u m String -> ParserG u m String
-interpolateString stopChars dollarHandler =
+interpolateString :: Monad m => ParserG u m String -> [Char] -> ParserG u m String -> ParserG u m String
+interpolateString escapeParser stopChars dollarHandler =
   concatMany (literalString '\'' <|> doubleQuotes <|> interpolatedChar stopChars)
   where
     concatMany x = concat <$> P.many x
     doubleQuotes = doubleQuoted <$> P.char '"' <*> concatMany (interpolatedChar "\"\n") <*> P.char '"'
     doubleQuoted begin chars end = concat [[begin], chars, [end]]
-    interpolatedChar stopChars' =
-      escapeSequence <|> (P.char '$' *> dollarHandler) <|>
-      (: []) <$> P.noneOf stopChars'
+    interpolatedChar stopChars' = P.choice
+      [ (P.char '$' *> dollarHandler)
+      , escapeParser
+      , (: []) <$> P.noneOf stopChars'
+      ]
+    literalString delimiter = do
+      x <- P.char delimiter
+      str <- concat <$> P.many p
+      y <- P.char delimiter
+      return $ concat [[x], str, [y]]
+      where
+        p = escapeSequence <|> ((: []) <$> P.satisfy (`notElem` ['\n', delimiter]))
 
 type IncludePath = FilePath
 
@@ -167,7 +178,7 @@ includeLine :: Parser IncludePath
 includeLine = do
   fileNameStr <-
     P.try (horizSpaces *> P.string "include" *> horizSpace) *>
-    horizSpaces *> interpolateVariables " #\n" <* skipLineSuffix
+    horizSpaces *> interpolateVariables unescapedSequence " #\n" <* skipLineSuffix
   case reads fileNameStr of
     [(path, "")] -> return path
     _ -> return fileNameStr
@@ -241,7 +252,7 @@ noiseLines =
 cmdLine :: Parser String
 cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t') *>
-    interpolateVariables "#\n" <* skipLineSuffix
+    interpolateVariables escapeSequence "#\n" <* skipLineSuffix
   ) <?> "cmd line"
 
 -- TODO: Better canonization
@@ -283,7 +294,7 @@ interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds) =
   where
     interpolateMetavars = P.runParser cmdInterpolate () (show tgt)
     cmdInterpolate =
-      interpolateString "#\n" $ metaVariable outputs inputs ooInputs mStem
+      interpolateString escapeSequence "#\n" $ metaVariable outputs inputs ooInputs mStem
 
 targetSimple :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
 targetSimple outputPaths inputPaths orderOnlyInputs = do
@@ -347,14 +358,14 @@ isAlphaNumEx x = isAlphaNum x || x == '_'
 varAssignment :: Parser ()
 varAssignment = do
   varName <- P.try $ ident <* P.char '='
-  value <- concat <$> P.many (escapeSequence <|> ((:[]) <$> P.noneOf "#\n"))
+  value <- P.many (unescapedChar <|> P.noneOf "#\n")
   skipLineSuffix
   lift $ State.modify (M.insert varName value)
 
 echoStatement :: Parser ()
 echoStatement = do
   P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string "echo" *> horizSpaces1
-  str <- interpolateVariables "#\n" <* skipLineSuffix
+  str <- interpolateVariables unescapedSequence "#\n" <* skipLineSuffix
   liftIO $ putStrLn $ "ECHO: " ++ str
 
 makefile :: Parser Makefile
