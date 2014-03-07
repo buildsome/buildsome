@@ -352,16 +352,21 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
     E.mask $ \restoreMask -> join $
       atomicModifyIORef (bsSlaveByRepPath buildsome) $
       \oldSlaveMap ->
+      -- TODO: Use a faster method to lookup&insert at the same time
       case M.lookup targetRep oldSlaveMap of
+      Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
       Nothing ->
         ( M.insert targetRep newSlaveMVar oldSlaveMap
-        , resultIntoMVar newSlaveMVar =<<
-          spawnSlave buildsome target reason newParents restoreMask
+        , mkSlave newSlaveMVar $ restoreMask $ do
+            success <- findApplyExecutionLog buildsome target parents
+            unless success $ buildTarget buildsome target reason parents
         )
-      Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
     where
+      annotate = annotateException $ "build failure of " ++ show (targetOutputs target)
       newParents = (targetRep, reason) : parents
-      resultIntoMVar mvar x = putMVar mvar x >> return x
+      mkSlave mvar action = do
+        slave <- fmap Slave . async $ annotate action
+        putMVar mvar slave >> return slave
 
 buildTarget :: Buildsome -> Target -> Reason -> Parents -> IO ()
 buildTarget buildsome target reason parents = do
@@ -386,18 +391,6 @@ buildTarget buildsome target reason parents = do
   verifyTargetOutputs buildsome outputs target
   saveExecutionLog buildsome target inputs outputs stdOutputs
   putStrLn $ "} " ++ show (targetOutputs target)
-
--- Spawn a new slave for a target
-spawnSlave :: Buildsome -> Target -> Reason -> Parents -> (IO () -> IO ()) -> IO Slave
-spawnSlave buildsome target reason parents restoreMask = do
-  success <- findApplyExecutionLog buildsome target parents
-  if success
-    then Slave <$> async (return ())
-    else do
-      execution <- async . annotate . restoreMask $ buildTarget buildsome target reason parents
-      return $ Slave execution
-  where
-    annotate = annotateException ("build failure of " ++ show (targetOutputs target))
 
 registerOutputs :: Buildsome -> Set FilePath -> IO ()
 registerOutputs buildsome outputPaths = do
