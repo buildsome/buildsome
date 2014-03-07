@@ -91,6 +91,18 @@ recordInput inputsRef accessType path = do
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
 
+cancelAllSlaves :: Buildsome -> IO ()
+cancelAllSlaves bs = do
+  oldSlaveMap <- atomicModifyIORef (bsSlaveByRepPath bs) $ (,) M.empty
+  slaves <- mapM readMVar $ M.elems oldSlaveMap
+  case slaves of
+    [] -> return ()
+    _ -> do
+      mapM_ (cancel . slaveExecution) slaves
+      -- Make sure to cancel any potential new slaves that were
+      -- created during cancellation
+      cancelAllSlaves bs
+
 withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
@@ -108,7 +120,11 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsFsHook = fsHook
       }
   body buildsome
-    `E.finally` maybeUpdateGitIgnore buildsome
+    `E.finally` do
+      maybeUpdateGitIgnore buildsome
+      -- We must not leak running slaves as we're not allowed to
+      -- access fsHook, db, etc after leaving here:
+      cancelAllSlaves buildsome
   where
     maybeUpdateGitIgnore buildsome
       | writeGitIgnore = updateGitIgnore buildsome makefilePath
