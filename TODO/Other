@@ -1,3 +1,6 @@
+* If output is declared, and exists, but not registered, fail warning
+  that build will overwrite user content. Use "--overwrite" to allow.
+
 * Remember reason in execution log and re-tell it
 
 * Add "version number" on db format, and delete older db's?
