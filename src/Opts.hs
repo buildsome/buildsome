@@ -26,14 +26,15 @@ getOpt = execParser opts
   where
     parser = Opt <$> strOpt (short 'f' <>
                              long "file" <>
-                             long "makefile" <>
                              metavar "file" <>
                              help "Use file as a makefile.")
                  <*> opt (short 'j' <>
                           long "parallelism" <>
-                          help "How many commands to execute in parallel")
+                          help "How many commands to execute in parallel" <>
+                          metavar "jobs")
                  <*> switch (short 'g' <>
                              long "gitignore" <>
+                             metavar "path" <>
                              help "Write a .gitignore file in the same directory as the Makefile")
                  <*> (deleteUnspecifiedOutputs <$>
                       switch (short 'D' <>
