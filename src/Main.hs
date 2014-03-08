@@ -129,7 +129,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       | writeGitIgnore = updateGitIgnore buildsome makefilePath
       | otherwise = return ()
     parallelism = fromMaybe 1 mParallelism
-    Opt _mMakefile mParallelism writeGitIgnore deleteUnspecifiedOutput = opt
+    Opt _targets _mMakefile mParallelism writeGitIgnore deleteUnspecifiedOutput = opt
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
@@ -145,6 +145,9 @@ need :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
 need buildsome explicitness reason parents paths = do
   slaves <- concat <$> mapM (makeSlaves buildsome explicitness reason parents) paths
   mapM_ slaveWait slaves
+
+want :: Buildsome -> Reason -> [FilePath] -> IO ()
+want buildsome reason = need buildsome Explicit reason []
 
 assertExists :: FilePath -> String -> IO ()
 assertExists path msg = do
@@ -476,6 +479,7 @@ main = FSHook.with $ \fsHook -> do
   makefilePath <- maybe findMakefile return $ optMakefilePath opt
   putStrLn $ "Using makefile: " ++ show makefilePath
   let (cwd, file) = splitFileName makefilePath
+  origCwd <- Dir.getCurrentDirectory
   Dir.setCurrentDirectory cwd
   origMakefile <- Makefile.parse file
   makefile <- Makefile.onMakefilePaths canonicalizePath origMakefile
@@ -483,8 +487,12 @@ main = FSHook.with $ \fsHook -> do
     withBuildsome file fsHook db makefile opt $
       \buildsome -> do
       deleteRemovedOutputs buildsome
-      case makefileTargets makefile of
-        [] -> putStrLn "Empty makefile, done nothing..."
-        (target:_) -> do
-          putStrLn $ "Building first (non-pattern) target in Makefile: " ++ show (targetOutputs target)
-          need buildsome Explicit "First target in Makefile" [] $ take 1 (targetOutputs target)
+      requestedTargets <-
+        mapM (canonicalizePath . (origCwd </>)) $ optRequestedTargets opt
+      case requestedTargets of
+        [] -> case makefileTargets makefile of
+          [] -> putStrLn "Empty makefile, done nothing..."
+          (target:_) -> do
+            putStrLn $ "Building first (non-pattern) target in Makefile: " ++ show (targetOutputs target)
+            want buildsome "First target in Makefile" $ take 1 (targetOutputs target)
+        _ -> want buildsome "First target in Makefile" requestedTargets
