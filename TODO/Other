@@ -1,6 +1,14 @@
 * If output is declared, and exists, but not registered, fail warning
   that build will overwrite user content. Use "--overwrite" to allow.
 
+  * Deletes should always be of explicitly declared output files.
+
+* Ban undeclared outputs from being inputs to anyone else while cmd
+  ongoing, delete them after cmd
+
+  * Need C side to verify output files do not exist before-hand to
+    avoid covert channels that are then unlinked
+
 * Remember reason in execution log and re-tell it
 
 * Add "version number" on db format, and delete older db's?
@@ -20,9 +28,6 @@
 
 
 * C-side can be given allowed outputs rules and fail anything else
-
-  * Need C side to verify output files do not exist before-hand to
-    avoid covert channels that are then unlinked
 
 * C-side can be given buildable outputs and not round-trip for other inputs
 
