@@ -16,11 +16,12 @@ data StdOutputs = StdOutputs
 instance Binary StdOutputs
 
 -- TODO: Where to place StdOutputs and printStdouts
-printStdouts :: StdOutputs -> IO ()
-printStdouts (StdOutputs stdout stderr) = do
-  showOutput "STDOUT" stdout
-  showOutput "STDERR" stderr
+printStdouts :: String -> StdOutputs -> IO ()
+printStdouts label (StdOutputs stdout stderr) = do
+  showOutput ("STDOUT" ++ plabel) stdout
+  showOutput ("STDERR" ++ plabel) stderr
   where
+    plabel = "(" ++ label ++ ")"
     showOutput name bs
       | BS.null bs = return ()
       | otherwise = do

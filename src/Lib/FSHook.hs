@@ -167,7 +167,7 @@ shellCmdVerify inheritEnvs newEnvs cmd = do
   (exitCode, stdout, stderr) <-
     Process.getOutputs (ShellCommand cmd) inheritEnvs newEnvs
   let stdouts = StdOutputs stdout stderr
-  printStdouts stdouts
+  printStdouts cmd stdouts
   case exitCode of
     ExitFailure {} -> fail $ show cmd ++ " failed!"
     _ -> return stdouts

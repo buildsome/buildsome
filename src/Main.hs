@@ -277,7 +277,7 @@ applyExecutionLog buildsome target outputs stdOutputs
   | otherwise = do
     forM_ (zip (targetCmds target) stdOutputs) $ \(cmd, outs) -> do
       putStrLn $ "{ REPLAY of " ++ show cmd
-      printStdouts outs
+      printStdouts cmd outs
 
     verifyTargetOutputs buildsome outputs target
 
@@ -361,7 +361,7 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
             unless success $ buildTarget buildsome target reason parents
         )
     where
-      annotate = annotateException $ "build failure of " ++ show (targetOutputs target)
+      annotate = annotateException $ "build failure of " ++ show (targetOutputs target) ++ ":\n"
       newParents = (targetRep, reason) : parents
       mkSlave mvar action = do
         slave <- fmap Slave . async $ annotate action
