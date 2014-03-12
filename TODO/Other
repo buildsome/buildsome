@@ -1,3 +1,5 @@
+* Running "as root" is another input to the build cmd, so add "is_root" to the cmd hash?
+
 * If output is declared, and exists, but not registered, fail warning
   that build will overwrite user content. Use "--overwrite" to allow.
 
