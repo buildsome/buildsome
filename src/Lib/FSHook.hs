@@ -193,13 +193,15 @@ runCommand fsHook cmd handleInput handleOutput = do
             , jobHandleInput = handleInput
             , jobHandleOutput = handleOutput
             }
-  stdOutputs <-
+  -- Don't leak connections still running our handlers once we leave!
+  (`E.finally` awaitAllConnections activeConnections) $
     withRegistered (fsHookRunningJobs fsHook) jobId job $
     shellCmdVerify ["HOME", "PATH"] (mkEnvVars fsHook jobId) cmd
-  -- Give all connections a chance to complete and perhaps fail
-  -- this execution:
-  mapM_ readMVar =<< readIORef activeConnections
-  return stdOutputs
+  where
+    awaitAllConnections activeConnections =
+      -- Give all connections a chance to complete and perhaps fail
+      -- this execution:
+      mapM_ readMVar =<< readIORef activeConnections
 
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
