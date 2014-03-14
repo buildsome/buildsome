@@ -6,6 +6,7 @@ module Lib.StdOutputs
 
 import Data.Binary (Binary)
 import Data.ByteString (ByteString)
+import Data.Monoid
 import GHC.Generics (Generic)
 import qualified Data.ByteString.Char8 as BS
 
@@ -24,6 +25,4 @@ printStdouts label (StdOutputs stdout stderr) = do
     plabel = "(" ++ label ++ ")"
     showOutput name bs
       | BS.null bs = return ()
-      | otherwise = do
-        putStrLn (name ++ ":")
-        BS.putStr bs
+      | otherwise = BS.putStr $ BS.pack (name <> ":\n") <> bs
