@@ -172,6 +172,13 @@ shellCmdVerify inheritEnvs newEnvs cmd = do
     ExitFailure {} -> fail $ show cmd ++ " failed!"
     _ -> return stdouts
 
+withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
+withRegistered registry jobId job =
+  E.bracket_ registerRunningJob unregisterRunningJob
+  where
+    registerRunningJob = atomicModifyIORef_ registry $ M.insert jobId job
+    unregisterRunningJob = atomicModifyIORef_ registry $ M.delete jobId
+
 runCommand :: FSHook -> String -> InputHandler -> OutputHandler -> IO StdOutputs
 runCommand fsHook cmd handleInput handleOutput = do
   activeConnections <- newIORef []
@@ -186,8 +193,9 @@ runCommand fsHook cmd handleInput handleOutput = do
             , jobHandleInput = handleInput
             , jobHandleOutput = handleOutput
             }
-  atomicModifyIORef_ (fsHookRunningJobs fsHook) $ M.insert jobId job
-  stdOutputs <- shellCmdVerify ["HOME", "PATH"] (mkEnvVars fsHook jobId) cmd
+  stdOutputs <-
+    withRegistered (fsHookRunningJobs fsHook) jobId job $
+    shellCmdVerify ["HOME", "PATH"] (mkEnvVars fsHook jobId) cmd
   -- Give all connections a chance to complete and perhaps fail
   -- this execution:
   mapM_ readMVar =<< readIORef activeConnections
