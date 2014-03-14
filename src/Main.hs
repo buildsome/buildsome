@@ -97,17 +97,19 @@ verifyCancelled a = do
   waitCatch a
 
 cancelAllSlaves :: Buildsome -> IO ()
-cancelAllSlaves bs = do
-  oldSlaveMap <- atomicModifyIORef (bsSlaveByRepPath bs) $ (,) M.empty
-  slaves <- mapM readMVar $ M.elems oldSlaveMap
-  case slaves of
-    [] -> return ()
-    _ -> do
-      mapM_ (verifyCancelled . slaveExecution) slaves
-      putStrLn $ "Cancelled slaves: " ++ show (M.keys oldSlaveMap)
-      -- Make sure to cancel any potential new slaves that were
-      -- created during cancellation
-      cancelAllSlaves bs
+cancelAllSlaves bs = go 0
+  where
+    go alreadyCancelled = do
+      curSlaveMap <- readIORef $ bsSlaveByRepPath bs
+      slaves <- mapM readMVar $ M.elems curSlaveMap
+      let count = length slaves
+      if alreadyCancelled >= count
+        then return ()
+        else do
+          mapM_ (verifyCancelled . slaveExecution) slaves
+          -- Make sure to cancel any potential new slaves that were
+          -- created during cancellation
+          go count
 
 withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome makefilePath fsHook db makefile opt body = do
