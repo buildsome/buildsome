@@ -1,5 +1,7 @@
 module Lib.Parsec (parseFromFile, showErr, showPos) where
 
+import Lib.FilePath ((</>))
+import qualified System.Directory as Dir
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Error as ParseError
 import qualified Text.Parsec.Pos as ParsePos
@@ -8,7 +10,8 @@ parseFromFile ::
   Monad m => P.ParsecT String u m a -> u -> FilePath -> IO (m (Either P.ParseError a))
 parseFromFile p u fname = do
   input <- readFile fname
-  return $ P.runParserT p u fname input
+  cwd <- Dir.getCurrentDirectory
+  return $ P.runParserT p u (cwd </> fname) input
 
 showPos :: ParsePos.SourcePos -> String
 showPos pos = concat [path, ":", show line, ":", show col]
