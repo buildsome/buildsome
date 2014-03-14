@@ -91,6 +91,11 @@ recordInput inputsRef accessType path = do
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
 
+verifyCancelled :: Async a -> IO (Either E.SomeException a)
+verifyCancelled a = do
+  cancel a
+  waitCatch a
+
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = do
   oldSlaveMap <- atomicModifyIORef (bsSlaveByRepPath bs) $ (,) M.empty
@@ -98,7 +103,8 @@ cancelAllSlaves bs = do
   case slaves of
     [] -> return ()
     _ -> do
-      mapM_ (cancel . slaveExecution) slaves
+      mapM_ (verifyCancelled . slaveExecution) slaves
+      putStrLn $ "Cancelled slaves: " ++ show (M.keys oldSlaveMap)
       -- Make sure to cancel any potential new slaves that were
       -- created during cancellation
       cancelAllSlaves bs
