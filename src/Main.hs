@@ -495,12 +495,11 @@ main = FSHook.with $ \fsHook -> do
     withBuildsome file fsHook db makefile opt $
       \buildsome -> do
       deleteRemovedOutputs buildsome
-      requestedTargets <-
-        mapM (canonicalizePath . (origCwd </>)) $ optRequestedTargets opt
-      case requestedTargets of
-        [] -> case makefileTargets makefile of
-          [] -> putStrLn "Empty makefile, done nothing..."
-          (target:_) -> do
-            putStrLn $ "Building first (non-pattern) target in Makefile: " ++ show (targetOutputs target)
-            want buildsome "First target in Makefile" $ take 1 (targetOutputs target)
-        _ -> want buildsome "First target in Makefile" requestedTargets
+      let (requestedTargets, reason) =
+            case optRequestedTargets opt of
+            [] -> (["default"], "implicit 'default' target")
+            ts -> (ts, "explicit request from cmdline")
+      requestedTargetPaths <-
+        mapM (canonicalizePath . (origCwd </>)) requestedTargets
+      putStrLn $ "Building: " ++ show requestedTargetPaths
+      want buildsome reason requestedTargetPaths
