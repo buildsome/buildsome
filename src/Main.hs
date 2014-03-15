@@ -8,7 +8,7 @@ import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Either
 import Data.IORef
-import Data.List (isPrefixOf, isSuffixOf, partition)
+import Data.List (isPrefixOf, isSuffixOf, partition, intercalate)
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, maybeToList)
 import Data.Monoid
@@ -501,5 +501,5 @@ main = FSHook.with $ \fsHook -> do
             ts -> (ts, "explicit request from cmdline")
       requestedTargetPaths <-
         mapM (canonicalizePath . (origCwd </>)) requestedTargets
-      putStrLn $ "Building: " ++ show requestedTargetPaths
+      putStrLn $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
       want buildsome reason requestedTargetPaths
