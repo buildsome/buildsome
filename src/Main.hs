@@ -520,3 +520,4 @@ main = FSHook.with $ \fsHook -> do
       requestedTargetPaths <- inOrigCwd requestedTargets
       putStrLn $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
       want buildsome reason requestedTargetPaths
+      putStrLn "Build Successful!"
