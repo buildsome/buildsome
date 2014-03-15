@@ -1,5 +1,3 @@
-* Disallow "" in include, like make
-
 * Use cwd/default as default target, instead of first target
 
 * Oops: includes will leak variables?!
