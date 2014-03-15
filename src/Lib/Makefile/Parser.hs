@@ -10,7 +10,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT, evalStateT)
 import Data.Char (isAlphaNum)
 import Data.Either (partitionEithers)
-import Data.List (partition, isInfixOf)
+import Data.List (partition, isInfixOf, intercalate)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Lib.FilePath (splitFileName, (</>))
@@ -148,7 +148,7 @@ interpolateVariables escapeParse stopChars = do
           error $ showPos pos ++ ": No such variable: " ++ show varName
         Just val ->
           either (fail . show) return $
-          P.runParser interpolate () "" val
+          P.runParser (interpolate <* P.eof) () "" val
   interpolate
 
 -- Inside a single line
@@ -255,10 +255,6 @@ cmdLine =
     interpolateVariables escapeSequence "#\n" <* skipLineSuffix
   ) <?> "cmd line"
 
--- TODO: Better canonization
-canonizeCmdLines :: [String] -> [String]
-canonizeCmdLines = filter (not . null)
-
 mkFilePattern :: FilePath -> Maybe FilePattern
 mkFilePattern path
   | "%" `isInfixOf` dir =
@@ -276,7 +272,7 @@ targetPattern outputPaths inputPaths orderOnlyInputs = do
     { targetOutputs = map mkOutputPattern outputPaths
     , targetInputs = inputPats
     , targetOrderOnlyInputs = orderOnlyInputPats
-    , targetCmds = canonizeCmdLines cmdLines
+    , targetCmds = intercalate "\n" cmdLines
     }
   where
     mkOutputPattern outputPath =
@@ -289,12 +285,14 @@ targetPattern outputPaths inputPaths orderOnlyInputs = do
 interpolateCmds :: Maybe String -> Target -> Target
 interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds) =
   tgt
-  { targetCmds = either (error . show) id $ mapM interpolateMetavars cmds
+  { targetCmds = either (error . show) id $ interpolateMetavars cmds
   }
   where
-    interpolateMetavars = P.runParser cmdInterpolate () (show tgt)
+    interpolateMetavars = P.runParser (intercalate "\n" <$> (cmdInterpolate `P.sepBy` P.char '\n') <* P.eof) () (show tgt)
     cmdInterpolate =
-      interpolateString escapeSequence "#\n" $ metaVariable outputs inputs ooInputs mStem
+      interpolateString escapeSequence "#\n"
+      (metaVariable outputs inputs ooInputs mStem)
+      <* skipLineSuffix
 
 targetSimple :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
 targetSimple outputPaths inputPaths orderOnlyInputs = do
@@ -304,7 +302,7 @@ targetSimple outputPaths inputPaths orderOnlyInputs = do
     { targetOutputs = outputPaths
     , targetInputs = inputPaths
     , targetOrderOnlyInputs = orderOnlyInputs
-    , targetCmds = canonizeCmdLines cmdLines
+    , targetCmds = intercalate "\n" cmdLines
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)

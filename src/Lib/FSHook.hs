@@ -170,7 +170,7 @@ shellCmdVerify inheritEnvs newEnvs cmd = do
   let stdouts = StdOutputs stdout stderr
   printStdouts cmd stdouts
   case exitCode of
-    ExitFailure {} -> fail $ show cmd ++ " failed!"
+    ExitFailure {} -> fail $ "\"\"\"\n" ++ cmd ++ "\"\"\" failed!"
     _ -> return stdouts
 
 withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r

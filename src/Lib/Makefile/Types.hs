@@ -15,7 +15,7 @@ data TargetType output input = Target
   { targetOutputs :: [output]
   , targetInputs :: [input]
   , targetOrderOnlyInputs :: [input]
-  , targetCmds :: [String]
+  , targetCmds :: String
   } deriving (Show)
 
 type Target = TargetType FilePath FilePath

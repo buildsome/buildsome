@@ -31,13 +31,13 @@ instance Binary InputAccess
 data ExecutionLog = ExecutionLog
   { _elInputsDescs :: Map FilePath InputAccess
   , _elOutputsDescs :: Map FilePath FileDesc
-  , _elStdoutputs :: [StdOutputs] -- Of each command
+  , _elStdoutputs :: StdOutputs
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 
 targetKey :: Target -> ByteString
 targetKey target =
-  MD5.hash $ BS.pack (unlines (targetCmds target)) -- TODO: Canonicalize commands (whitespace/etc)
+  MD5.hash $ BS.pack (targetCmds target) -- TODO: Canonicalize commands (whitespace/etc)
 
 setKey :: Binary a => Db -> ByteString -> a -> IO ()
 setKey (Db db) key val = Sophia.setValue db key $ runPut $ put val

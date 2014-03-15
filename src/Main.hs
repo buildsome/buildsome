@@ -264,7 +264,7 @@ verifyTargetOutputs buildsome outputs target = do
 
 saveExecutionLog ::
   Buildsome -> Target -> Map FilePath (AccessType, Maybe FileStatus) -> Set FilePath ->
-  [StdOutputs] -> IO ()
+  StdOutputs -> IO ()
 saveExecutionLog buildsome target inputs outputs stdOutputs = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
@@ -284,19 +284,15 @@ targetAllInputs target =
 -- Already verified that the execution log is a match
 applyExecutionLog ::
   Buildsome -> TargetType FilePath FilePath ->
-  Set FilePath -> [StdOutputs] -> IO ()
-applyExecutionLog buildsome target outputs stdOutputs
-  | length (targetCmds target) /= length stdOutputs =
-    fail $ unwords
-    ["Invalid recorded standard outputs:", show target, show stdOutputs]
+  Set FilePath -> StdOutputs -> IO ()
+applyExecutionLog buildsome target outputs stdOutputs = do
+  putStrLn $ "{ REPLAY of " ++ show cmd
+  printStdouts cmd stdOutputs
+  putStrLn $ "}"
 
-  | otherwise = do
-    forM_ (zip (targetCmds target) stdOutputs) $ \(cmd, outs) -> do
-      putStrLn $ "{ REPLAY of " ++ show cmd
-      printStdouts cmd outs
-      putStrLn $ "}"
-
-    verifyTargetOutputs buildsome outputs target
+  verifyTargetOutputs buildsome outputs target
+  where
+    cmd = targetCmds target
 
 tryApplyExecutionLog ::
   Buildsome -> Target -> Parents -> Db.ExecutionLog ->
@@ -399,7 +395,7 @@ buildTarget buildsome target reason parents = do
   outputsRef <- newIORef S.empty
   stdOutputs <-
     withAllocatedParallelism buildsome $
-    mapM (runCmd buildsome target parents inputsRef outputsRef)
+    runCmd buildsome target parents inputsRef outputsRef
     (targetCmds target)
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef

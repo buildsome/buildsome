@@ -37,7 +37,10 @@ out/auto.h:
 	python generate.py
 
 out/subdir.list:
-	ls -l subdir > $@
+	for a in 1 2
+	do
+		ls -l subdir > $@
+	done
 
 subdir/a:
 	echo hi > subdir/a
