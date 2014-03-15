@@ -132,12 +132,9 @@ preserveMetavar =
 interpolateVariables :: (forall u m. Monad m => ParserG u m String) -> String -> Parser String
 interpolateVariables escapeParse stopChars = do
   varsEnv <- lift State.get
-  curDir <- takeDirectory . P.sourceName <$> P.getPosition
   let
-    curDirVar :: Monad m => ParserG u m String
-    curDirVar = curDir <$ P.char '.'
     interpolate :: Monad m => ParserG u m String
-    interpolate = interpolateString escapeParse stopChars (curDirVar <|> variable <|> preserveMetavar)
+    interpolate = interpolateString escapeParse stopChars (variable <|> preserveMetavar)
     variable :: Monad m => ParserG u m String
     variable = do
       -- '$' already parsed

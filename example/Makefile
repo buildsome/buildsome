@@ -5,6 +5,8 @@ INCLUDE_DIR=inc
 include "${INCLUDE_DIR}/other.Makefile"
 include ROOT/inc/empty
 
+.=.
+
 CFLAGS=-g -Wall -Wextra
 LDFLAGS=-g -Wall
 CC=gcc
