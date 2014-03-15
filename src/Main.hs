@@ -294,6 +294,7 @@ applyExecutionLog buildsome target outputs stdOutputs
     forM_ (zip (targetCmds target) stdOutputs) $ \(cmd, outs) -> do
       putStrLn $ "{ REPLAY of " ++ show cmd
       printStdouts cmd outs
+      putStrLn $ "}"
 
     verifyTargetOutputs buildsome outputs target
 
