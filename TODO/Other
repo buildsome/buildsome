@@ -1,5 +1,3 @@
-* Have .cabal file build fs_override.so
-
 * Failures should be cached in execution log just like successes
 
 * Running "as root" is another input to the build cmd, so add "is_root" to the cmd hash?
