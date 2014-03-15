@@ -18,6 +18,7 @@ import Lib.IORef (atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Network.Socket (Socket)
+import Paths_buildsome (getDataFileName)
 import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
@@ -203,11 +204,15 @@ runCommand fsHook cmd handleInput handleOutput = do
       -- this execution:
       mapM_ readMVar =<< readIORef activeConnections
 
+accessDataFile :: FilePath -> FilePath -> (FilePath -> IO a) -> IO a
+accessDataFile fallbackDir fileName accessor =
+  (accessor =<< getDataFileName fileName)
+  `E.catch` \e ->
+    if IOError.isDoesNotExistError e
+    then accessor $ fallbackDir </> fileName
+    else E.throwIO e
+
 getLdPreloadPath :: IO FilePath
 getLdPreloadPath = do
   argv0 <- getArgv0
-  Dir.canonicalizePath (takeDirectory argv0 </> "fs_override.so")
-    `E.catch` \e ->
-    if IOError.isDoesNotExistError e
-    then Dir.canonicalizePath "fs_override.so"
-    else E.throwIO e
+  accessDataFile (takeDirectory argv0) "fs_override.so" Dir.canonicalizePath

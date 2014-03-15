@@ -18,6 +18,8 @@ build-type:          Simple
 extra-source-files:  README
 cabal-version:       >=1.10
 
+data-files:          fs_override.so
+
 executable buildsome
   hs-source-dirs:    src/
   main-is:           Main.hs
@@ -48,6 +50,7 @@ executable buildsome
                ,     Lib.FilePath
                ,     Lib.Parsec
                ,     Lib.StringPattern
+               ,     Paths_buildsome
 
   build-depends:     base >=4.6 && <4.7
                ,     binary >=0.7 && <0.8
