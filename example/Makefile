@@ -1,3 +1,5 @@
+default: all
+
 all: out/a out/subdir.list needsm other
 
 INCLUDE_DIR=inc
@@ -41,3 +43,4 @@ subdir/a:
 	echo hi > subdir/a
 
 .PHONY: all
+.PHONY: default
