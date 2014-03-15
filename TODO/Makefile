@@ -1,6 +1,6 @@
-* Use cwd/default as default target, instead of first target
+* Disallow "" in include, like make
 
-* Remove magic $. and just set $. instead of $DIR and maintain it throughout the Makefile?
+* Use cwd/default as default target, instead of first target
 
 * Oops: includes will leak variables?!
 
