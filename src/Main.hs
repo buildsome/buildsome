@@ -510,11 +510,18 @@ main = FSHook.with $ \fsHook -> do
     withBuildsome file fsHook db makefile opt $
       \buildsome -> do
       deleteRemovedOutputs buildsome
-      let (requestedTargets, reason) =
-            case optRequestedTargets opt of
-            [] -> (["default"], "implicit 'default' target")
-            ts -> (ts, "explicit request from cmdline")
-      requestedTargetPaths <-
-        mapM (canonicalizePath . (origCwd </>)) requestedTargets
+      let
+        inOrigCwd =
+          case optMakefilePath opt of
+          -- If we found the makefile by scanning upwards, prepend
+          -- original cwd to avoid losing it:
+          Nothing -> mapM (canonicalizePath . (origCwd </>))
+          -- Otherwise: there's no useful original cwd:
+          Just _ -> return
+        (requestedTargets, reason) =
+          case optRequestedTargets opt of
+          [] -> (["default"], "implicit 'default' target")
+          ts -> (ts, "explicit request from cmdline")
+      requestedTargetPaths <- inOrigCwd requestedTargets
       putStrLn $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
       want buildsome reason requestedTargetPaths
