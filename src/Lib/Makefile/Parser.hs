@@ -78,8 +78,11 @@ unescapedChar = P.char '\\' *> (unescape <$> P.anyChar)
 unescapedSequence :: Monad m => ParserG u m String
 unescapedSequence = (:[]) <$> unescapedChar
 
+isIdentChar :: Char -> Bool
+isIdentChar x = isAlphaNum x || x `elem` "_.~"
+
 ident :: Monad m => ParserG u m String
-ident = P.many1 (P.satisfy isAlphaNumEx)
+ident = P.many1 (P.satisfy isIdentChar)
 
 metaVarId ::
   Monad m => [FilePath] -> [FilePath] -> [FilePath] ->
@@ -140,7 +143,7 @@ interpolateVariables escapeParse stopChars = do
       -- '$' already parsed
       varName <- P.choice
         [ P.char '{' *> ident <* P.char '}'
-        , (:[]) <$> P.satisfy isAlphaNumEx
+        , (:[]) <$> P.satisfy isIdentChar
         ]
       case M.lookup varName varsEnv of
         Nothing -> do
@@ -351,9 +354,6 @@ properEof = do
   case posStack of
     [] -> return ()
     _ -> fail "EOF but includers still pending"
-
-isAlphaNumEx :: Char -> Bool
-isAlphaNumEx x = isAlphaNum x || x == '_'
 
 varAssignment :: Parser ()
 varAssignment = do
