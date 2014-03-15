@@ -435,7 +435,12 @@ runCmd ::
   String -> IO StdOutputs
 runCmd buildsome target parents inputsRef outputsRef cmd = do
   putStrLn $ concat ["  { ", show cmd, ": "]
-  let
+  stdOutputs <-
+    FSHook.runCommand (bsFsHook buildsome) cmd
+    handleInputRaw handleOutputRaw
+  putStrLn $ "  } " ++ show cmd
+  return stdOutputs
+  where
     handleInput accessType actDesc path
       | inputIgnored path = return ()
       | otherwise = do
@@ -458,12 +463,6 @@ runCmd buildsome target parents inputsRef outputsRef cmd = do
     handleOutputRaw actDesc rawCwd rawPath =
       handleOutput actDesc =<<
       canonicalizePath (rawCwd </> rawPath)
-
-  stdOutputs <-
-    FSHook.runCommand (bsFsHook buildsome) cmd
-    handleInputRaw handleOutputRaw
-  putStrLn $ "  } " ++ show cmd
-  return stdOutputs
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
