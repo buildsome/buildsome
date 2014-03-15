@@ -1,5 +1,3 @@
-* Use cwd/default as default target, instead of first target
-
 * Oops: includes will leak variables?!
 
 * Dump include stack when reporting errors
