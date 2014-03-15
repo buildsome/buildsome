@@ -487,10 +487,19 @@ findMakefile = do
       exists <- liftIO $ Dir.doesFileExist path
       when exists $ left path
 
+specifiedMakefile :: FilePath -> IO FilePath
+specifiedMakefile path = do
+  f <- Dir.doesFileExist path
+  d <- Dir.doesDirectoryExist path
+  case (f, d) of
+    (True, _) -> return path
+    (_, True) -> return $ path </> "Makefile"
+    _ -> fail $ "Cannot find specified Makefile: " ++ show path
+
 main :: IO ()
 main = FSHook.with $ \fsHook -> do
   opt <- getOpt
-  makefilePath <- maybe findMakefile return $ optMakefilePath opt
+  makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
   putStrLn $ "Using makefile: " ++ show makefilePath
   let (cwd, file) = splitFileName makefilePath
   origCwd <- Dir.getCurrentDirectory
