@@ -14,7 +14,7 @@ author:              Eyal Lotem
 maintainer:          eyal.lotem@gmail.com
 copyright:           Elastifile (2014)
 category:            Development
-build-type:          Simple
+build-type:          Custom
 extra-source-files:  README
 cabal-version:       >=1.10
 
