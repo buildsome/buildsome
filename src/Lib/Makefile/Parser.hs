@@ -327,7 +327,7 @@ target = do
 
 mkMakefile :: [Either Pattern Target] -> Makefile
 mkMakefile allTargets
-  | not $ null $ concatMap targetCmds phonyTargets = error ".PHONY targets may not have commands!"
+  | not $ null phoniesWithCmds = error $ ".PHONY targets may not have commands: " ++ show phoniesWithCmds
   | not $ null missingPhonies = error $ "missing .PHONY targets: " ++ show missingPhonies
   | otherwise =
     Makefile
@@ -336,6 +336,7 @@ mkMakefile allTargets
     , makefilePhonies = phonies
     }
   where
+    phoniesWithCmds = filter (not . null . targetCmds) phonyTargets
     (targetPatterns, targets) = partitionEithers allTargets
     missingPhonies = S.toList $ S.fromList phonies `S.difference` outputPathsSet
     outputPathsSet = S.fromList (concatMap targetOutputs regularTargets)
