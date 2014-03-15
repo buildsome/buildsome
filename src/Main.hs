@@ -219,11 +219,16 @@ handleLegalUnspecifiedOutputs policy target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
   -- creating job
   unless (null paths) $ putStrLn $ concat
-    [ "WARNING: Removing leaked unspecified outputs: "
-    , show paths, " from target for: ", show (targetOutputs target) ]
-  case policy of
-    DeleteUnspecifiedOutputs -> mapM_ Dir.removeFile paths
-    DontDeleteUnspecifiedOutputs -> return ()
+    [ "WARNING: Leaked unspecified outputs: "
+    , show paths, " from target for: ", show (targetOutputs target)
+    , ", ", actionDesc
+    ]
+  action
+  where
+    (actionDesc, action) =
+      case policy of
+      DeleteUnspecifiedOutputs -> ("deleting", mapM_ Dir.removeFile paths)
+      DontDeleteUnspecifiedOutputs -> ("keeping as untracked", return ())
 
 -- Verify output of whole of slave/execution log
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
