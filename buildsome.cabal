@@ -43,6 +43,7 @@ executable buildsome
                ,     Lib.FSHook
                ,     Lib.Process
                ,     Lib.Protocol
+               ,     Lib.ShowBytes
                ,     Lib.Sock
                ,     Lib.Directory
                ,     Lib.Binary
