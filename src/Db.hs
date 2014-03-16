@@ -10,13 +10,13 @@ module Db
   ) where
 
 import Control.Applicative ((<$>))
-import Data.Binary (Binary, get, put)
+import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import GHC.Generics (Generic)
-import Lib.Binary (runGet, runPut)
+import Lib.Binary (encode, decode)
 import Lib.FileDesc (FileDesc, FileModeDesc)
 import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
@@ -46,10 +46,10 @@ data ExecutionLog = ExecutionLog
 instance Binary ExecutionLog
 
 setKey :: Binary a => Db -> ByteString -> a -> IO ()
-setKey (Db db) key val = Sophia.setValue db key $ runPut $ put val
+setKey (Db db) key val = Sophia.setValue db key $ encode val
 
 getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
-getKey (Db db) key = fmap (runGet get) <$> Sophia.getValue db key
+getKey (Db db) key = fmap decode <$> Sophia.getValue db key
 
 with :: FilePath -> (Db -> IO a) -> IO a
 with dbFileName body = do
