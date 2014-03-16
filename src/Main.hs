@@ -285,11 +285,17 @@ targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
 
+indent :: String -> String
+indent = intercalate "\n" . map ("  "++) . lines
+
 targetPrintWrap :: Target -> Reason -> IO a -> IO a
 targetPrintWrap target reason body =
   putStrLn before *> body <* putStrLn after
   where
-    before = concat ["{ ", show (targetOutputs target), " (", reason, ")"]
+    before = concat
+      [ "{ ", show (targetOutputs target), " (", reason, ")\n"
+      , indent (targetCmds target)
+      ]
     after  = concat ["} ", show (targetOutputs target)]
 
 -- Already verified that the execution log is a match
