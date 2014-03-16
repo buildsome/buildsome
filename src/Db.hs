@@ -17,11 +17,12 @@ import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
+import Lib.Directory (catchDoesNotExist)
 import Lib.FileDesc (FileDesc, FileModeDesc)
 import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
-import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
-import System.FilePath ((</>))
+import System.Directory (createDirectoryIfMissing, getCurrentDirectory, renameFile)
+import System.FilePath ((</>), (<.>))
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Set as S
@@ -30,7 +31,10 @@ import qualified Database.Sophia as Sophia
 schemaVersion :: String
 schemaVersion = "schema.ver.1"
 
-newtype Db = Db Sophia.Db
+data Db = Db
+  { dbSophia :: Sophia.Db
+  , dbDirectory :: FilePath
+  }
 
 type Reason = String
 
@@ -46,10 +50,10 @@ data ExecutionLog = ExecutionLog
 instance Binary ExecutionLog
 
 setKey :: Binary a => Db -> ByteString -> a -> IO ()
-setKey (Db db) key val = Sophia.setValue db key $ encode val
+setKey db key val = Sophia.setValue (dbSophia db) key $ encode val
 
 getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
-getKey (Db db) key = fmap decode <$> Sophia.getValue db key
+getKey db key = fmap decode <$> Sophia.getValue (dbSophia db) key
 
 makeAbsolutePath :: FilePath -> IO FilePath
 makeAbsolutePath path = (</> path) <$> getCurrentDirectory
@@ -61,21 +65,32 @@ with rawDbPath body = do
   Sophia.withEnv $ \env -> do
     Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation (dbPath </> schemaVersion)
     Sophia.withDb env $ \db ->
-      body (Db db)
+      body (Db db dbPath)
 
 data IRef a = IRef
   { readIRef :: IO (Maybe a)
   , writeIRef :: a -> IO ()
   }
 
-mkIRef :: Binary a => ByteString -> Db -> IRef a
-mkIRef key db = IRef
+mkIRefKey :: Binary a => ByteString -> Db -> IRef a
+mkIRefKey key db = IRef
   { readIRef = getKey db key
   , writeIRef = setKey db key
   }
 
+mkIRefFile :: Binary a => String -> Db -> IRef a
+mkIRefFile fileName db = IRef
+  { readIRef = (Just . decode <$> BS.readFile path) `catchDoesNotExist` return Nothing
+  , writeIRef = \val -> do
+      BS.writeFile tmpPath (encode val)
+      renameFile tmpPath path
+  }
+  where
+    tmpPath = path <.> "tmp"
+    path = dbDirectory db </> fileName
+
 registeredOutputs :: Db -> IRef (Set FilePath)
-registeredOutputs = mkIRef "outputs"
+registeredOutputs = mkIRefFile "outputs"
 
 readRegisteredOutputs :: Db -> IO (Set FilePath)
 readRegisteredOutputs db = fromMaybe S.empty <$> readIRef (registeredOutputs db)
@@ -84,13 +99,13 @@ readRegisteredOutputs db = fromMaybe S.empty <$> readIRef (registeredOutputs db)
 -- want them registered as outputs that may disappear from Makefile
 -- and thus be deleted
 leakedOutputs :: Db -> IRef (Set FilePath)
-leakedOutputs = mkIRef "leaked_outputs"
+leakedOutputs = mkIRefFile "leaked_outputs"
 
 readLeakedOutputs :: Db -> IO (Set FilePath)
 readLeakedOutputs db = fromMaybe S.empty <$> readIRef (leakedOutputs db)
 
 executionLog :: Target -> Db -> IRef ExecutionLog
-executionLog target = mkIRef targetKey
+executionLog target = mkIRefKey targetKey
   where
     targetKey =
       MD5.hash $ BS.pack (targetCmds target) -- TODO: Canonicalize commands (whitespace/etc)
