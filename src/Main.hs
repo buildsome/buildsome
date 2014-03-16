@@ -233,7 +233,7 @@ handleLegalUnspecifiedOutputs buildsome target paths = do
     (actionDesc, action) =
       case bsDeleteUnspecifiedOutput buildsome of
       DeleteUnspecifiedOutputs -> ("deleting", mapM_ Dir.removeFile paths)
-      DontDeleteUnspecifiedOutputs -> ("keeping", registerOutputs buildsome (S.fromList paths))
+      DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs buildsome (S.fromList paths))
 
 -- Verify output of whole of slave/execution log
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
@@ -414,11 +414,18 @@ buildTarget buildsome target reason parents =
     verifyTargetOutputs buildsome outputs target
     saveExecutionLog buildsome target inputs outputs stdOutputs
 
+registerDbList :: Ord a => (Db -> IRef (Set a)) -> Buildsome -> Set a -> IO ()
+registerDbList mkIRef buildsome newItems = do
+  existingItems <- fromMaybe S.empty <$> readIRef iref
+  writeIRef iref $ newItems <> existingItems
+  where
+    iref = mkIRef $ bsDb buildsome
+
 registerOutputs :: Buildsome -> Set FilePath -> IO ()
-registerOutputs buildsome outputPaths = do
-  outputs <- Db.readRegisteredOutputs (bsDb buildsome)
-  writeIRef (Db.registeredOutputs (bsDb buildsome)) $
-    outputPaths <> outputs
+registerOutputs = registerDbList Db.registeredOutputs
+
+registerLeakedOutputs :: Buildsome -> Set FilePath -> IO ()
+registerLeakedOutputs = registerDbList Db.leakedOutputs
 
 deleteRemovedOutputs :: Buildsome -> IO ()
 deleteRemovedOutputs buildsome = do
@@ -553,7 +560,9 @@ main = FSHook.with $ \fsHook -> do
           putStrLn "Build Successful!"
         RequestedClean -> do
           outputs <- Db.readRegisteredOutputs (bsDb buildsome)
-          Clean.Result _totalSize totalSpace count <- mconcat <$> mapM Clean.output (S.toList outputs)
+          leaked <- Db.readLeakedOutputs (bsDb buildsome)
+          Clean.Result _totalSize totalSpace count <-
+            mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
           writeIRef (Db.registeredOutputs (bsDb buildsome)) S.empty
           putStrLn $ concat
             [ "Clean Successful: Cleaned "

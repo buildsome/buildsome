@@ -6,6 +6,7 @@ module Db
   , IRef, readIRef, writeIRef
   , executionLog
   , registeredOutputs, readRegisteredOutputs
+  , leakedOutputs, readLeakedOutputs
   ) where
 
 import Control.Applicative ((<$>))
@@ -50,9 +51,6 @@ with dbFileName body =
     Sophia.withDb env $ \db ->
       body (Db db)
 
-readRegisteredOutputs :: Db -> IO (Set FilePath)
-readRegisteredOutputs db = fromMaybe S.empty <$> readIRef (registeredOutputs db)
-
 data IRef a = IRef
   { readIRef :: IO (Maybe a)
   , writeIRef :: a -> IO ()
@@ -67,9 +65,20 @@ mkIRef key db = IRef
 registeredOutputs :: Db -> IRef (Set FilePath)
 registeredOutputs = mkIRef "outputs"
 
+readRegisteredOutputs :: Db -> IO (Set FilePath)
+readRegisteredOutputs db = fromMaybe S.empty <$> readIRef (registeredOutputs db)
+
+-- We allow leakage of "legal" outputs (e.g: .pyc files) but we don't
+-- want them registered as outputs that may disappear from Makefile
+-- and thus be deleted
+leakedOutputs :: Db -> IRef (Set FilePath)
+leakedOutputs = mkIRef "leaked_outputs"
+
+readLeakedOutputs :: Db -> IO (Set FilePath)
+readLeakedOutputs db = fromMaybe S.empty <$> readIRef (leakedOutputs db)
+
 executionLog :: Target -> Db -> IRef ExecutionLog
 executionLog target = mkIRef targetKey
   where
     targetKey =
       MD5.hash $ BS.pack (targetCmds target) -- TODO: Canonicalize commands (whitespace/etc)
-
