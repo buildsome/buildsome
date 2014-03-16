@@ -20,7 +20,7 @@ import Lib.Binary (encode, decode)
 import Lib.FileDesc (FileDesc, FileModeDesc)
 import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS
@@ -51,11 +51,15 @@ setKey (Db db) key val = Sophia.setValue db key $ encode val
 getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
 getKey (Db db) key = fmap decode <$> Sophia.getValue db key
 
+makeAbsolutePath :: FilePath -> IO FilePath
+makeAbsolutePath path = (</> path) <$> getCurrentDirectory
+
 with :: FilePath -> (Db -> IO a) -> IO a
-with dbFileName body = do
-  createDirectoryIfMissing False dbFileName
+with rawDbPath body = do
+  dbPath <- makeAbsolutePath rawDbPath
+  createDirectoryIfMissing False dbPath
   Sophia.withEnv $ \env -> do
-    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation (dbFileName </> schemaVersion)
+    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation (dbPath </> schemaVersion)
     Sophia.withDb env $ \db ->
       body (Db db)
 
