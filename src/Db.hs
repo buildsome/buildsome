@@ -20,10 +20,15 @@ import Lib.Binary (runGet, runPut)
 import Lib.FileDesc (FileDesc, FileModeDesc)
 import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath ((</>))
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
+
+schemaVersion :: String
+schemaVersion = "schema.ver.1"
 
 newtype Db = Db Sophia.Db
 
@@ -45,9 +50,10 @@ getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
 getKey (Db db) key = fmap (runGet get) <$> Sophia.getValue db key
 
 with :: FilePath -> (Db -> IO a) -> IO a
-with dbFileName body =
+with dbFileName body = do
+  createDirectoryIfMissing False dbFileName
   Sophia.withEnv $ \env -> do
-    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation dbFileName
+    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation (dbFileName </> schemaVersion)
     Sophia.withDb env $ \db ->
       body (Db db)
 
