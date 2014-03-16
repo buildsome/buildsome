@@ -339,9 +339,12 @@ tryApplyExecutionLog buildsome target reason parents executionLog = do
       -- TODO: This is good for parallelism, but bad if the set of
       -- inputs changed, as it may build stuff that's no longer
       -- required:
+      let hinted = S.fromList $ targetAllInputs target
       speculativeSlaves <-
         fmap concat $ forM (M.toList inputsDescs) $ \(inputPath, (depReason, inputAccess)) ->
-        makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit depReason parents inputPath
+        if inputPath `S.member` hinted
+        then return []
+        else makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit depReason parents inputPath
 
       let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
       hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
