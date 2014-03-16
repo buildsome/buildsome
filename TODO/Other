@@ -1,7 +1,3 @@
-* Removing old outputs now removes .pyc as old. But we should
-  associate the .pyc with its target somehow and only remove it when
-  its gone/changed?
-
 * Failures should be cached in execution log just like successes
 
 * If output is declared, and exists, but not registered, fail warning
@@ -39,6 +35,8 @@
 * C-side can be given buildable outputs and not round-trip for other inputs
 
 * Use mtime cache to see that outputs already match the execution log too
+
+* Associate allowedUnspecifiedOutputs with targets somehow?
 
 * Add an age to keys, and delete old ones?
 
