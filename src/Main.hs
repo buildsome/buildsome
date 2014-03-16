@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Control.Applicative ((<$>))
+import Control.Applicative (Applicative(..), (<$>))
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
@@ -281,23 +281,27 @@ targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
 
+targetPrintWrap :: Target -> Reason -> IO a -> IO a
+targetPrintWrap target reason body =
+  putStrLn before *> body <* putStrLn after
+  where
+    before = concat ["{ ", show (targetOutputs target), " (", reason, ")"]
+    after  = concat ["} ", show (targetOutputs target)]
+
 -- Already verified that the execution log is a match
 applyExecutionLog ::
-  Buildsome -> TargetType FilePath FilePath ->
-  Set FilePath -> StdOutputs -> IO ()
-applyExecutionLog buildsome target outputs stdOutputs = do
-  putStrLn $ "{ REPLAY of " ++ show cmd
-  printStdouts cmd stdOutputs
-  putStrLn $ "}"
-
-  verifyTargetOutputs buildsome outputs target
+  Buildsome -> Target -> Reason -> Set FilePath -> StdOutputs -> IO ()
+applyExecutionLog buildsome target reason outputs stdOutputs =
+  targetPrintWrap target reason $ do
+    printStdouts cmd stdOutputs
+    verifyTargetOutputs buildsome outputs target
   where
     cmd = targetCmds target
 
 tryApplyExecutionLog ::
-  Buildsome -> Target -> Parents -> Db.ExecutionLog ->
+  Buildsome -> Target -> Reason -> Parents -> Db.ExecutionLog ->
   IO (Either (String, FilePath) ())
-tryApplyExecutionLog buildsome target parents (Db.ExecutionLog inputsDescs outputsDescs stdOutputs) = do
+tryApplyExecutionLog buildsome target reason parents executionLog = do
   waitForInputs
   runEitherT $ do
     forM_ (M.toList inputsDescs) $ \(filePath, oldInputAccess) ->
@@ -310,9 +314,10 @@ tryApplyExecutionLog buildsome target parents (Db.ExecutionLog inputsDescs outpu
     mapM_ (compareToNewDesc "output" getFileDesc) $ M.toList outputsDescs
 
     liftIO $
-      applyExecutionLog buildsome target
+      applyExecutionLog buildsome target reason
       (M.keysSet outputsDescs) stdOutputs
   where
+    Db.ExecutionLog inputsDescs outputsDescs stdOutputs = executionLog
     compareToNewDesc str getNewDesc (filePath, oldDesc) = do
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
@@ -323,10 +328,10 @@ tryApplyExecutionLog buildsome target parents (Db.ExecutionLog inputsDescs outpu
       -- inputs changed, as it may build stuff that's no longer
       -- required:
 
-      let reason = "Recorded dependency of " ++ show (targetOutputs target)
+      let depReason = "Recorded dependency of " ++ show (targetOutputs target)
       speculativeSlaves <-
         fmap concat $ forM (M.toList inputsDescs) $ \(inputPath, inputAccess) ->
-        makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit reason parents inputPath
+        makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit depReason parents inputPath
 
       let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
       hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
@@ -335,14 +340,14 @@ tryApplyExecutionLog buildsome target parents (Db.ExecutionLog inputsDescs outpu
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: Buildsome -> Target -> Parents -> IO Bool
-findApplyExecutionLog buildsome target parents = do
+findApplyExecutionLog :: Buildsome -> Target -> Reason -> Parents -> IO Bool
+findApplyExecutionLog buildsome target reason parents = do
   mExecutionLog <- Db.readExecutionLog (bsDb buildsome) target
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return False
     Just executionLog -> do
-      res <- tryApplyExecutionLog buildsome target parents executionLog
+      res <- tryApplyExecutionLog buildsome target reason parents executionLog
       case res of
         Left (str, filePath) -> do
           putStrLn $ concat
@@ -370,7 +375,7 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
       Nothing ->
         ( M.insert targetRep newSlaveMVar oldSlaveMap
         , mkSlave newSlaveMVar $ restoreMask $ do
-            success <- findApplyExecutionLog buildsome target parents
+            success <- findApplyExecutionLog buildsome target reason parents
             unless success $ buildTarget buildsome target reason parents
         )
     where
@@ -381,28 +386,26 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
         putMVar mvar slave >> return slave
 
 buildTarget :: Buildsome -> Target -> Reason -> Parents -> IO ()
-buildTarget buildsome target reason parents = do
-  putStrLn $ concat ["{ ", show (targetOutputs target), " (", reason, ")"]
+buildTarget buildsome target reason parents =
+  targetPrintWrap target reason $ do
+    -- TODO: Register each created subdirectory as an output?
+    mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
 
-  -- TODO: Register each created subdirectory as an output?
-  mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
-
-  mapM_ removeFileAllowNotExists $ targetOutputs target
-  need buildsome Explicit
-    ("Hint from " ++ show (take 1 (targetOutputs target))) parents
-    (targetAllInputs target)
-  inputsRef <- newIORef M.empty
-  outputsRef <- newIORef S.empty
-  stdOutputs <-
-    withAllocatedParallelism buildsome $
-    runCmd buildsome target parents inputsRef outputsRef
-    (targetCmds target)
-  inputs <- readIORef inputsRef
-  outputs <- readIORef outputsRef
-  registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
-  verifyTargetOutputs buildsome outputs target
-  saveExecutionLog buildsome target inputs outputs stdOutputs
-  putStrLn $ "} " ++ show (targetOutputs target)
+    mapM_ removeFileAllowNotExists $ targetOutputs target
+    need buildsome Explicit
+      ("Hint from " ++ show (take 1 (targetOutputs target))) parents
+      (targetAllInputs target)
+    inputsRef <- newIORef M.empty
+    outputsRef <- newIORef S.empty
+    stdOutputs <-
+      withAllocatedParallelism buildsome $
+      runCmd buildsome target parents inputsRef outputsRef
+      (targetCmds target)
+    inputs <- readIORef inputsRef
+    outputs <- readIORef outputsRef
+    registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
+    verifyTargetOutputs buildsome outputs target
+    saveExecutionLog buildsome target inputs outputs stdOutputs
 
 registerOutputs :: Buildsome -> Set FilePath -> IO ()
 registerOutputs buildsome outputPaths = do
@@ -429,13 +432,9 @@ runCmd ::
   IORef (Map FilePath (AccessType, Maybe FileStatus)) ->
   IORef (Set FilePath) ->
   String -> IO StdOutputs
-runCmd buildsome target parents inputsRef outputsRef cmd = do
-  putStrLn $ concat ["  { ", show cmd, ": "]
-  stdOutputs <-
-    FSHook.runCommand (bsFsHook buildsome) cmd
-    handleInputRaw handleOutputRaw
-  putStrLn $ "  } " ++ show cmd
-  return stdOutputs
+runCmd buildsome target parents inputsRef outputsRef cmd =
+  FSHook.runCommand (bsFsHook buildsome) cmd
+  handleInputRaw handleOutputRaw
   where
     handleInput accessType actDesc path
       | inputIgnored path = return ()
