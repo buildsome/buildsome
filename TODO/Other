@@ -13,8 +13,6 @@
 
 * Remember reason in execution log and re-tell it
 
-* Add "version number" on db format, and delete older db's?
-
 * Bugs:
   * Wrong FS input model:
     * mode-only-inputs, (rely on mode only)
