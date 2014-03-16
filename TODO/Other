@@ -2,8 +2,6 @@
   associate the .pyc with its target somehow and only remove it when
   its gone/changed?
 
-* Add clean command
-
 * Failures should be cached in execution log just like successes
 
 * If output is declared, and exists, but not registered, fail warning
