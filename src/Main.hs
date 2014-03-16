@@ -14,7 +14,7 @@ import Data.Maybe (fromMaybe, maybeToList)
 import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
-import Db (Db, IRef(..))
+import Db (Db, IRef(..), Reason)
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
@@ -48,7 +48,6 @@ data Explicitness = Explicit | Implicit
   deriving (Eq)
 
 type Parents = [(TargetRep, Reason)]
-type Reason = String
 
 newtype Slave = Slave { slaveExecution :: Async () }
 
@@ -83,15 +82,19 @@ isLegalOutput target path =
   path `elem` targetOutputs target ||
   allowedUnspecifiedOutput path
 
-recordInput :: IORef (Map FilePath (AccessType, Maybe FileStatus)) -> AccessType -> FilePath -> IO ()
-recordInput inputsRef accessType path = do
+recordInput ::
+  IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
+  AccessType -> Reason -> FilePath -> IO ()
+recordInput inputsRef accessType reason path = do
   mstat <- getMFileStatus path
   atomicModifyIORef'_ inputsRef $
     -- Keep the older mtime in the map, and we'll eventually compare
     -- the final mtime to the oldest one
-    M.insertWith
-    (\_ (oldAccessType, oldMStat) ->
-     (max accessType oldAccessType, oldMStat)) path (accessType, mstat)
+    M.insertWith merge path (accessType, reason, mstat)
+  where
+    merge _ (oldAccessType, oldReason, oldMStat) =
+     -- Keep the highest access type, and the oldest reason/mstat
+     (max accessType oldAccessType, oldReason, oldMStat)
 
 inputIgnored :: FilePath -> Bool
 inputIgnored path = "/dev" `isPrefixOf` path
@@ -267,8 +270,9 @@ verifyTargetOutputs buildsome outputs target = do
     specified = S.fromList $ targetOutputs target
 
 saveExecutionLog ::
-  Buildsome -> Target -> Map FilePath (AccessType, Maybe FileStatus) -> Set FilePath ->
-  StdOutputs -> IO ()
+  Buildsome -> Target ->
+  Map FilePath (AccessType, Reason, Maybe FileStatus) ->
+  Set FilePath -> StdOutputs -> IO ()
 saveExecutionLog buildsome target inputs outputs stdOutputs = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
@@ -278,8 +282,8 @@ saveExecutionLog buildsome target inputs outputs stdOutputs = do
   writeIRef (Db.executionLog target (bsDb buildsome)) $
     Db.ExecutionLog inputsDescs (M.fromList outputDescPairs) stdOutputs
   where
-    inputAccess path (AccessTypeFull, mStat) = Db.InputAccessFull <$> fileDescOfMStat path mStat
-    inputAccess path (AccessTypeModeOnly, mStat) = Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
+    inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat path mStat
+    inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
@@ -313,7 +317,7 @@ tryApplyExecutionLog buildsome target reason parents executionLog = do
   waitForInputs
   runEitherT $ do
     forM_ (M.toList inputsDescs) $ \(filePath, oldInputAccess) ->
-      case oldInputAccess of
+      case snd oldInputAccess of
         Db.InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     (filePath, oldDesc)
         Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc (filePath, oldModeDesc)
     -- For now, we don't store the output files' content
@@ -335,10 +339,8 @@ tryApplyExecutionLog buildsome target reason parents executionLog = do
       -- TODO: This is good for parallelism, but bad if the set of
       -- inputs changed, as it may build stuff that's no longer
       -- required:
-
-      let depReason = "Recorded dependency of " ++ show (targetOutputs target)
       speculativeSlaves <-
-        fmap concat $ forM (M.toList inputsDescs) $ \(inputPath, inputAccess) ->
+        fmap concat $ forM (M.toList inputsDescs) $ \(inputPath, (depReason, inputAccess)) ->
         makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit depReason parents inputPath
 
       let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
@@ -456,7 +458,7 @@ shellCmdVerify target inheritEnvs newEnvs = do
 runCmd ::
   Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
-  IORef (Map FilePath (AccessType, Maybe FileStatus)) ->
+  IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
   IORef (Set FilePath) -> IO StdOutputs
 runCmd buildsome target parents inputsRef outputsRef =
   FSHook.runCommand (bsFsHook buildsome)
@@ -476,7 +478,7 @@ runCmd buildsome target parents inputsRef outputsRef =
           unless (null slaves) $ withReleasedParallelism buildsome $
             mapM_ slaveWait slaves
           unless (isLegalOutput target path) $
-            recordInput inputsRef accessType path
+            recordInput inputsRef accessType actDesc path
     handleOutput _actDesc path =
       atomicModifyIORef'_ outputsRef $ S.insert path
 

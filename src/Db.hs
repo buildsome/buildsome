@@ -2,7 +2,7 @@
 module Db
   ( Db, with
   , InputAccess(..)
-  , ExecutionLog(..)
+  , ExecutionLog(..), Reason
   , IRef, readIRef, writeIRef
   , executionLog
   , registeredOutputs, readRegisteredOutputs
@@ -32,12 +32,14 @@ schemaVersion = "schema.ver.1"
 
 newtype Db = Db Sophia.Db
 
+type Reason = String
+
 data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
   deriving (Generic, Show)
 instance Binary InputAccess
 
 data ExecutionLog = ExecutionLog
-  { _elInputsDescs :: Map FilePath InputAccess
+  { _elInputsDescs :: Map FilePath (Reason, InputAccess)
   , _elOutputsDescs :: Map FilePath FileDesc
   , _elStdoutputs :: StdOutputs
   } deriving (Generic, Show)
