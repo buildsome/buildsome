@@ -292,10 +292,10 @@ targetPrintWrap :: Target -> String -> Reason -> IO a -> IO a
 targetPrintWrap target str reason body =
   putStrLn before *> body <* putStrLn after
   where
-    before = concat
-      [ "{ ", show (targetOutputs target), " ", str, " (", reason, ")\n"
-      , indent (targetCmds target)
-      ]
+    cmd = targetCmds target
+    before = concat $
+      [ "{ ", show (targetOutputs target), " ", str, " (", reason, ")" ] ++
+      [ "\n" ++ indent cmd | not (null cmd) ]
     after  = concat ["} ", show (targetOutputs target)]
 
 -- Already verified that the execution log is a match
