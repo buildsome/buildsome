@@ -131,7 +131,7 @@ handleJobMsg _tidStr conn job (Protocol.Invocation cwd msg) =
     Protocol.OpenDir path -> reportInput AccessTypeFull path
     Protocol.ReadLink path -> reportInput AccessTypeModeOnly path
   where
-    actDesc = Protocol.showFunc msg ++ " done by " ++ show (jobLabel job)
+    actDesc = Protocol.showFunc msg ++ " done by " ++ jobLabel job
     forwardExceptions =
       E.handle $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
     reportInput accessType path =
