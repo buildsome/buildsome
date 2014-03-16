@@ -19,7 +19,7 @@ import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
-import Lib.Directory (getMFileStatus, fileExists, removeFileOrDirectoryOrNothing)
+import Lib.Directory (getMFileStatus, fileExists, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.FSHook (FSHook)
 import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
@@ -257,7 +257,7 @@ verifyTargetOutputs buildsome outputs target = do
   existingIllegalOutputs <- filterM fileExists illegalOutputs
   unless (null existingIllegalOutputs) $ do
     putStrLn $ "Illegal output files created: " ++ show existingIllegalOutputs
-    mapM_ removeFileOrDirectoryOrNothing existingIllegalOutputs
+    mapM_ removeFileOrDirectory existingIllegalOutputs
     fail $ concat
       [ "Target for ", show (targetOutputs target)
       , " wrote to unspecified output files: ", show existingIllegalOutputs

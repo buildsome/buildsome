@@ -1,6 +1,7 @@
 module Lib.Directory
   ( getMFileStatus
   , fileExists, catchDoesNotExist
+  , removeFileOrDirectory
   , removeFileOrDirectoryOrNothing
   ) where
 
@@ -34,3 +35,13 @@ removeFileOrDirectoryOrNothing path = do
   d <- Dir.doesDirectoryExist path
   when f $ Dir.removeFile path
   when d $ Dir.removeDirectoryRecursive path
+
+removeFileOrDirectory :: FilePath -> IO ()
+removeFileOrDirectory path = do
+  f <- Dir.doesFileExist path
+  d <- Dir.doesDirectoryExist path
+  case (f, d) of
+    (True, True) -> fail "doesFileExist && doesDirectoryExist both true?!"
+    (True, False) -> Dir.removeFile path
+    (False, True) -> Dir.removeDirectoryRecursive path
+    (False, False) -> fail $ path ++ " does not exist"
