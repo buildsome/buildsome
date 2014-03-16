@@ -150,12 +150,13 @@ withBuildsome makefilePath fsHook db makefile opt body = do
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
   outputs <- Db.readRegisteredOutputs (bsDb buildsome)
+  leaked <- Db.readLeakedOutputs (bsDb buildsome)
   let dir = takeDirectory makefilePath
       gitIgnorePath = dir </> ".gitignore"
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
   writeFile gitIgnorePath $ unlines $
     map (makeRelative dir) $
-    extraIgnored ++ S.toList outputs
+    extraIgnored ++ S.toList (outputs <> leaked)
 
 need :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
 need buildsome explicitness reason parents paths = do
