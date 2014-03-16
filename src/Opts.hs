@@ -1,19 +1,28 @@
-module Opts (DeleteUnspecifiedOutputs(..), Opt(..), getOpt) where
+module Opts
+  ( DeleteUnspecifiedOutputs(..)
+  , OverwriteUnregisteredOutputs(..)
+  , Opt(..), getOpt
+  ) where
 
 import Data.List (intercalate)
 import Options.Applicative
 
 data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs
-
 deleteUnspecifiedOutputs :: Bool -> DeleteUnspecifiedOutputs
 deleteUnspecifiedOutputs False = DontDeleteUnspecifiedOutputs
 deleteUnspecifiedOutputs True = DeleteUnspecifiedOutputs
+
+data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
+overwriteUnregisteredOutputs :: Bool -> OverwriteUnregisteredOutputs
+overwriteUnregisteredOutputs False = DontOverwriteUnregisteredOutputs
+overwriteUnregisteredOutputs True = OverwriteUnregisteredOutputs
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
                , optParallelism :: Maybe Int
                , optGitIgnore :: Bool
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
+               , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                }
 
 opt :: Read a => Mod OptionFields a -> Parser (Maybe a)
@@ -52,4 +61,7 @@ getOpt = execParser opts
                       switch (short 'D' <>
                               long "delete-unspecified" <>
                               help "Delete unspecified outputs"))
+                 <*> (overwriteUnregisteredOutputs <$>
+                      switch (long "overwrite" <>
+                              help "Overwrite outputs not created by buildsome"))
     opts = info (helper <*> parser) (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")

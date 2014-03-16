@@ -27,7 +27,7 @@ import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.ShowBytes (showBytes)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
-import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
+import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
 import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (<.>), makeRelative)
 import System.Posix.Files (FileStatus)
@@ -54,6 +54,7 @@ newtype Slave = Slave { slaveExecution :: Async () }
 data Buildsome = Buildsome
   { bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
   , bsDeleteUnspecifiedOutput :: DeleteUnspecifiedOutputs
+  , bsOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
   , bsBuildMaps :: BuildMaps
   , bsRestrictedParallelism :: MSem Int
   , bsDb :: Db
@@ -129,6 +130,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       { bsSlaveByRepPath = slaveMapByRepPath
       , bsBuildMaps = BuildMaps.make makefile
       , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
+      , bsOverwriteUnregisteredOutputs = overwriteUnregisteredOutputs
       , bsRestrictedParallelism = semaphore
       , bsDb = db
       , bsMakefile = makefile
@@ -145,7 +147,9 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       | writeGitIgnore = updateGitIgnore buildsome makefilePath
       | otherwise = return ()
     parallelism = fromMaybe 1 mParallelism
-    Opt _targets _mMakefile mParallelism writeGitIgnore deleteUnspecifiedOutput = opt
+    Opt _targets _mMakefile mParallelism
+        writeGitIgnore deleteUnspecifiedOutput
+        overwriteUnregisteredOutputs = opt
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
@@ -223,6 +227,7 @@ makeSlaves buildsome explicitness reason parents path = do
   childs <- makeChildSlaves buildsome (reason ++ "(Container directory)") parents path
   return $ maybeToList mSlave ++ childs
 
+-- e.g: .pyc files
 handleLegalUnspecifiedOutputs :: Buildsome -> Target -> [FilePath] -> IO ()
 handleLegalUnspecifiedOutputs buildsome target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
@@ -399,13 +404,36 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
         slave <- fmap Slave . async $ annotate action
         putMVar mvar slave >> return slave
 
+removeOldUnregisteredOutput :: Buildsome -> FilePath -> IO ()
+removeOldUnregisteredOutput buildsome path =
+  case bsOverwriteUnregisteredOutputs buildsome of
+  DontOverwriteUnregisteredOutputs ->
+    fail $ concat
+    [ show path, " specified as output but exists as a file that "
+    , "was not created by buildsome (use --overwrite to go ahead "
+    , "anyway)" ]
+  OverwriteUnregisteredOutputs -> do
+    putStrLn $ "Overwriting " ++ show path ++ " (due to --overwrite)"
+    removeFileOrDirectory path
+
+removeOldOutput :: Buildsome -> Set FilePath -> FilePath -> IO ()
+removeOldOutput buildsome registeredOutputs path = do
+  mStat <- getMFileStatus path
+  case mStat of
+    Nothing -> return () -- Nothing to do
+    Just _
+      | path `S.member` registeredOutputs -> removeFileOrDirectory path
+      | otherwise -> removeOldUnregisteredOutput buildsome path
+
 buildTarget :: Buildsome -> Target -> Reason -> Parents -> IO ()
 buildTarget buildsome target reason parents =
   targetPrintWrap target "BUILDING" reason $ do
     -- TODO: Register each created subdirectory as an output?
     mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
 
-    mapM_ removeFileOrDirectoryOrNothing $ targetOutputs target
+    registeredOutputs <- Db.readRegisteredOutputs (bsDb buildsome)
+    mapM_ (removeOldOutput buildsome registeredOutputs) $ targetOutputs target
+
     need buildsome Explicit
       ("Hint from " ++ show (take 1 (targetOutputs target))) parents
       (targetAllInputs target)
