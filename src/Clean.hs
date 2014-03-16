@@ -1,7 +1,7 @@
 module Clean (Result(..), output) where
 
 import Data.Monoid
-import Lib.Directory (getMFileStatus, removeFileAllowNotExists)
+import Lib.Directory (getMFileStatus, removeFileOrDirectoryOrNothing)
 import System.Posix.Types (FileOffset)
 import System.Posix.Files (fileSize)
 
@@ -26,7 +26,7 @@ output path = do
   case mStat of
     Nothing -> return mempty
     Just stat -> do
-      removeFileAllowNotExists path
+      removeFileOrDirectoryOrNothing path
       return
         Result
         { cleanedTotalSize = fileSize stat

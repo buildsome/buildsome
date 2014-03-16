@@ -1,7 +1,7 @@
 module Lib.Directory
   ( getMFileStatus
   , fileExists, catchDoesNotExist
-  , removeFileAllowNotExists
+  , removeFileOrDirectoryOrNothing
   ) where
 
 import Control.Applicative ((<$>))
@@ -28,8 +28,8 @@ getMFileStatus path =
 fileExists :: FilePath -> IO Bool
 fileExists path = isJust <$> getMFileStatus path
 
-removeFileAllowNotExists :: FilePath -> IO ()
-removeFileAllowNotExists path = do
+removeFileOrDirectoryOrNothing :: FilePath -> IO ()
+removeFileOrDirectoryOrNothing path = do
   f <- Dir.doesFileExist path
   d <- Dir.doesDirectoryExist path
   when f $ Dir.removeFile path

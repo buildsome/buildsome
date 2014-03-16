@@ -19,7 +19,7 @@ import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
-import Lib.Directory (getMFileStatus, fileExists, removeFileAllowNotExists)
+import Lib.Directory (getMFileStatus, fileExists, removeFileOrDirectoryOrNothing)
 import Lib.FSHook (FSHook)
 import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
@@ -257,7 +257,7 @@ verifyTargetOutputs buildsome outputs target = do
   existingIllegalOutputs <- filterM fileExists illegalOutputs
   unless (null existingIllegalOutputs) $ do
     putStrLn $ "Illegal output files created: " ++ show existingIllegalOutputs
-    mapM_ removeFileAllowNotExists existingIllegalOutputs
+    mapM_ removeFileOrDirectoryOrNothing existingIllegalOutputs
     fail $ concat
       [ "Target for ", show (targetOutputs target)
       , " wrote to unspecified output files: ", show existingIllegalOutputs
@@ -405,7 +405,7 @@ buildTarget buildsome target reason parents =
     -- TODO: Register each created subdirectory as an output?
     mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
 
-    mapM_ removeFileAllowNotExists $ targetOutputs target
+    mapM_ removeFileOrDirectoryOrNothing $ targetOutputs target
     need buildsome Explicit
       ("Hint from " ++ show (take 1 (targetOutputs target))) parents
       (targetAllInputs target)
@@ -443,7 +443,7 @@ deleteRemovedOutputs buildsome = do
       Just _ -> return $ S.singleton output
       Nothing -> do
         putStrLn $ "Removing old output: " ++ show output
-        removeFileAllowNotExists output
+        removeFileOrDirectoryOrNothing output
         return S.empty
   writeIRef (Db.registeredOutputs (bsDb buildsome)) liveOutputs
 
