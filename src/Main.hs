@@ -10,7 +10,7 @@ import Control.Monad.Trans.Either
 import Data.IORef
 import Data.List (isPrefixOf, isSuffixOf, partition, intercalate)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, maybeToList)
+import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
@@ -153,8 +153,8 @@ withBuildsome makefilePath fsHook db makefile opt body = do
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
-  outputs <- Db.readRegisteredOutputs (bsDb buildsome)
-  leaked <- Db.readLeakedOutputs (bsDb buildsome)
+  outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
+  leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
   let dir = takeDirectory makefilePath
       gitIgnorePath = dir </> ".gitignore"
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
@@ -431,7 +431,7 @@ buildTarget buildsome target reason parents =
     -- TODO: Register each created subdirectory as an output?
     mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
 
-    registeredOutputs <- Db.readRegisteredOutputs (bsDb buildsome)
+    registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
     mapM_ (removeOldOutput buildsome registeredOutputs) $ targetOutputs target
 
     need buildsome Explicit
@@ -448,32 +448,24 @@ buildTarget buildsome target reason parents =
     verifyTargetOutputs buildsome outputs target
     saveExecutionLog buildsome target inputs outputs stdOutputs
 
-registerDbList :: Ord a => (Db -> IRef (Set a)) -> Buildsome -> Set a -> IO ()
-registerDbList mkIRef buildsome newItems = do
-  existingItems <- fromMaybe S.empty <$> readIRef iref
-  writeIRef iref $ newItems <> existingItems
-  where
-    iref = mkIRef $ bsDb buildsome
+registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
+registerDbList mkIORef buildsome newItems =
+  atomicModifyIORef'_ (mkIORef (bsDb buildsome)) $ (newItems <>)
 
 registerOutputs :: Buildsome -> Set FilePath -> IO ()
-registerOutputs = registerDbList Db.registeredOutputs
+registerOutputs = registerDbList Db.registeredOutputsRef
 
 registerLeakedOutputs :: Buildsome -> Set FilePath -> IO ()
-registerLeakedOutputs = registerDbList Db.leakedOutputs
+registerLeakedOutputs = registerDbList Db.leakedOutputsRef
 
 deleteRemovedOutputs :: Buildsome -> IO ()
 deleteRemovedOutputs buildsome = do
-  outputs <- Db.readRegisteredOutputs (bsDb buildsome)
-  liveOutputs <-
-    fmap mconcat .
-    forM (S.toList outputs) $ \output ->
-      case BuildMaps.find (bsBuildMaps buildsome) output of
-      Just _ -> return $ S.singleton output
-      Nothing -> do
-        putStrLn $ "Removing old output: " ++ show output
-        removeFileOrDirectoryOrNothing output
-        return S.empty
-  writeIRef (Db.registeredOutputs (bsDb buildsome)) liveOutputs
+  toDelete <-
+    atomicModifyIORef' (Db.registeredOutputsRef (bsDb buildsome)) $
+    S.partition (isJust . BuildMaps.find (bsBuildMaps buildsome))
+  forM_ (S.toList toDelete) $ \path -> do
+    putStrLn $ "Removing old output: " ++ show path
+    removeFileOrDirectoryOrNothing path
 
 shellCmdVerify :: Target -> [String] -> Process.Env -> IO StdOutputs
 shellCmdVerify target inheritEnvs newEnvs = do
@@ -593,11 +585,12 @@ main = FSHook.with $ \fsHook -> do
           want buildsome reason requestedTargetPaths
           putStrLn "Build Successful!"
         RequestedClean -> do
-          outputs <- Db.readRegisteredOutputs (bsDb buildsome)
-          leaked <- Db.readLeakedOutputs (bsDb buildsome)
+          outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
+          leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
           Clean.Result _totalSize totalSpace count <-
             mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
-          writeIRef (Db.registeredOutputs (bsDb buildsome)) S.empty
+          writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
+          writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
           putStrLn $ concat
             [ "Clean Successful: Cleaned "
             , show count, " files freeing an estimated "
