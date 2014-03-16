@@ -16,13 +16,10 @@ import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
-import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Network.Socket (Socket)
 import Paths_buildsome (getDataFileName)
-import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (</>))
 import System.Posix.Process (getProcessID)
-import System.Process (CmdSpec(..))
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
@@ -42,7 +39,7 @@ type InputHandler = AccessType -> AccessDoc -> FilePath -> FilePath -> IO ()
 type OutputHandler = AccessDoc -> FilePath -> FilePath -> IO ()
 
 data RunningJob = RunningJob
-  { jobCmd :: String
+  { jobLabel :: String
   , jobActiveConnections :: IORef [MVar ()]
   , jobThreadId :: ThreadId
   , jobHandleInput :: InputHandler
@@ -134,7 +131,7 @@ handleJobMsg _tidStr conn job (Protocol.Invocation cwd msg) =
     Protocol.OpenDir path -> reportInput AccessTypeFull path
     Protocol.ReadLink path -> reportInput AccessTypeModeOnly path
   where
-    actDesc = Protocol.showFunc msg ++ " done by " ++ show (jobCmd job)
+    actDesc = Protocol.showFunc msg ++ " done by " ++ show (jobLabel job)
     forwardExceptions =
       E.handle $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
     reportInput accessType path =
@@ -163,16 +160,6 @@ mkEnvVars fsHook jobId =
     , ("EFBUILD_JOB_ID", BS.unpack jobId)
     ]
 
-shellCmdVerify :: [String] -> Process.Env -> String -> IO StdOutputs
-shellCmdVerify inheritEnvs newEnvs cmd = do
-  (exitCode, stdout, stderr) <-
-    Process.getOutputs (ShellCommand cmd) inheritEnvs newEnvs
-  let stdouts = StdOutputs stdout stderr
-  printStdouts cmd stdouts
-  case exitCode of
-    ExitFailure {} -> fail $ "\"\"\"\n" ++ cmd ++ "\"\"\" failed!"
-    _ -> return stdouts
-
 withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
 withRegistered registry jobId job =
   E.bracket_ registerRunningJob unregisterRunningJob
@@ -180,15 +167,15 @@ withRegistered registry jobId job =
     registerRunningJob = atomicModifyIORef_ registry $ M.insert jobId job
     unregisterRunningJob = atomicModifyIORef_ registry $ M.delete jobId
 
-runCommand :: FSHook -> String -> InputHandler -> OutputHandler -> IO StdOutputs
-runCommand fsHook cmd handleInput handleOutput = do
+runCommand :: FSHook -> (Process.Env -> IO r) -> String -> InputHandler -> OutputHandler -> IO r
+runCommand fsHook cmd label handleInput handleOutput = do
   activeConnections <- newIORef []
   jobIdNum <- nextJobId fsHook
   tid <- myThreadId
 
   let jobId = BS.pack ("cmd" ++ show jobIdNum)
       job = RunningJob
-            { jobCmd = cmd
+            { jobLabel = label
             , jobActiveConnections = activeConnections
             , jobThreadId = tid
             , jobHandleInput = handleInput
@@ -197,7 +184,7 @@ runCommand fsHook cmd handleInput handleOutput = do
   -- Don't leak connections still running our handlers once we leave!
   (`E.finally` awaitAllConnections activeConnections) $
     withRegistered (fsHookRunningJobs fsHook) jobId job $
-    shellCmdVerify ["HOME", "PATH"] (mkEnvVars fsHook jobId) cmd
+    cmd (mkEnvVars fsHook jobId)
   where
     awaitAllConnections activeConnections =
       -- Give all connections a chance to complete and perhaps fail

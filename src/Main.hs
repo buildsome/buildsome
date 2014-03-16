@@ -26,10 +26,12 @@ import Lib.FilePath ((</>), canonicalizePath, splitFileName)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.ShowBytes (showBytes)
-import Lib.StdOutputs (StdOutputs, printStdouts)
+import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
+import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (<.>), makeRelative)
 import System.Posix.Files (FileStatus)
+import System.Process (CmdSpec(..))
 import qualified Clean
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
@@ -39,6 +41,7 @@ import qualified Db
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
+import qualified Lib.Process as Process
 import qualified System.Directory as Dir
 
 data Explicitness = Explicit | Implicit
@@ -427,6 +430,16 @@ deleteRemovedOutputs buildsome = do
         return S.empty
   Db.writeRegisteredOutputs (bsDb buildsome) liveOutputs
 
+shellCmdVerify :: String -> [String] -> Process.Env -> IO StdOutputs
+shellCmdVerify cmd inheritEnvs newEnvs = do
+  (exitCode, stdout, stderr) <-
+    Process.getOutputs (ShellCommand cmd) inheritEnvs newEnvs
+  let stdouts = StdOutputs stdout stderr
+  printStdouts cmd stdouts
+  case exitCode of
+    ExitFailure {} -> fail $ "\"\"\"\n" ++ cmd ++ "\"\"\" failed!"
+    _ -> return stdouts
+
 runCmd ::
   Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
@@ -434,7 +447,7 @@ runCmd ::
   IORef (Set FilePath) ->
   String -> IO StdOutputs
 runCmd buildsome target parents inputsRef outputsRef cmd =
-  FSHook.runCommand (bsFsHook buildsome) cmd
+  FSHook.runCommand (bsFsHook buildsome) (shellCmdVerify cmd ["HOME", "PATH"]) cmd
   handleInputRaw handleOutputRaw
   where
     handleInput accessType actDesc path
