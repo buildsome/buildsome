@@ -25,10 +25,12 @@ import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileM
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
+import Lib.ShowBytes (showBytes)
 import Lib.StdOutputs (StdOutputs, printStdouts)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..))
 import System.FilePath (takeDirectory, (<.>), makeRelative)
 import System.Posix.Files (FileStatus)
+import qualified Clean
 import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Data.Map.Strict as M
@@ -531,6 +533,10 @@ main = FSHook.with $ \fsHook -> do
           putStrLn "Build Successful!"
         RequestedClean -> do
           outputs <- Db.readRegisteredOutputs (bsDb buildsome)
-          mapM_ removeFileAllowNotExists $ S.toList outputs
+          Clean.Result _totalSize totalSpace count <- mconcat <$> mapM Clean.output (S.toList outputs)
           Db.writeRegisteredOutputs (bsDb buildsome) S.empty
-          putStrLn "Clean Successful!"
+          putStrLn $ concat
+            [ "Clean Successful: Cleaned "
+            , show count, " files freeing an estimated "
+            , showBytes (fromIntegral totalSpace)
+            ]
