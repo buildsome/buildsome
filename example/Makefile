@@ -9,7 +9,7 @@ include ROOT/inc/empty
 
 .=.
 
-CFLAGS=-g -Wall -Wextra
+CFLAGS=-g -Wall -Wextra -Wno-init-self
 LDFLAGS=-g -Wall
 CC=gcc
 
