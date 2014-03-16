@@ -490,6 +490,15 @@ specifiedMakefile path = do
     (_, True) -> return $ path </> "Makefile"
     _ -> fail $ "Cannot find specified Makefile: " ++ show path
 
+data Requested = RequestedClean | RequestedTargets [FilePath] Reason
+
+getRequestedTargets :: [String] -> IO Requested
+getRequestedTargets ["clean"] = return RequestedClean
+getRequestedTargets [] = return $ RequestedTargets ["default"] "implicit 'default' target"
+getRequestedTargets ts
+  | "clean" `elem` ts = fail "Clean must be requested exclusively"
+  | otherwise = return $ RequestedTargets ts "explicit request from cmdline"
+
 main :: IO ()
 main = FSHook.with $ \fsHook -> do
   opt <- getOpt
@@ -512,11 +521,17 @@ main = FSHook.with $ \fsHook -> do
           Nothing -> mapM (canonicalizePath . (origCwd </>))
           -- Otherwise: there's no useful original cwd:
           Just _ -> return
-        (requestedTargets, reason) =
-          case optRequestedTargets opt of
-          [] -> (["default"], "implicit 'default' target")
-          ts -> (ts, "explicit request from cmdline")
-      requestedTargetPaths <- inOrigCwd requestedTargets
-      putStrLn $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
-      want buildsome reason requestedTargetPaths
-      putStrLn "Build Successful!"
+
+      requested <- getRequestedTargets $ optRequestedTargets opt
+
+      case requested of
+        RequestedTargets requestedTargets reason -> do
+          requestedTargetPaths <- inOrigCwd requestedTargets
+          putStrLn $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
+          want buildsome reason requestedTargetPaths
+          putStrLn "Build Successful!"
+        RequestedClean -> do
+          outputs <- Db.readRegisteredOutputs (bsDb buildsome)
+          mapM_ removeFileAllowNotExists $ S.toList outputs
+          Db.writeRegisteredOutputs (bsDb buildsome) S.empty
+          putStrLn "Clean Successful!"
