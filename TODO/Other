@@ -1,6 +1,10 @@
-* Failures should be cached in execution log just like successes
+* Removing old outputs now removes .pyc as old. But we should
+  associate the .pyc with its target somehow and only remove it when
+  its gone/changed?
 
-* Running "as root" is another input to the build cmd, so add "is_root" to the cmd hash?
+* Add clean command
+
+* Failures should be cached in execution log just like successes
 
 * If output is declared, and exists, but not registered, fail warning
   that build will overwrite user content. Use "--overwrite" to allow.
@@ -30,6 +34,7 @@
     * Only report *successful* outputs? Or perhaps report as inputs,
       output operations that failed due to FS state?
 
+* Running "as root" is another input to the build cmd, so add "is_root" to the cmd hash?
 
 * C-side can be given allowed outputs rules and fail anything else
 
