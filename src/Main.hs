@@ -214,8 +214,8 @@ makeSlaves buildsome explicitness reason parents path = do
   childs <- makeChildSlaves buildsome (reason ++ "(Container directory)") parents path
   return $ maybeToList mSlave ++ childs
 
-handleLegalUnspecifiedOutputs :: DeleteUnspecifiedOutputs -> Target -> [FilePath] -> IO ()
-handleLegalUnspecifiedOutputs policy target paths = do
+handleLegalUnspecifiedOutputs :: Buildsome -> Target -> [FilePath] -> IO ()
+handleLegalUnspecifiedOutputs buildsome target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
   -- creating job
   unless (null paths) $ putStrLn $ concat
@@ -226,9 +226,9 @@ handleLegalUnspecifiedOutputs policy target paths = do
   action
   where
     (actionDesc, action) =
-      case policy of
+      case bsDeleteUnspecifiedOutput buildsome of
       DeleteUnspecifiedOutputs -> ("deleting", mapM_ Dir.removeFile paths)
-      DontDeleteUnspecifiedOutputs -> ("keeping as untracked", return ())
+      DontDeleteUnspecifiedOutputs -> ("keeping", registerOutputs buildsome (S.fromList paths))
 
 -- Verify output of whole of slave/execution log
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
@@ -237,8 +237,7 @@ verifyTargetOutputs buildsome outputs target = do
   let (unspecifiedOutputs, illegalOutputs) = partition (isLegalOutput target) allUnspecified
 
   -- Legal unspecified need to be kept/deleted according to policy:
-  handleLegalUnspecifiedOutputs
-    (bsDeleteUnspecifiedOutput buildsome) target =<<
+  handleLegalUnspecifiedOutputs buildsome target =<<
     filterM fileExists unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
