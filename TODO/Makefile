@@ -1,5 +1,3 @@
-* Oops: includes will leak variables?!
-
 * Dump include stack when reporting errors
 
 * {} expansions after variable expansions

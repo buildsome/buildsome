@@ -1,11 +1,13 @@
-* Replace "fail" with custom Exception type that has no message wrappers
-
-* Failures should be cached in execution log just like successes
-
 * If output is declared, and exists, but not registered, fail warning
   that build will overwrite user content. Use "--overwrite" to allow.
 
   * Deletes should always be of explicitly declared output files.
+
+* Db to cache commonly written keys (file keys)
+
+* Replace "fail" with custom Exception type that has no message wrappers
+
+* Failures should be cached in execution log just like successes
 
 * Bugs:
   * Need to ban undeclared outputs from being inputs to anyone else
