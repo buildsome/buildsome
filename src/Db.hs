@@ -1,9 +1,11 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Db
   ( Db, with
   , InputAccess(..)
-  , ExecutionLog(..), writeExecutionLog, readExecutionLog
-  , readRegisteredOutputs, writeRegisteredOutputs
+  , ExecutionLog(..)
+  , IRef, readIRef, writeIRef
+  , executionLog
+  , registeredOutputs, readRegisteredOutputs
   ) where
 
 import Control.Applicative ((<$>))
@@ -35,10 +37,6 @@ data ExecutionLog = ExecutionLog
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 
-targetKey :: Target -> ByteString
-targetKey target =
-  MD5.hash $ BS.pack (targetCmds target) -- TODO: Canonicalize commands (whitespace/etc)
-
 setKey :: Binary a => Db -> ByteString -> a -> IO ()
 setKey (Db db) key val = Sophia.setValue db key $ runPut $ put val
 
@@ -52,18 +50,26 @@ with dbFileName body =
     Sophia.withDb env $ \db ->
       body (Db db)
 
-registeredOutputsKey :: ByteString
-registeredOutputsKey = BS.pack "outputs"
-
 readRegisteredOutputs :: Db -> IO (Set FilePath)
-readRegisteredOutputs db =
-  fromMaybe S.empty <$> getKey db registeredOutputsKey
+readRegisteredOutputs db = fromMaybe S.empty <$> readIRef (registeredOutputs db)
 
-writeRegisteredOutputs :: Db -> Set FilePath -> IO ()
-writeRegisteredOutputs db = setKey db registeredOutputsKey
+data IRef a = IRef
+  { readIRef :: IO (Maybe a)
+  , writeIRef :: a -> IO ()
+  }
 
-writeExecutionLog :: Db -> Target -> ExecutionLog -> IO ()
-writeExecutionLog db = setKey db . targetKey
+mkIRef :: Binary a => ByteString -> Db -> IRef a
+mkIRef key db = IRef
+  { readIRef = getKey db key
+  , writeIRef = setKey db key
+  }
 
-readExecutionLog :: Db -> Target -> IO (Maybe ExecutionLog)
-readExecutionLog db = getKey db . targetKey
+registeredOutputs :: Db -> IRef (Set FilePath)
+registeredOutputs = mkIRef "outputs"
+
+executionLog :: Target -> Db -> IRef ExecutionLog
+executionLog target = mkIRef targetKey
+  where
+    targetKey =
+      MD5.hash $ BS.pack (targetCmds target) -- TODO: Canonicalize commands (whitespace/etc)
+

@@ -14,7 +14,7 @@ import Data.Maybe (fromMaybe, maybeToList)
 import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
-import Db (Db)
+import Db (Db, IRef(..))
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
@@ -275,7 +275,7 @@ saveExecutionLog buildsome target inputs outputs stdOutputs = do
     forM (S.toList outputs) $ \outPath -> do
       fileDesc <- getFileDesc outPath
       return (outPath, fileDesc)
-  Db.writeExecutionLog (bsDb buildsome) target $
+  writeIRef (Db.executionLog target (bsDb buildsome)) $
     Db.ExecutionLog inputsDescs (M.fromList outputDescPairs) stdOutputs
   where
     inputAccess path (AccessTypeFull, mStat) = Db.InputAccessFull <$> fileDescOfMStat path mStat
@@ -350,7 +350,7 @@ tryApplyExecutionLog buildsome target reason parents executionLog = do
 -- in order
 findApplyExecutionLog :: Buildsome -> Target -> Reason -> Parents -> IO Bool
 findApplyExecutionLog buildsome target reason parents = do
-  mExecutionLog <- Db.readExecutionLog (bsDb buildsome) target
+  mExecutionLog <- readIRef $ Db.executionLog target $ bsDb buildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return False
@@ -417,7 +417,8 @@ buildTarget buildsome target reason parents =
 registerOutputs :: Buildsome -> Set FilePath -> IO ()
 registerOutputs buildsome outputPaths = do
   outputs <- Db.readRegisteredOutputs (bsDb buildsome)
-  Db.writeRegisteredOutputs (bsDb buildsome) $ outputPaths <> outputs
+  writeIRef (Db.registeredOutputs (bsDb buildsome)) $
+    outputPaths <> outputs
 
 deleteRemovedOutputs :: Buildsome -> IO ()
 deleteRemovedOutputs buildsome = do
@@ -431,7 +432,7 @@ deleteRemovedOutputs buildsome = do
         putStrLn $ "Removing old output: " ++ show output
         removeFileAllowNotExists output
         return S.empty
-  Db.writeRegisteredOutputs (bsDb buildsome) liveOutputs
+  writeIRef (Db.registeredOutputs (bsDb buildsome)) liveOutputs
 
 shellCmdVerify :: Target -> [String] -> Process.Env -> IO StdOutputs
 shellCmdVerify target inheritEnvs newEnvs = do
@@ -553,7 +554,7 @@ main = FSHook.with $ \fsHook -> do
         RequestedClean -> do
           outputs <- Db.readRegisteredOutputs (bsDb buildsome)
           Clean.Result _totalSize totalSpace count <- mconcat <$> mapM Clean.output (S.toList outputs)
-          Db.writeRegisteredOutputs (bsDb buildsome) S.empty
+          writeIRef (Db.registeredOutputs (bsDb buildsome)) S.empty
           putStrLn $ concat
             [ "Clean Successful: Cleaned "
             , show count, " files freeing an estimated "
