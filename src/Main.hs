@@ -288,12 +288,12 @@ targetAllInputs target =
 indent :: String -> String
 indent = intercalate "\n" . map ("  "++) . lines
 
-targetPrintWrap :: Target -> Reason -> IO a -> IO a
-targetPrintWrap target reason body =
+targetPrintWrap :: Target -> String -> Reason -> IO a -> IO a
+targetPrintWrap target str reason body =
   putStrLn before *> body <* putStrLn after
   where
     before = concat
-      [ "{ ", show (targetOutputs target), " (", reason, ")\n"
+      [ "{ ", show (targetOutputs target), " ", str, " (", reason, ")\n"
       , indent (targetCmds target)
       ]
     after  = concat ["} ", show (targetOutputs target)]
@@ -302,7 +302,7 @@ targetPrintWrap target reason body =
 applyExecutionLog ::
   Buildsome -> Target -> Reason -> Set FilePath -> StdOutputs -> IO ()
 applyExecutionLog buildsome target reason outputs stdOutputs =
-  targetPrintWrap target reason $ do
+  targetPrintWrap target "REPLAY" reason $ do
     printStdouts (show (targetOutputs target)) stdOutputs
     verifyTargetOutputs buildsome outputs target
 
@@ -395,7 +395,7 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
 
 buildTarget :: Buildsome -> Target -> Reason -> Parents -> IO ()
 buildTarget buildsome target reason parents =
-  targetPrintWrap target reason $ do
+  targetPrintWrap target "BUILDING" reason $ do
     -- TODO: Register each created subdirectory as an output?
     mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
 
