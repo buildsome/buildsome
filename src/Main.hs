@@ -297,10 +297,8 @@ applyExecutionLog ::
   Buildsome -> Target -> Reason -> Set FilePath -> StdOutputs -> IO ()
 applyExecutionLog buildsome target reason outputs stdOutputs =
   targetPrintWrap target reason $ do
-    printStdouts cmd stdOutputs
+    printStdouts (show (targetOutputs target)) stdOutputs
     verifyTargetOutputs buildsome outputs target
-  where
-    cmd = targetCmds target
 
 tryApplyExecutionLog ::
   Buildsome -> Target -> Reason -> Parents -> Db.ExecutionLog ->
@@ -404,7 +402,6 @@ buildTarget buildsome target reason parents =
     stdOutputs <-
       withAllocatedParallelism buildsome $
       runCmd buildsome target parents inputsRef outputsRef
-      (targetCmds target)
     inputs <- readIORef inputsRef
     outputs <- readIORef outputsRef
     registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
@@ -430,24 +427,27 @@ deleteRemovedOutputs buildsome = do
         return S.empty
   Db.writeRegisteredOutputs (bsDb buildsome) liveOutputs
 
-shellCmdVerify :: String -> [String] -> Process.Env -> IO StdOutputs
-shellCmdVerify cmd inheritEnvs newEnvs = do
+shellCmdVerify :: Target -> [String] -> Process.Env -> IO StdOutputs
+shellCmdVerify target inheritEnvs newEnvs = do
   (exitCode, stdout, stderr) <-
     Process.getOutputs (ShellCommand cmd) inheritEnvs newEnvs
   let stdouts = StdOutputs stdout stderr
-  printStdouts cmd stdouts
+  printStdouts (show (targetOutputs target)) stdouts
   case exitCode of
     ExitFailure {} -> fail $ "\"\"\"\n" ++ cmd ++ "\"\"\" failed!"
     _ -> return stdouts
+  where
+    cmd = targetCmds target
 
 runCmd ::
   Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
   IORef (Map FilePath (AccessType, Maybe FileStatus)) ->
-  IORef (Set FilePath) ->
-  String -> IO StdOutputs
-runCmd buildsome target parents inputsRef outputsRef cmd =
-  FSHook.runCommand (bsFsHook buildsome) (shellCmdVerify cmd ["HOME", "PATH"]) cmd
+  IORef (Set FilePath) -> IO StdOutputs
+runCmd buildsome target parents inputsRef outputsRef =
+  FSHook.runCommand (bsFsHook buildsome)
+  (shellCmdVerify target ["HOME", "PATH"])
+  (show (targetOutputs target))
   handleInputRaw handleOutputRaw
   where
     handleInput accessType actDesc path
