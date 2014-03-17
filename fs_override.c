@@ -1,4 +1,4 @@
-#define _GNU_SOURCE
+#include "c.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -11,24 +11,15 @@
 #include <sys/un.h>
 #include <stdlib.h>
 #include <string.h>
-#include <bsd/string.h>         /* strlcpy */
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/syscall.h>
 
 #include <errno.h>
 
-#define SAFE_STRCPY(dest, src)      strlcpy(dest, src, sizeof (dest))
-
 #define MAX_FRAME_SIZE 8192
 
 #define PREFIX "BUILDSOME_"
-
-#define LOG(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__);
-#define DEBUG(fmt, ...)
-#define ASSERT(x)  do { if (!(x)) { LOG("ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__); abort(); } } while(0)
-
-#define PS(x)   ((char *)& (x)) , sizeof (x)
 
 static int gettid(void)
 {
