@@ -9,7 +9,7 @@ module Db
   ) where
 
 import Control.Applicative ((<$>))
-import Data.Binary (Binary, decodeFile, encodeFile)
+import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map (Map)
@@ -76,12 +76,17 @@ with rawDbPath body = do
       withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
       body (Db db registeredOutputs leakedOutputs)
   where
-    withIORefFile path = E.bracket (mkIORef path) (writeBack path)
+    readOrError path str =
+      case reads str of
+      [(x, "")] -> x
+      _ -> error $ "Failed to parse: " ++ show path
+    withIORefFile path =
+      E.bracket (newIORef =<< decodeFileOrEmpty path)
+                (writeBack path)
     writeBack path ref = do
-      encodeFile (path <.> "tmp") =<< readIORef ref
+      writeFile (path <.> "tmp") . show . S.toList =<< readIORef ref
       renameFile (path <.> "tmp") path
-    mkIORef path = newIORef =<< decodeFileOrEmpty path
-    decodeFileOrEmpty path = decodeFile path `catchDoesNotExist` return S.empty
+    decodeFileOrEmpty path = (S.fromList . readOrError path <$> readFile path) `catchDoesNotExist` return S.empty
 
 data IRef a = IRef
   { readIRef :: IO (Maybe a)
