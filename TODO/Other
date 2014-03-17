@@ -1,3 +1,7 @@
+* Exception-safety
+  * Current deadlock when Ctrl-c'ing in some places
+  * Need to guarantee update of registered outputs in Ctrl-c
+
 * Failures should be cached in execution log just like successes?
 
 * Bugs:
