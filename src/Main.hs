@@ -100,7 +100,7 @@ recordInput inputsRef accessType reason path = do
      (max accessType oldAccessType, oldReason, oldMStat)
 
 inputIgnored :: FilePath -> Bool
-inputIgnored path = "/dev" `isPrefixOf` path
+inputIgnored path = any (`isPrefixOf` path) ["/dev", "/proc", "/sys"]
 
 verifyCancelled :: Async a -> IO (Either E.SomeException a)
 verifyCancelled a = do
