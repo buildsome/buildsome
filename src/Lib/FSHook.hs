@@ -161,8 +161,8 @@ handleJobConnection tidStr conn job = do
 mkEnvVars :: FSHook -> JobId -> Process.Env
 mkEnvVars fsHook jobId =
     [ ("LD_PRELOAD", fsHookLdPreloadPath fsHook)
-    , ("EFBUILD_MASTER_UNIX_SOCKADDR", fsHookServerAddress fsHook)
-    , ("EFBUILD_JOB_ID", BS.unpack jobId)
+    , ("BUILDSOME_MASTER_UNIX_SOCKADDR", fsHookServerAddress fsHook)
+    , ("BUILDSOME_JOB_ID", BS.unpack jobId)
     ]
 
 withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
