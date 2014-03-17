@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 module Main (main) where
 
 import Control.Applicative (Applicative(..), (<$>))
@@ -14,6 +15,7 @@ import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Monoid
 import Data.Set (Set)
 import Data.Traversable (traverse)
+import Data.Typeable (Typeable)
 import Db (Db, IRef(..), Reason)
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
@@ -170,18 +172,29 @@ need buildsome explicitness reason parents paths = do
 want :: Buildsome -> Reason -> [FilePath] -> IO ()
 want buildsome reason = need buildsome Explicit reason []
 
-assertExists :: FilePath -> String -> IO ()
-assertExists path msg = do
+assertExists :: E.Exception e => FilePath -> e -> IO ()
+assertExists path err = do
   doesExist <- fileExists path
-  unless doesExist $ fail msg
+  unless doesExist $ E.throwIO err
+
+data MissingRule = MissingRule FilePath Reason deriving (Typeable)
+instance E.Exception MissingRule
+instance Show MissingRule where
+  show (MissingRule path reason) = concat ["ERROR: No rule to build ", show path, " (", reason, ")"]
+
+data TargetNotCreated = TargetNotCreated FilePath deriving (Typeable)
+instance E.Exception TargetNotCreated
+instance Show TargetNotCreated where
+  show (TargetNotCreated path) = concat
+    [ show path
+    , " explicitly demanded but was not created by its target rule"
+    ]
 
 makeDirectSlave :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO (Maybe Slave)
 makeDirectSlave buildsome explicitness reason parents path =
   case BuildMaps.find (bsBuildMaps buildsome) path of
   Nothing -> do
-    when (explicitness == Explicit) $
-      assertExists path $
-      concat ["No rule to build ", show path, " (", reason, ")"]
+    when (explicitness == Explicit) $ assertExists path $ MissingRule path reason
     return Nothing
   Just tgt -> do
     slave <- getSlaveForTarget buildsome reason parents tgt
@@ -194,16 +207,13 @@ makeDirectSlave buildsome explicitness reason parents path =
       | otherwise = do
       wrappedExecution <-
         wrapAsync (slaveExecution slave) $ \() ->
-        assertExists path $ concat
-          [ show path
-          , " explicitly demanded but was not "
-          , "created by its target rule" ]
+        assertExists path $ TargetNotCreated path
       return slave { slaveExecution = wrappedExecution }
 
 makeChildSlaves :: Buildsome -> Reason -> Parents -> FilePath -> IO [Slave]
 makeChildSlaves buildsome reason parents path
   | not (null childPatterns) =
-    fail "Read directory on directory with patterns: Enumeration of pattern outputs not supported yet"
+    fail "UNSUPPORTED: Read directory on directory with patterns"
   | otherwise =
     traverse (getSlaveForTarget buildsome reason parents)
     childTargets
@@ -244,6 +254,13 @@ handleLegalUnspecifiedOutputs buildsome target paths = do
       DeleteUnspecifiedOutputs -> ("deleting", mapM_ Dir.removeFile paths)
       DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs buildsome (S.fromList paths))
 
+data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs Target [FilePath] deriving (Typeable)
+instance E.Exception IllegalUnspecifiedOutputs
+instance Show IllegalUnspecifiedOutputs where
+  show (IllegalUnspecifiedOutputs target illegalOutputs) = concat
+    [ "Target: ", show (targetOutputs target)
+    , " wrote to unspecified output files: ", show illegalOutputs ]
+
 -- Verify output of whole of slave/execution log
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
 verifyTargetOutputs buildsome outputs target = do
@@ -263,10 +280,7 @@ verifyTargetOutputs buildsome outputs target = do
   unless (null existingIllegalOutputs) $ do
     putStrLn $ "Illegal output files created: " ++ show existingIllegalOutputs
     mapM_ removeFileOrDirectory existingIllegalOutputs
-    fail $ concat
-      [ "Target for ", show (targetOutputs target)
-      , " wrote to unspecified output files: ", show existingIllegalOutputs
-      , ", allowed outputs: ", show specified ]
+    E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
   unless (S.null unusedOutputs) $
     putStrLn $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
   where
@@ -379,10 +393,15 @@ showParents = concatMap showParent
   where
     showParent (targetRep, reason) = concat ["\n-> ", show targetRep, " (", reason, ")"]
 
+data TargetDependencyLoop = TargetDependencyLoop Parents deriving (Typeable)
+instance E.Exception TargetDependencyLoop
+instance Show TargetDependencyLoop where
+  show (TargetDependencyLoop parents) = "Target loop: " ++ showParents parents
+
 -- Find existing slave for target, or spawn a new one
 getSlaveForTarget :: Buildsome -> Reason -> Parents -> (TargetRep, Target) -> IO Slave
 getSlaveForTarget buildsome reason parents (targetRep, target)
-  | any ((== targetRep) . fst) parents = fail $ "Target loop: " ++ showParents newParents
+  | any ((== targetRep) . fst) parents = E.throwIO $ TargetDependencyLoop newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
     E.mask $ \restoreMask -> join $
@@ -404,14 +423,18 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
         slave <- fmap Slave . async $ annotate action
         putMVar mvar slave >> return slave
 
-removeOldUnregisteredOutput :: Buildsome -> FilePath -> IO ()
-removeOldUnregisteredOutput buildsome path =
-  case bsOverwriteUnregisteredOutputs buildsome of
-  DontOverwriteUnregisteredOutputs ->
-    fail $ concat
+data UnregisteredOutputFileExists = UnregisteredOutputFileExists FilePath deriving (Typeable)
+instance E.Exception UnregisteredOutputFileExists
+instance Show UnregisteredOutputFileExists where
+  show (UnregisteredOutputFileExists path) = concat
     [ show path, " specified as output but exists as a file that "
     , "was not created by buildsome (use --overwrite to go ahead "
     , "anyway)" ]
+
+removeOldUnregisteredOutput :: Buildsome -> FilePath -> IO ()
+removeOldUnregisteredOutput buildsome path =
+  case bsOverwriteUnregisteredOutputs buildsome of
+  DontOverwriteUnregisteredOutputs -> E.throwIO $ UnregisteredOutputFileExists path
   OverwriteUnregisteredOutputs -> do
     putStrLn $ "Overwriting " ++ show path ++ " (due to --overwrite)"
     removeFileOrDirectory path
@@ -467,6 +490,15 @@ deleteRemovedOutputs buildsome = do
     putStrLn $ "Removing old output: " ++ show path
     removeFileOrDirectoryOrNothing path
 
+data CommandFailed = CommandFailed String ExitCode deriving (Typeable)
+instance E.Exception CommandFailed
+instance Show CommandFailed where
+  show (CommandFailed cmd exitCode)
+    | '\n' `elem` cmd = "\"\"\"" ++ cmd ++ "\"\"\"" ++ suffix
+    | otherwise = show cmd ++ suffix
+    where
+      suffix = " failed: " ++ show exitCode
+
 shellCmdVerify :: Target -> [String] -> Process.Env -> IO StdOutputs
 shellCmdVerify target inheritEnvs newEnvs = do
   (exitCode, stdout, stderr) <-
@@ -474,7 +506,7 @@ shellCmdVerify target inheritEnvs newEnvs = do
   let stdouts = StdOutputs stdout stderr
   printStdouts (show (targetOutputs target)) stdouts
   case exitCode of
-    ExitFailure {} -> fail $ "\"\"\"\n" ++ cmd ++ "\"\"\" failed!"
+    ExitFailure {} -> E.throwIO $ CommandFailed cmd exitCode
     _ -> return stdouts
   where
     cmd = targetCmds target
@@ -516,41 +548,50 @@ runCmd buildsome target parents inputsRef outputsRef =
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
 
+standardMakeFilename :: String
+standardMakeFilename = "Makefile"
+
+data MakefileScanFailed = MakefileScanFailed deriving (Typeable)
+instance E.Exception MakefileScanFailed
+instance Show MakefileScanFailed where
+  show MakefileScanFailed = "ERROR: Cannot find a file named " ++ show standardMakeFilename ++ " in this directory or any of its parents"
+
 findMakefile :: IO FilePath
 findMakefile = do
   cwd <- Dir.getCurrentDirectory
   let
     -- NOTE: Excludes root (which is probably fine)
     parents = takeWhile (/= "/") $ iterate takeDirectory cwd
-    candidates = map (</> filename) parents
+    candidates = map (</> standardMakeFilename) parents
   -- Use EitherT with Left short-circuiting when found, and Right
   -- falling through to the end of the loop:
   res <- runEitherT $ mapM_ check candidates
   case res of
     Left found -> Dir.makeRelativeToCurrentDirectory found
-    Right () -> fail $ "Cannot find a file named " ++ show filename ++ " in this directory or any of its parents"
+    Right () -> E.throwIO MakefileScanFailed
   where
-    filename = "Makefile"
     check path = do
       exists <- liftIO $ Dir.doesFileExist path
       when exists $ left path
 
 specifiedMakefile :: FilePath -> IO FilePath
 specifiedMakefile path = do
-  f <- Dir.doesFileExist path
+  _ <- Dir.canonicalizePath path -- Verifies it exists
   d <- Dir.doesDirectoryExist path
-  case (f, d) of
-    (True, _) -> return path
-    (_, True) -> return $ path </> "Makefile"
-    _ -> fail $ "Cannot find specified Makefile: " ++ show path
+  return $ if d then path </> "Makefile" else path
 
 data Requested = RequestedClean | RequestedTargets [FilePath] Reason
+
+data BadCommandLine = BadCommandLine String deriving (Typeable)
+instance E.Exception BadCommandLine
+instance Show BadCommandLine where
+  show (BadCommandLine msg) = "Invalid command line options: " ++ msg
 
 getRequestedTargets :: [String] -> IO Requested
 getRequestedTargets ["clean"] = return RequestedClean
 getRequestedTargets [] = return $ RequestedTargets ["default"] "implicit 'default' target"
 getRequestedTargets ts
-  | "clean" `elem` ts = fail "Clean must be requested exclusively"
+  | "clean" `elem` ts = E.throwIO $ BadCommandLine "Clean must be requested exclusively"
   | otherwise = return $ RequestedTargets ts "explicit request from cmdline"
 
 main :: IO ()

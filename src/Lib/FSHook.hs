@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 module Lib.FSHook
   ( FSHook
   , with
@@ -11,6 +12,7 @@ import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
+import Data.Typeable (Typeable)
 import Lib.AccessType (AccessType(..))
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
@@ -57,17 +59,20 @@ nextJobId :: FSHook -> IO Int
 nextJobId fsHook =
   atomicModifyIORef (fsHookCurJobId fsHook) $ \oldJobId -> (oldJobId+1, oldJobId)
 
+data ProtocolError = ProtocolError String deriving (Show, Typeable)
+instance E.Exception ProtocolError
+
 serve :: FSHook -> Socket -> IO ()
 serve fsHook conn = do
   helloLine <- SockBS.recv conn 1024
   case unprefixed (BS.pack "HELLO, I AM: ") helloLine of
-    Nothing -> fail $ "Bad connection started with: " ++ show helloLine
+    Nothing -> E.throwIO $ ProtocolError $ "Bad hello message from connection: " ++ show helloLine
     Just pidJobId -> do
       runningJobs <- readIORef (fsHookRunningJobs fsHook)
       case M.lookup jobId runningJobs of
         Nothing -> do
           let jobIds = M.keys runningJobs
-          fail $ "Bad slave id: " ++ show jobId ++ " mismatches all: " ++ show jobIds
+          E.throwIO $ ProtocolError $ "Bad slave id: " ++ show jobId ++ " mismatches all: " ++ show jobIds
         Just job -> handleJobConnection fullTidStr conn job
       where
         fullTidStr = BS.unpack pidStr ++ ":" ++ BS.unpack tidStr
@@ -119,7 +124,7 @@ handleJobMsg _tidStr conn job (Protocol.Invocation cwd msg) =
     -- I/O
     Protocol.SymLink target linkPath -> reportOutput linkPath >> reportInput AccessTypeFull target
     Protocol.Link src dest -> forwardExceptions $
-      fail $ unwords ["Hard links not supported:", show src, "->", show dest]
+      error $ unwords ["Hard links not supported:", show src, "->", show dest]
       -- TODO: Record the fact it's a link
       --reportOutput dest >> reportInput src
 

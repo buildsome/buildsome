@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric, DeriveDataTypeable #-}
 {-# OPTIONS -fno-warn-orphans #-}
 module Lib.FileDesc
   ( FileDesc(..)
@@ -16,10 +16,12 @@ import Data.Binary.Get (getWord32le)
 import Data.Binary.Put (putWord32le)
 import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus, catchDoesNotExist)
 import System.Posix.Files (FileStatus, isRegularFile, isDirectory, isSymbolicLink, modificationTime, readSymbolicLink, fileMode)
 import System.Posix.Types (FileMode, CMode(..))
+import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -44,11 +46,17 @@ instance Binary CMode where
   get = CMode <$> getWord32le
   put (CMode x) = putWord32le x
 
+data ThirdPartyMeddlingError = ThirdPartyMeddlingError FilePath String deriving (Show, Typeable)
+instance E.Exception ThirdPartyMeddlingError
+
+data UnsupportedFileTypeError = UnsupportedFileTypeError String deriving (Show, Typeable)
+instance E.Exception UnsupportedFileTypeError
+
 fileModeDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileModeDesc
 fileModeDescOfMStat path oldMStat = do
   newMStat <- getMFileStatus path
-  when ((fileMode <$> newMStat) /= (fileMode <$> oldMStat)) $ fail $
-    show path ++ " changed during build!"
+  when ((fileMode <$> newMStat) /= (fileMode <$> oldMStat)) $ E.throwIO $
+    ThirdPartyMeddlingError path "mode changed during build!"
   case newMStat of
     Nothing -> return NoFileMode
     Just stat -> return $ FileModeDesc $ fileMode stat
@@ -67,8 +75,8 @@ fileDescOfMStat path oldMStat = do
     _ -> return Nothing
   -- Verify file did not change since we took its first mtime:
   newMStat <- getMFileStatus path
-  unless (compareMTimes oldMStat newMStat) $ fail $
-    show path ++ " changed during build!"
+  unless (compareMTimes oldMStat newMStat) $ E.throwIO $
+    ThirdPartyMeddlingError path "changed during build!"
   case newMStat of
     Nothing -> return NoFile
     Just stat
@@ -81,10 +89,11 @@ fileDescOfMStat path oldMStat = do
         fromMaybe (error ("Directory disappeared: " ++ show path))
         mContentHash
       | isSymbolicLink stat -> Symlink <$> readSymbolicLink path
-      | otherwise -> fail $ "Unsupported file type: " ++ show path
+      | otherwise -> E.throwIO $ UnsupportedFileTypeError path
   where
     assertExists act =
-      act `catchDoesNotExist` fail (show path ++ " deleted during build!")
+      act `catchDoesNotExist`
+      E.throwIO (ThirdPartyMeddlingError path "deleted during build!")
     compareMTimes x y =
       (modificationTime <$> x) ==
       (modificationTime <$> y)
