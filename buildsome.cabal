@@ -25,34 +25,34 @@ executable buildsome
   main-is:           Main.hs
   ghc-options:       -threaded -Wall -O2
   ghc-prof-options:  -auto-all -caf-all -rtsopts
-  other-modules:     Opts
+  other-modules:     Clean
                ,     Db
-               ,     Clean
                ,     Lib.AccessType
-               ,     Lib.Argv0
-               ,     Lib.AsyncContext
-               ,     Lib.Async
-               ,     Lib.StdOutputs
                ,     Lib.AnnotatedException
+               ,     Lib.Argv0
+               ,     Lib.Async
+               ,     Lib.AsyncContext
+               ,     Lib.Binary
                ,     Lib.BuildMaps
                ,     Lib.ByteString
-               ,     Lib.IORef
-               ,     Lib.List
-               ,     Lib.Makefile.Types
-               ,     Lib.Makefile.Parser
-               ,     Lib.Makefile.InstantiatePattern
-               ,     Lib.Makefile
-               ,     Lib.FSHook
-               ,     Lib.Process
-               ,     Lib.Protocol
-               ,     Lib.ShowBytes
-               ,     Lib.Sock
                ,     Lib.Directory
-               ,     Lib.Binary
+               ,     Lib.FSHook
+               ,     Lib.FSHook.Protocol
                ,     Lib.FileDesc
                ,     Lib.FilePath
+               ,     Lib.IORef
+               ,     Lib.List
+               ,     Lib.Makefile
+               ,     Lib.Makefile.InstantiatePattern
+               ,     Lib.Makefile.Parser
+               ,     Lib.Makefile.Types
                ,     Lib.Parsec
+               ,     Lib.Process
+               ,     Lib.ShowBytes
+               ,     Lib.Sock
+               ,     Lib.StdOutputs
                ,     Lib.StringPattern
+               ,     Opts
                ,     Paths_buildsome
 
   build-depends:     base >=4.6 && <4.7

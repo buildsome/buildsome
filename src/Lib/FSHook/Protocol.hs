@@ -1,4 +1,4 @@
-module Lib.Protocol
+module Lib.FSHook.Protocol
   ( parseMsg
   , OpenMode(..), showOpenMode
   , CreationMode(..), showCreationMode

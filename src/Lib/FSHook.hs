@@ -26,8 +26,8 @@ import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Map.Strict as M
 import qualified Lib.AsyncContext as AsyncContext
+import qualified Lib.FSHook.Protocol as Protocol
 import qualified Lib.Process as Process
-import qualified Lib.Protocol as Protocol
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Directory as Dir
