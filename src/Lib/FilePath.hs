@@ -1,6 +1,7 @@
 module Lib.FilePath
   ( splitFileName
   , canonicalizePath
+  , canonicalizeAbsPath
   , (</>)
   ) where
 
@@ -29,7 +30,11 @@ splitFileName path = (FilePath.dropTrailingPathSeparator dir, file)
 "." </> y = y
 x </> y = x FilePath.</> y
 
+canonicalizeAbsPath :: FilePath -> IO FilePath
+canonicalizeAbsPath path =
+  Dir.makeRelativeToCurrentDirectory $ removeRedundantComponents path
+
 canonicalizePath :: FilePath -> IO FilePath
 canonicalizePath path = do
   curDir <- Dir.getCurrentDirectory
-  Dir.makeRelativeToCurrentDirectory $ removeRedundantComponents (curDir </> path)
+  canonicalizeAbsPath (curDir </> path)
