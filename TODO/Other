@@ -1,5 +1,3 @@
-* Replace "fail" with custom Exception type that has no message wrappers
-
 * Failures should be cached in execution log just like successes?
 
 * Bugs:
