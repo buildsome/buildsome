@@ -1,3 +1,10 @@
+* Avoid the target lookups for undelayed inputs
+
+* Exception-safety
+  * Current deadlock when Ctrl-c'ing in some places!
+  * Current deadlock even without Ctrl-C in some rare cases!
+  * Need to guarantee update of registered outputs in Ctrl-c
+
 * Performance is kind of crap:
 
   orig:         4.38
@@ -8,14 +15,8 @@
 
   perf still sucks:
 
-  The db.with is 8% of runtime! Probably writing a large string of all the file paths :(
-  Try to convert to bytestring file paths everywhere?
-
-
-* Exception-safety
-  * Current deadlock when Ctrl-c'ing in some places!
-  * Current deadlock even without Ctrl-C in some rare cases!
-  * Need to guarantee update of registered outputs in Ctrl-c
+  * Convert to bytestrings everywhere?
+    The db.with is 8% of runtime! Probably writing a large string of all the file paths :(
 
 * Failures should be cached in execution log just like successes?
 
