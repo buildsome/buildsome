@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable, RecordWildCards #-}
 module Main (main) where
 
 import Control.Applicative (Applicative(..), (<$>))
@@ -22,17 +22,16 @@ import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, fileExists, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
-import Lib.FSHook (FSHook)
+import Lib.FSHook (FSHook, Handlers(..))
 import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
 import Lib.IORef (atomicModifyIORef'_)
-import Lib.List (unprefixed)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.ShowBytes (showBytes)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
 import System.Exit (ExitCode(..))
-import System.FilePath (takeDirectory, (<.>), makeRelative, addTrailingPathSeparator)
+import System.FilePath (takeDirectory, (<.>), makeRelative)
 import System.Posix.Files (FileStatus)
 import System.Process (CmdSpec(..))
 import qualified Clean
@@ -520,21 +519,15 @@ runCmd ::
   IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
   IORef (Set FilePath) -> IO StdOutputs
 runCmd buildsome target parents inputsRef outputsRef = do
-  cwd <- addTrailingPathSeparator <$> Dir.getCurrentDirectory
-  let
-    tryConvertToRelative path = fromMaybe path $ unprefixed cwd path
-    handleInputRaw accessType actDesc =
-      handleInput accessType actDesc . tryConvertToRelative
-    handleOutputRaw actDesc =
-      handleOutput actDesc . tryConvertToRelative
-  FSHook.runCommand (bsFsHook buildsome)
-    (bsRootPath buildsome)
+  rootPath <- Dir.canonicalizePath (bsRootPath buildsome)
+  FSHook.runCommand (bsFsHook buildsome) rootPath
     (shellCmdVerify target ["HOME", "PATH"])
     (show (targetOutputs target))
-    handleInputRaw handleInputRaw handleOutputRaw
-    -- TODO ^ use a different handler for delayed/non-delayed inputs,
-    -- the non-delayed ones need not search for the target/etc
+    Handlers {..}
   where
+    handleDelayedInput accessType actDesc path =
+      -- TODO: No need to do much of the stuff here
+      handleInput accessType actDesc path
     handleInput accessType actDesc path
       | inputIgnored path = return ()
       | otherwise = do

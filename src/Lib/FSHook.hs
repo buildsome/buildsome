@@ -2,6 +2,7 @@
 module Lib.FSHook
   ( FSHook
   , with
+  , Handlers(..)
   , AccessDoc
   , runCommand
   ) where
@@ -41,13 +42,17 @@ type JobId = ByteString
 type InputHandler = AccessType -> AccessDoc -> FilePath -> IO ()
 type OutputHandler = AccessDoc -> FilePath -> IO ()
 
+data Handlers = Handlers
+  { handleInput :: InputHandler
+  , handleDelayedInput :: InputHandler
+  , handleOutput :: OutputHandler
+  }
+
 data RunningJob = RunningJob
   { jobLabel :: String
   , jobActiveConnections :: IORef [MVar ()]
   , jobThreadId :: ThreadId
-  , jobHandleInput :: InputHandler
-  , jobHandleDelayedInput :: InputHandler
-  , jobHandleOutput :: OutputHandler
+  , jobHandlers :: Handlers
   , jobRootFilter :: FilePath
   }
 
@@ -139,17 +144,18 @@ handleJobMsg _tidStr conn job msg =
     Protocol.OpenDir path -> reportInput AccessTypeFull path
     Protocol.ReadLink path -> reportInput AccessTypeModeOnly path
   where
+    handlers = jobHandlers job
     actDesc = Protocol.showFunc msg ++ " done by " ++ jobLabel job
     forwardExceptions =
       E.handle $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
     reportInput accessType path
-      | jobRootFilter job `isPrefixOf` path =
-        (`E.finally` sendGo conn) $
-        forwardExceptions $ jobHandleDelayedInput job accessType actDesc path
+      | "/" `isPrefixOf` path =
+        forwardExceptions $ handleInput handlers accessType actDesc path
       | otherwise =
-        forwardExceptions $ jobHandleInput job accessType actDesc path
+        (`E.finally` sendGo conn) $
+        forwardExceptions $ handleDelayedInput handlers accessType actDesc path
     reportOutput path =
-      forwardExceptions $ jobHandleOutput job actDesc path
+      forwardExceptions $ handleOutput handlers actDesc path
 
 handleJobConnection :: String -> Socket -> RunningJob -> IO ()
 handleJobConnection tidStr conn job = do
@@ -179,8 +185,8 @@ withRegistered registry jobId job =
     registerRunningJob = atomicModifyIORef_ registry $ M.insert jobId job
     unregisterRunningJob = atomicModifyIORef_ registry $ M.delete jobId
 
-runCommand :: FSHook -> FilePath -> (Process.Env -> IO r) -> String -> InputHandler -> InputHandler -> OutputHandler -> IO r
-runCommand fsHook rootFilter cmd label handleInput handleDelayedInput handleOutput = do
+runCommand :: FSHook -> FilePath -> (Process.Env -> IO r) -> String -> Handlers -> IO r
+runCommand fsHook rootFilter cmd label handlers = do
   activeConnections <- newIORef []
   jobIdNum <- nextJobId fsHook
   tid <- myThreadId
@@ -191,9 +197,7 @@ runCommand fsHook rootFilter cmd label handleInput handleDelayedInput handleOutp
             , jobActiveConnections = activeConnections
             , jobThreadId = tid
             , jobRootFilter = rootFilter
-            , jobHandleInput = handleInput
-            , jobHandleDelayedInput = handleDelayedInput
-            , jobHandleOutput = handleOutput
+            , jobHandlers = handlers
             }
   -- Don't leak connections still running our handlers once we leave!
   (`E.finally` awaitAllConnections activeConnections) $

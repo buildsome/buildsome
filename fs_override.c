@@ -65,8 +65,8 @@ static struct {
     unsigned cwd_length;
     char cwd[MAX_PATH];
     unsigned root_filter_length;
-    const char *root_filter;
-} process_state = {-1U, "", -1U, NULL};
+    char root_filter[MAX_PATH];
+} process_state = {-1U, "", -1U, ""};
 
 static __thread struct {
     pid_t pid;
@@ -82,6 +82,12 @@ static void update_cwd(void)
         ASSERT(0);
     }
     process_state.cwd_length = strnlen(process_state.cwd, sizeof process_state.cwd);
+
+    /* Append a '/' */
+    process_state.cwd_length++;
+    ASSERT(process_state.cwd_length < MAX_PATH);
+    process_state.cwd[process_state.cwd_length-1] = '/';
+    process_state.cwd[process_state.cwd_length] = 0;
 }
 
 static void initialize_process_state(void)
@@ -89,10 +95,19 @@ static void initialize_process_state(void)
     if(-1U != process_state.cwd_length) return;
     update_cwd();
 
-    process_state.root_filter = getenv(PREFIX "ROOT_FILTER");
-    ASSERT(process_state.root_filter);
+    const char *root_filter = getenv(PREFIX "ROOT_FILTER");
+    ASSERT(root_filter);
 
-    process_state.root_filter_length = strlen(process_state.root_filter);
+    unsigned len = strlen(root_filter);
+    ASSERT(len < sizeof process_state.root_filter);
+    memcpy(process_state.root_filter, root_filter, len);
+    if(root_filter[len] != '/') {
+        process_state.root_filter[len] = '/';
+        len++;
+    }
+    ASSERT(len < sizeof process_state.root_filter);
+    process_state.root_filter[len] = 0;
+    process_state.root_filter_length = len;
 }
 
 static int connection(void)
@@ -181,18 +196,16 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
 #define AWAIT_CALL_REAL(input_path, msg, ...)   \
     do {                                        \
         send_connection(PS(msg));               \
-        if(passes_root_filter(input_path)) {    \
-            await_go();                         \
-        }                                       \
+        await_go_for_path(input_path);          \
         SILENT_CALL_REAL(__VA_ARGS__);          \
     } while(0)
 
-#define DEFINE_MSG(msg, name)                                           \
-    initialize_process_state();                                         \
-    struct {                                                            \
-        enum func func;                                                 \
-        struct func_##name args;                                        \
-    } msg = { .func = func_##name };                                    \
+#define DEFINE_MSG(msg, name)                   \
+    initialize_process_state();                 \
+    struct {                                    \
+        enum func func;                         \
+        struct func_##name args;                \
+    } msg = { .func = func_##name };
 
 #define CREATION_FLAGS (O_CREAT | O_EXCL)
 
@@ -204,6 +217,13 @@ static void await_go(void)
     ASSERT(!strncmp(buf, "GO", 2));
 }
 
+static void await_go_for_path(const char *path)
+{
+    /* Don't await go for absolute paths */
+    if(path[0] == '/') return;
+    await_go();
+}
+
 #define PATH_COPY(dest, src)                                    \
     do {                                                        \
         char temp_path[MAX_PATH];                               \
@@ -211,24 +231,33 @@ static void await_go(void)
         if(src[0] != '/') {                                     \
             writer_append_data(&w, process_state.cwd,           \
                                process_state.cwd_length);       \
-            writer_append_data(&w, "/", 1);                     \
         }                                                       \
         writer_append_data(&w, src, strlen(src));               \
         *writer_append(&w, 1) = 0;                              \
         struct writer dest_writer = { dest, sizeof dest };      \
         canonize_abs_path(&dest_writer, temp_path);             \
+        try_chop_common_root(dest);                             \
     } while(0)
 
-static bool passes_root_filter(const char *path)
+static bool try_chop_common_root(char *path)
 {
-    return !strncmp(path, process_state.root_filter, process_state.root_filter_length);
+    if(0 == process_state.root_filter_length) return true;
+
+    size_t path_len = strlen(path);
+    if(path_len < process_state.root_filter_length ||
+       strncmp(path, process_state.root_filter, process_state.root_filter_length))
+    {
+        return false;
+    }
+    memmove(path, path + process_state.root_filter_length, path_len - process_state.root_filter_length);
+    path[path_len - process_state.root_filter_length] = 0;
+    return true;
 }
 
 static void notify_open(const char *path, bool is_write, bool is_create, mode_t mode)
 {
     DEFINE_MSG(msg, open);
     PATH_COPY(msg.args.path, path);
-    bool await = false;
     if(is_write) {
         msg.args.flags |= FLAG_WRITE;
         if(is_create) {
@@ -236,11 +265,12 @@ static void notify_open(const char *path, bool is_write, bool is_create, mode_t 
         }
     } else {
         ASSERT(!is_create);
-        await = passes_root_filter(msg.args.path);
     }
     msg.args.mode = mode;
     send_connection(PS(msg));
-    if(await) await_go();
+    if(!is_write) {
+        await_go_for_path(msg.args.path);
+    }
 }
 
 static mode_t open_common(const char *path, int flags, va_list args)
