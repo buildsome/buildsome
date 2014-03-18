@@ -11,6 +11,7 @@ import Control.Concurrent.MVar
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IORef
+import Data.List (isPrefixOf)
 import Data.Map.Strict (Map)
 import Data.Typeable (Typeable)
 import Lib.AccessType (AccessType(..))
@@ -45,7 +46,9 @@ data RunningJob = RunningJob
   , jobActiveConnections :: IORef [MVar ()]
   , jobThreadId :: ThreadId
   , jobHandleInput :: InputHandler
+  , jobHandleDelayedInput :: InputHandler
   , jobHandleOutput :: OutputHandler
+  , jobRootFilter :: FilePath
   }
 
 data FSHook = FSHook
@@ -139,9 +142,12 @@ handleJobMsg _tidStr conn job msg =
     actDesc = Protocol.showFunc msg ++ " done by " ++ jobLabel job
     forwardExceptions =
       E.handle $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
-    reportInput accessType path =
-      (`E.finally` sendGo conn) $
-      forwardExceptions $ jobHandleInput job accessType actDesc path
+    reportInput accessType path
+      | jobRootFilter job `isPrefixOf` path =
+        (`E.finally` sendGo conn) $
+        forwardExceptions $ jobHandleDelayedInput job accessType actDesc path
+      | otherwise =
+        forwardExceptions $ jobHandleInput job accessType actDesc path
     reportOutput path =
       forwardExceptions $ jobHandleOutput job actDesc path
 
@@ -158,11 +164,12 @@ handleJobConnection tidStr conn job = do
   where
     protect mvar act = act `E.finally` putMVar mvar ()
 
-mkEnvVars :: FSHook -> JobId -> Process.Env
-mkEnvVars fsHook jobId =
+mkEnvVars :: FSHook -> FilePath -> JobId -> Process.Env
+mkEnvVars fsHook rootFilter jobId =
     [ ("LD_PRELOAD", fsHookLdPreloadPath fsHook)
     , ("BUILDSOME_MASTER_UNIX_SOCKADDR", fsHookServerAddress fsHook)
     , ("BUILDSOME_JOB_ID", BS.unpack jobId)
+    , ("BUILDSOME_ROOT_FILTER", rootFilter)
     ]
 
 withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
@@ -172,8 +179,8 @@ withRegistered registry jobId job =
     registerRunningJob = atomicModifyIORef_ registry $ M.insert jobId job
     unregisterRunningJob = atomicModifyIORef_ registry $ M.delete jobId
 
-runCommand :: FSHook -> (Process.Env -> IO r) -> String -> InputHandler -> OutputHandler -> IO r
-runCommand fsHook cmd label handleInput handleOutput = do
+runCommand :: FSHook -> FilePath -> (Process.Env -> IO r) -> String -> InputHandler -> InputHandler -> OutputHandler -> IO r
+runCommand fsHook rootFilter cmd label handleInput handleDelayedInput handleOutput = do
   activeConnections <- newIORef []
   jobIdNum <- nextJobId fsHook
   tid <- myThreadId
@@ -183,13 +190,15 @@ runCommand fsHook cmd label handleInput handleOutput = do
             { jobLabel = label
             , jobActiveConnections = activeConnections
             , jobThreadId = tid
+            , jobRootFilter = rootFilter
             , jobHandleInput = handleInput
+            , jobHandleDelayedInput = handleDelayedInput
             , jobHandleOutput = handleOutput
             }
   -- Don't leak connections still running our handlers once we leave!
   (`E.finally` awaitAllConnections activeConnections) $
     withRegistered (fsHookRunningJobs fsHook) jobId job $
-    cmd (mkEnvVars fsHook jobId)
+    cmd (mkEnvVars fsHook rootFilter jobId)
   where
     awaitAllConnections activeConnections =
       -- Give all connections a chance to complete and perhaps fail

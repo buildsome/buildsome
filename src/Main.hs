@@ -62,6 +62,7 @@ data Buildsome = Buildsome
   , bsRestrictedParallelism :: MSem Int
   , bsDb :: Db
   , bsMakefile :: Makefile
+  , bsRootPath :: FilePath
   , bsFsHook :: FSHook
   }
 
@@ -137,6 +138,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsRestrictedParallelism = semaphore
       , bsDb = db
       , bsMakefile = makefile
+      , bsRootPath = takeDirectory makefilePath
       , bsFsHook = fsHook
       }
   body buildsome
@@ -526,9 +528,12 @@ runCmd buildsome target parents inputsRef outputsRef = do
     handleOutputRaw actDesc =
       handleOutput actDesc . tryConvertToRelative
   FSHook.runCommand (bsFsHook buildsome)
+    (bsRootPath buildsome)
     (shellCmdVerify target ["HOME", "PATH"])
     (show (targetOutputs target))
-    handleInputRaw handleOutputRaw
+    handleInputRaw handleInputRaw handleOutputRaw
+    -- TODO ^ use a different handler for delayed/non-delayed inputs,
+    -- the non-delayed ones need not search for the target/etc
   where
     handleInput accessType actDesc path
       | inputIgnored path = return ()

@@ -64,7 +64,9 @@ static int connect_master(void)
 static struct {
     unsigned cwd_length;
     char cwd[MAX_PATH];
-} process_state = {-1U, ""};
+    unsigned root_filter_length;
+    const char *root_filter;
+} process_state = {-1U, "", -1U, NULL};
 
 static __thread struct {
     pid_t pid;
@@ -86,6 +88,11 @@ static void initialize_process_state(void)
 {
     if(-1U != process_state.cwd_length) return;
     update_cwd();
+
+    process_state.root_filter = getenv(PREFIX "ROOT_FILTER");
+    ASSERT(process_state.root_filter);
+
+    process_state.root_filter_length = strlen(process_state.root_filter);
 }
 
 static int connection(void)
@@ -171,10 +178,12 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
         SILENT_CALL_REAL(__VA_ARGS__);          \
     } while(0)
 
-#define AWAIT_CALL_REAL(msg, ...)               \
+#define AWAIT_CALL_REAL(input_path, msg, ...)   \
     do {                                        \
         send_connection(PS(msg));               \
-        await_go();                             \
+        if(passes_root_filter(input_path)) {    \
+            await_go();                         \
+        }                                       \
         SILENT_CALL_REAL(__VA_ARGS__);          \
     } while(0)
 
@@ -210,10 +219,16 @@ static void await_go(void)
         canonize_abs_path(&dest_writer, temp_path);             \
     } while(0)
 
+static bool passes_root_filter(const char *path)
+{
+    return !strncmp(path, process_state.root_filter, process_state.root_filter_length);
+}
+
 static void notify_open(const char *path, bool is_write, bool is_create, mode_t mode)
 {
     DEFINE_MSG(msg, open);
     PATH_COPY(msg.args.path, path);
+    bool await = false;
     if(is_write) {
         msg.args.flags |= FLAG_WRITE;
         if(is_create) {
@@ -221,12 +236,11 @@ static void notify_open(const char *path, bool is_write, bool is_create, mode_t 
         }
     } else {
         ASSERT(!is_create);
+        await = passes_root_filter(msg.args.path);
     }
     msg.args.mode = mode;
     send_connection(PS(msg));
-    if(!is_write) {
-        await_go();
-    }
+    if(await) await_go();
 }
 
 static mode_t open_common(const char *path, int flags, va_list args)
@@ -332,7 +346,7 @@ DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 {
     DEFINE_MSG(msg, stat);
     PATH_COPY(msg.args.path, path);
-    AWAIT_CALL_REAL(msg, int, stat, path, buf);
+    AWAIT_CALL_REAL(msg.args.path, msg, int, stat, path, buf);
 }
 
 /* Depends on the full direct path */
@@ -340,7 +354,7 @@ DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 {
     DEFINE_MSG(msg, lstat);
     PATH_COPY(msg.args.path, path);
-    AWAIT_CALL_REAL(msg, int, lstat, path, buf);
+    AWAIT_CALL_REAL(msg.args.path, msg, int, lstat, path, buf);
 }
 
 /* Depends on the full path */
@@ -348,7 +362,7 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 {
     DEFINE_MSG(msg, opendir);
     PATH_COPY(msg.args.path, path);
-    AWAIT_CALL_REAL(msg, DIR *, opendir, path);
+    AWAIT_CALL_REAL(msg.args.path, msg, DIR *, opendir, path);
 }
 
 /* Depends on the full path */
@@ -357,7 +371,7 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
     DEFINE_MSG(msg, access);
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
-    AWAIT_CALL_REAL(msg, int, access, path, mode);
+    AWAIT_CALL_REAL(msg.args.path, msg, int, access, path, mode);
 }
 
 /* Outputs the full path */
@@ -399,7 +413,7 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
     DEFINE_MSG(msg, readlink);
     PATH_COPY(msg.args.path, path);
-    AWAIT_CALL_REAL(msg, ssize_t, readlink, path, buf, bufsiz);
+    AWAIT_CALL_REAL(msg.args.path, msg, ssize_t, readlink, path, buf, bufsiz);
 }
 
 /* Outputs the full path, must be deleted aftewards? */
@@ -439,7 +453,7 @@ DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
     PATH_COPY(msg.args.target, target);
     PATH_COPY(msg.args.linkpath, linkpath);
     /* TODO: Maybe not AWAIT here, and handle it properly? */
-    AWAIT_CALL_REAL(msg, int, symlink, linkpath, target);
+    AWAIT_CALL_REAL(msg.args.target, msg, int, symlink, linkpath, target);
 }
 
 /* Inputs the full oldpath, outputs the full newpath (treated like a
@@ -449,7 +463,7 @@ DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
     DEFINE_MSG(msg, link);
     PATH_COPY(msg.args.oldpath, oldpath);
     PATH_COPY(msg.args.newpath, newpath);
-    AWAIT_CALL_REAL(msg, int, link, oldpath, newpath);
+    AWAIT_CALL_REAL(msg.args.oldpath, msg, int, link, oldpath, newpath);
 }
 
 /* Outputs the full path */
