@@ -37,8 +37,8 @@ type AccessDoc = String
 
 type JobId = ByteString
 
-type InputHandler = AccessType -> AccessDoc -> FilePath -> FilePath -> IO ()
-type OutputHandler = AccessDoc -> FilePath -> FilePath -> IO ()
+type InputHandler = AccessType -> AccessDoc -> FilePath -> IO ()
+type OutputHandler = AccessDoc -> FilePath -> IO ()
 
 data RunningJob = RunningJob
   { jobLabel :: String
@@ -105,8 +105,8 @@ with body = do
 sendGo :: Socket -> IO ()
 sendGo conn = void $ SockBS.send conn (BS.pack "GO")
 
-handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Invocation -> IO ()
-handleJobMsg _tidStr conn job (Protocol.Invocation cwd msg) =
+handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Func -> IO ()
+handleJobMsg _tidStr conn job msg =
   case msg of
     -- outputs
     Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
@@ -141,9 +141,9 @@ handleJobMsg _tidStr conn job (Protocol.Invocation cwd msg) =
       E.handle $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
     reportInput accessType path =
       (`E.finally` sendGo conn) $
-      forwardExceptions $ jobHandleInput job accessType actDesc cwd path
+      forwardExceptions $ jobHandleInput job accessType actDesc path
     reportOutput path =
-      forwardExceptions $ jobHandleOutput job actDesc cwd path
+      forwardExceptions $ jobHandleOutput job actDesc path
 
 handleJobConnection :: String -> Socket -> RunningJob -> IO ()
 handleJobConnection tidStr conn job = do

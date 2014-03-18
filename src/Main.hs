@@ -26,12 +26,13 @@ import Lib.FSHook (FSHook)
 import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
 import Lib.IORef (atomicModifyIORef'_)
+import Lib.List (unprefixed)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.ShowBytes (showBytes)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
 import System.Exit (ExitCode(..))
-import System.FilePath (takeDirectory, (<.>), makeRelative)
+import System.FilePath (takeDirectory, (<.>), makeRelative, addTrailingPathSeparator)
 import System.Posix.Files (FileStatus)
 import System.Process (CmdSpec(..))
 import qualified Clean
@@ -516,11 +517,18 @@ runCmd ::
   -- TODO: Clean this arg list up
   IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
   IORef (Set FilePath) -> IO StdOutputs
-runCmd buildsome target parents inputsRef outputsRef =
+runCmd buildsome target parents inputsRef outputsRef = do
+  cwd <- addTrailingPathSeparator <$> Dir.getCurrentDirectory
+  let
+    tryConvertToRelative path = fromMaybe path $ unprefixed cwd path
+    handleInputRaw accessType actDesc =
+      handleInput accessType actDesc . tryConvertToRelative
+    handleOutputRaw actDesc =
+      handleOutput actDesc . tryConvertToRelative
   FSHook.runCommand (bsFsHook buildsome)
-  (shellCmdVerify target ["HOME", "PATH"])
-  (show (targetOutputs target))
-  handleInputRaw handleOutputRaw
+    (shellCmdVerify target ["HOME", "PATH"])
+    (show (targetOutputs target))
+    handleInputRaw handleOutputRaw
   where
     handleInput accessType actDesc path
       | inputIgnored path = return ()
@@ -537,13 +545,6 @@ runCmd buildsome target parents inputsRef outputsRef =
             recordInput inputsRef accessType actDesc path
     handleOutput _actDesc path =
       atomicModifyIORef'_ outputsRef $ S.insert path
-
-    handleInputRaw accessType actDesc rawCwd rawPath =
-      handleInput accessType actDesc =<<
-      canonicalizePath (rawCwd </> rawPath)
-    handleOutputRaw actDesc rawCwd rawPath =
-      handleOutput actDesc =<<
-      canonicalizePath (rawCwd </> rawPath)
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")

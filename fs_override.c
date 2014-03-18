@@ -1,4 +1,6 @@
 #include "c.h"
+#include "writer.h"
+#include "canonize_path.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -60,8 +62,9 @@ static int connect_master(void)
 #define MAX_PATH 256
 
 static struct {
+    unsigned cwd_length;
     char cwd[MAX_PATH];
-} process_state = {""};
+} process_state = {-1U, ""};
 
 static __thread struct {
     pid_t pid;
@@ -70,13 +73,19 @@ static __thread struct {
 
 static void await_go(void);
 
-static void initialize_process_state(void)
+static void update_cwd(void)
 {
-    if(0 != process_state.cwd[0]) return;
     if(NULL == getcwd(process_state.cwd, sizeof process_state.cwd)) {
         LOG("Failed to getcwd: %s", strerror(errno));
         ASSERT(0);
     }
+    process_state.cwd_length = strnlen(process_state.cwd, sizeof process_state.cwd);
+}
+
+static void initialize_process_state(void)
+{
+    if(-1U != process_state.cwd_length) return;
+    update_cwd();
 }
 
 static int connection(void)
@@ -172,11 +181,9 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
 #define DEFINE_MSG(msg, name)                                           \
     initialize_process_state();                                         \
     struct {                                                            \
-        char cwd[MAX_PATH];                                             \
         enum func func;                                                 \
         struct func_##name args;                                        \
     } msg = { .func = func_##name };                                    \
-    SAFE_STRCPY(msg.cwd, process_state.cwd);
 
 #define CREATION_FLAGS (O_CREAT | O_EXCL)
 
@@ -188,10 +195,25 @@ static void await_go(void)
     ASSERT(!strncmp(buf, "GO", 2));
 }
 
+#define PATH_COPY(dest, src)                                    \
+    do {                                                        \
+        char temp_path[MAX_PATH];                               \
+        struct writer w = { temp_path, sizeof temp_path };      \
+        if(src[0] != '/') {                                     \
+            writer_append_data(&w, process_state.cwd,           \
+                               process_state.cwd_length);       \
+            writer_append_data(&w, "/", 1);                     \
+        }                                                       \
+        writer_append_data(&w, src, strlen(src));               \
+        *writer_append(&w, 1) = 0;                              \
+        struct writer dest_writer = { dest, sizeof dest };      \
+        canonize_abs_path(&dest_writer, temp_path);             \
+    } while(0)
+
 static void notify_open(const char *path, bool is_write, bool is_create, mode_t mode)
 {
     DEFINE_MSG(msg, open);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     if(is_write) {
         msg.args.flags |= FLAG_WRITE;
         if(is_create) {
@@ -300,7 +322,7 @@ DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *mode))
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
     DEFINE_MSG(msg, creat);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
     SEND_CALL_REAL(msg, int, creat, path, mode);
 }
@@ -309,7 +331,7 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 {
     DEFINE_MSG(msg, stat);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     AWAIT_CALL_REAL(msg, int, stat, path, buf);
 }
 
@@ -317,7 +339,7 @@ DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 {
     DEFINE_MSG(msg, lstat);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     AWAIT_CALL_REAL(msg, int, lstat, path, buf);
 }
 
@@ -325,7 +347,7 @@ DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 {
     DEFINE_MSG(msg, opendir);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     AWAIT_CALL_REAL(msg, DIR *, opendir, path);
 }
 
@@ -333,7 +355,7 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
     DEFINE_MSG(msg, access);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
     AWAIT_CALL_REAL(msg, int, access, path, mode);
 }
@@ -342,7 +364,7 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
 DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
     DEFINE_MSG(msg, truncate);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     SEND_CALL_REAL(msg, int, truncate, path, length);
 }
 
@@ -350,7 +372,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 DEFINE_WRAPPER(int, unlink, (const char *path))
 {
     DEFINE_MSG(msg, unlink);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     SEND_CALL_REAL(msg, int, unlink, path);
 }
 
@@ -358,8 +380,8 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
 DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 {
     DEFINE_MSG(msg, rename);
-    SAFE_STRCPY(msg.args.oldpath, oldpath);
-    SAFE_STRCPY(msg.args.newpath, newpath);
+    PATH_COPY(msg.args.oldpath, oldpath);
+    PATH_COPY(msg.args.newpath, newpath);
     SEND_CALL_REAL(msg, int, rename, oldpath, newpath);
 }
 
@@ -367,7 +389,7 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
 {
     DEFINE_MSG(msg, chmod);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
     SEND_CALL_REAL(msg, int, chmod, path, mode);
 }
@@ -376,7 +398,7 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
 DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
     DEFINE_MSG(msg, readlink);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     AWAIT_CALL_REAL(msg, ssize_t, readlink, path, buf, bufsiz);
 }
 
@@ -384,7 +406,7 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
 {
     DEFINE_MSG(msg, mknod);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
     msg.args.dev = dev;
     SEND_CALL_REAL(msg, int, mknod, path, mode, dev);
@@ -394,7 +416,7 @@ DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
 DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
 {
     DEFINE_MSG(msg, mkdir);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
     SEND_CALL_REAL(msg, int, mkdir, path, mode);
 }
@@ -403,7 +425,7 @@ DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
 DEFINE_WRAPPER(int, rmdir, (const char *path))
 {
     DEFINE_MSG(msg, rmdir);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     SEND_CALL_REAL(msg, int, rmdir, path);
 }
 
@@ -414,8 +436,8 @@ DEFINE_WRAPPER(int, rmdir, (const char *path))
 DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
 {
     DEFINE_MSG(msg, symlink);
-    SAFE_STRCPY(msg.args.target, target);
-    SAFE_STRCPY(msg.args.linkpath, linkpath);
+    PATH_COPY(msg.args.target, target);
+    PATH_COPY(msg.args.linkpath, linkpath);
     /* TODO: Maybe not AWAIT here, and handle it properly? */
     AWAIT_CALL_REAL(msg, int, symlink, linkpath, target);
 }
@@ -425,8 +447,8 @@ DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
 DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
 {
     DEFINE_MSG(msg, link);
-    SAFE_STRCPY(msg.args.oldpath, oldpath);
-    SAFE_STRCPY(msg.args.newpath, newpath);
+    PATH_COPY(msg.args.oldpath, oldpath);
+    PATH_COPY(msg.args.newpath, newpath);
     AWAIT_CALL_REAL(msg, int, link, oldpath, newpath);
 }
 
@@ -434,7 +456,7 @@ DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
 DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
 {
     DEFINE_MSG(msg, chown);
-    SAFE_STRCPY(msg.args.path, path);
+    PATH_COPY(msg.args.path, path);
     msg.args.owner = owner;
     msg.args.group = group;
     SEND_CALL_REAL(msg, int, chown, path, owner, group);
@@ -452,8 +474,8 @@ int fchdir(int fd)
 
 DEFINE_WRAPPER(int, chdir, (const char *path))
 {
-    SAFE_STRCPY(process_state.cwd, path);
     SILENT_CALL_REAL(int, chdir, path);
+    update_cwd();
 }
 
 /* TODO: Track utime? */
