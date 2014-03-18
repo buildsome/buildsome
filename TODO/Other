@@ -1,5 +1,20 @@
+* Performance is kind of crap:
+
+  orig:         4.38
+  cside canon:  3.55
+  cside filter: 2.89
+
+  ----------
+
+  perf still sucks:
+
+  The db.with is 8% of runtime! Probably writing a large string of all the file paths :(
+  Try to convert to bytestring file paths everywhere?
+
+
 * Exception-safety
-  * Current deadlock when Ctrl-c'ing in some places
+  * Current deadlock when Ctrl-c'ing in some places!
+  * Current deadlock even without Ctrl-C in some rare cases!
   * Need to guarantee update of registered outputs in Ctrl-c
 
 * Failures should be cached in execution log just like successes?
