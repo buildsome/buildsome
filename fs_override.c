@@ -497,3 +497,17 @@ DEFINE_WRAPPER(int, chdir, (const char *path))
 /* TODO: Track extended attributes? */
 /* TODO: Track flock? */
 /* TODO: Track ioctls? */
+
+FILE *log_file(void)
+{
+    static FILE *f = NULL;
+    if(!f) {
+        FILE *(*fopen_real)(const char *path, const char *mode) =
+            dlsym(RTLD_NEXT, "fopen");
+        char name[256];
+        snprintf(PS(name), "/tmp/fs_override.so.log.%d", getpid());
+        f = fopen_real(name, "w");
+        ASSERT(f);
+    }
+    return f;
+}
