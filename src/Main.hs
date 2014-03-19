@@ -81,11 +81,6 @@ withAllocatedParallelism = MSem.with . bsRestrictedParallelism
 allowedUnspecifiedOutput :: FilePath -> Bool
 allowedUnspecifiedOutput = (".pyc" `isSuffixOf`)
 
-isLegalOutput :: Target -> FilePath -> Bool
-isLegalOutput target path =
-  path `elem` targetOutputs target ||
-  allowedUnspecifiedOutput path
-
 recordInput ::
   IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
   AccessType -> Reason -> FilePath -> IO ()
@@ -267,7 +262,7 @@ instance Show IllegalUnspecifiedOutputs where
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
 verifyTargetOutputs buildsome outputs target = do
 
-  let (unspecifiedOutputs, illegalOutputs) = partition (isLegalOutput target) allUnspecified
+  let (unspecifiedOutputs, illegalOutputs) = partition allowedUnspecifiedOutput allUnspecified
 
   -- Legal unspecified need to be kept/deleted according to policy:
   handleLegalUnspecifiedOutputs buildsome target =<<
@@ -543,6 +538,11 @@ runCmd buildsome target parents inputsRef outputsRef = do
             recordInput inputsRef accessType actDesc path
     handleOutput _actDesc path =
       atomicModifyIORef'_ outputsRef $ S.insert path
+
+isLegalOutput :: Target -> FilePath -> Bool
+isLegalOutput target path =
+  path `elem` targetOutputs target ||
+  allowedUnspecifiedOutput path
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
