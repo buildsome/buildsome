@@ -1,12 +1,3 @@
-* Need to detect number of active threads in cmds:
-  * Pre-allocate one slot for at least one thread
-  * Allocate an extra slot of parallelism for each detected thread
-    (connection created)
-    * This will fix the current bug that pausing releases parallelism
-      that wasn't necessarily ever allocated!
-    * Test this via Haskell program that creates multiple real threads
-      to access file system
-
 * "Concurrent" identifiers for each concurrent command (even paused ones)
   * Indentation is based on this
 

@@ -1,5 +1,3 @@
-* Avoid the target lookups for undelayed inputs
-
 * Exception-safety
   * Current deadlock when Ctrl-c'ing in some places!
   * Current deadlock even without Ctrl-C in some rare cases!
@@ -7,9 +5,10 @@
 
 * Performance is kind of crap:
 
-  orig:         4.38
-  cside canon:  3.55
-  cside filter: 2.89
+  orig:             4.38
+  cside canon:      3.55
+  cside filter:     2.89
+  Undelayed inputs: 2.391
 
   ----------
 
@@ -26,6 +25,9 @@
 
     * Need C side to verify output files do not exist before-hand to
       avoid covert channels that are then unlinked
+      * Recording only non-output inputs is weird, what if these
+        outputs come later? Need to do the filtering of such input
+        paths at the end
 
   * Wrong FS input model:
     * mode-only-inputs, (rely on mode only)
