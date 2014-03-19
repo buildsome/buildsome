@@ -162,8 +162,8 @@ handleJobConnection tidStr conn job = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   connFinishedMVar <- newEmptyMVar
-  atomicModifyIORef_ (jobActiveConnections job) (connFinishedMVar:)
   protect connFinishedMVar $ do
+    atomicModifyIORef_ (jobActiveConnections job) (connFinishedMVar:)
     sendGo conn
     recvLoop_ maxMsgSize
       (handleJobMsg tidStr conn job . Protocol.parseMsg) conn
