@@ -459,13 +459,18 @@ buildTarget buildsome target reason parents =
       (targetAllInputs target)
     inputsRef <- newIORef M.empty
     outputsRef <- newIORef S.empty
+
     stdOutputs <-
       withAllocatedParallelism buildsome $
       runCmd buildsome target parents inputsRef outputsRef
-    inputs <- readIORef inputsRef
+      `E.finally` do
+        outputs <- readIORef outputsRef
+        registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
+
     outputs <- readIORef outputsRef
-    registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
     verifyTargetOutputs buildsome outputs target
+
+    inputs <- readIORef inputsRef
     saveExecutionLog buildsome target inputs outputs stdOutputs
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
