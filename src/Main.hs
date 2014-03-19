@@ -21,7 +21,7 @@ import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
-import Lib.Directory (getMFileStatus, fileExists, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
+import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.FSHook (FSHook, Handlers(..))
 import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
@@ -32,7 +32,7 @@ import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
 import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (<.>), makeRelative)
-import System.Posix.Files (FileStatus)
+import System.Posix.Files (FileStatus, fileExist)
 import System.Process (CmdSpec(..))
 import qualified Clean
 import qualified Control.Concurrent.MSem as MSem
@@ -171,7 +171,7 @@ want buildsome reason = need buildsome Explicit reason []
 
 assertExists :: E.Exception e => FilePath -> e -> IO ()
 assertExists path err = do
-  doesExist <- fileExists path
+  doesExist <- fileExist path
   unless doesExist $ E.throwIO err
 
 data MissingRule = MissingRule FilePath Reason deriving (Typeable)
@@ -266,14 +266,14 @@ verifyTargetOutputs buildsome outputs target = do
 
   -- Legal unspecified need to be kept/deleted according to policy:
   handleLegalUnspecifiedOutputs buildsome target =<<
-    filterM fileExists unspecifiedOutputs
+    filterM fileExist unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
   -- input use by any other job:
   -- TODO: Add to a ban-from-input-list (by other jobs)
 
   -- Illegal unspecified that do exist are a problem:
-  existingIllegalOutputs <- filterM fileExists illegalOutputs
+  existingIllegalOutputs <- filterM fileExist illegalOutputs
   unless (null existingIllegalOutputs) $ do
     putStrLn $ "Illegal output files created: " ++ show existingIllegalOutputs
     mapM_ removeFileOrDirectory existingIllegalOutputs
@@ -573,7 +573,7 @@ findMakefile = do
     Right () -> E.throwIO MakefileScanFailed
   where
     check path = do
-      exists <- liftIO $ Dir.doesFileExist path
+      exists <- liftIO $ fileExist path
       when exists $ left path
 
 specifiedMakefile :: FilePath -> IO FilePath
