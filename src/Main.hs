@@ -520,22 +520,25 @@ runCmd buildsome target parents inputsRef outputsRef = do
     (show (targetOutputs target))
     Handlers {..}
   where
-    handleDelayedInput accessType actDesc path =
-      -- TODO: No need to do much of the stuff here
-      handleInput accessType actDesc path
-    handleInput accessType actDesc path
+    handleInputCommon accessType actDesc path useInput
       | inputIgnored path = return ()
       | otherwise = do
         actualOutputs <- readIORef outputsRef
         -- There's no problem for a target to read its own outputs freely:
         unless (path `S.member` actualOutputs) $ do
-          slaves <- makeSlavesForAccessType accessType buildsome Implicit actDesc parents path
-          -- Temporarily paused, so we can temporarily release parallelism
-          -- semaphore
-          unless (null slaves) $ withReleasedParallelism buildsome $
-            mapM_ slaveWait slaves
+          () <- useInput
           unless (path `elem` targetOutputs target || allowedUnspecifiedOutput path) $
             recordInput inputsRef accessType actDesc path
+    handleInput accessType actDesc path =
+      handleInputCommon accessType actDesc path $ return ()
+    handleDelayedInput accessType actDesc path =
+      handleInputCommon accessType actDesc path $ do
+        slaves <- makeSlavesForAccessType accessType buildsome Implicit actDesc parents path
+        -- Temporarily paused, so we can temporarily release parallelism
+        -- semaphore
+        unless (null slaves) $
+          withReleasedParallelism buildsome $
+          mapM_ slaveWait slaves
     handleOutput _actDesc path =
       atomicModifyIORef'_ outputsRef $ S.insert path
 
