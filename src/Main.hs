@@ -534,15 +534,10 @@ runCmd buildsome target parents inputsRef outputsRef = do
           -- semaphore
           unless (null slaves) $ withReleasedParallelism buildsome $
             mapM_ slaveWait slaves
-          unless (isLegalOutput target path) $
+          unless (path `elem` targetOutputs target || allowedUnspecifiedOutput path) $
             recordInput inputsRef accessType actDesc path
     handleOutput _actDesc path =
       atomicModifyIORef'_ outputsRef $ S.insert path
-
-isLegalOutput :: Target -> FilePath -> Bool
-isLegalOutput target path =
-  path `elem` targetOutputs target ||
-  allowedUnspecifiedOutput path
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
