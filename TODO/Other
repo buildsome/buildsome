@@ -1,7 +1,4 @@
-* Exception-safety
-  * Current deadlock when Ctrl-c'ing in some places!
-  * Current deadlock even without Ctrl-C in some rare cases!
-  * Need to guarantee update of registered outputs in Ctrl-c
+* Need to guarantee update of registered outputs in Ctrl-c
 
 * Performance is kind of crap:
 
