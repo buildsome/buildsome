@@ -6,8 +6,6 @@ module Lib.Makefile.Parser
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State (StateT, evalStateT)
 import Data.Char (isAlphaNum)
 import Data.Either (partitionEithers)
 import Data.List (partition, isInfixOf, intercalate)
@@ -21,7 +19,6 @@ import System.FilePath (takeDirectory, takeFileName)
 import System.IO (hPutStrLn, stderr)
 import Text.Parsec ((<?>))
 import qualified Control.Exception as E
-import qualified Control.Monad.Trans.State as State
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Lib.StringPattern as StringPattern
@@ -29,12 +26,16 @@ import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
 data State = State
-  { _includeStack :: [(Pos.SourcePos, String)]
-  , _rootDirectory :: FilePath
+  { stateIncludeStack :: [(Pos.SourcePos, String)]
+  , stateRootDir :: FilePath
+  , stateVars :: Vars
   }
 type Vars = Map String String
-type Parser = P.ParsecT String State (StateT Vars IO)
+type Parser = P.ParsecT String State IO
 type ParserG = P.ParsecT String
+
+atStateVars :: (Vars -> Vars) -> State -> State
+atStateVars f (State i r v) = State i r (f v)
 
 horizSpace :: Monad m => ParserG u m Char
 horizSpace = P.satisfy (`elem` " \t")
@@ -131,7 +132,7 @@ preserveMetavar =
 
 interpolateVariables :: (forall u m. Monad m => ParserG u m String) -> String -> Parser String
 interpolateVariables escapeParse stopChars = do
-  varsEnv <- lift State.get
+  varsEnv <- stateVars <$> P.getState
   let
     interpolate :: Monad m => ParserG u m String
     interpolate = interpolateString escapeParse stopChars (variable <|> preserveMetavar)
@@ -190,9 +191,9 @@ runInclude rawIncludedPath = do
   case eFileContent of
     Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e
     Right fileContent ->
-      void $ P.updateParserState $ \(P.State input pos (State includeStack rootDir)) ->
+      void $ P.updateParserState $ \(P.State input pos (State includeStack rootDir vars)) ->
         P.State fileContent (Pos.initialPos includedPath) $
-        State ((pos, input) : includeStack) rootDir
+        State ((pos, input) : includeStack) rootDir vars
   where
     computeIncludePath =
       case unprefixed "ROOT/" rawIncludedPath of
@@ -200,20 +201,20 @@ runInclude rawIncludedPath = do
         curPath <- takeDirectory . P.sourceName <$> P.getPosition
         return $ curPath </> rawIncludedPath
       Just pathSuffix -> do
-        State _ rootDir <- P.getState
-        return $ rootDir </> pathSuffix
+        state <- P.getState
+        return $ stateRootDir state </> pathSuffix
 
 returnToIncluder :: Parser ()
 returnToIncluder =
   P.eof *> do
-    State posStack rootDir <- P.getState
+    State posStack rootDir vars <- P.getState
     case posStack of
       [] -> fail "Don't steal eof"
       ((pos, input) : rest) -> do
         void $ P.setParserState P.State
           { P.statePos = pos
           , P.stateInput = input
-          , P.stateUser = State rest rootDir
+          , P.stateUser = State rest rootDir vars
           }
         -- "include" did not eat the end of line (if one existed) so lets
         -- read it here
@@ -346,8 +347,8 @@ mkMakefile allTargets
 properEof :: Parser ()
 properEof = do
   P.eof
-  State posStack _ <- P.getState
-  case posStack of
+  state <- P.getState
+  case stateIncludeStack state of
     [] -> return ()
     _ -> fail "EOF but includers still pending"
 
@@ -356,7 +357,7 @@ varAssignment = do
   varName <- P.try $ ident <* P.char '='
   value <- P.many (unescapedChar <|> P.noneOf "#\n")
   skipLineSuffix
-  lift $ State.modify (M.insert varName value)
+  P.updateState $ atStateVars $ M.insert varName value
 
 echoStatement :: Parser ()
 echoStatement = do
@@ -383,8 +384,7 @@ makefile =
 
 parse :: FilePath -> IO Makefile
 parse makefileName = do
-  parseAction <- parseFromFile makefile (State [] (takeDirectory makefileName)) makefileName
-  res <- evalStateT parseAction M.empty
+  res <- join $ parseFromFile makefile (State [] (takeDirectory makefileName) M.empty) makefileName
   case res of
     Right x -> return x
     Left err -> do
