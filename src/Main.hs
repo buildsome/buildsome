@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable, RecordWildCards #-}
 module Main (main) where
 
-import Control.Applicative (Applicative(..), (<$>))
+import Control.Applicative ((<$>))
 import Control.Concurrent.Async
 import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
@@ -27,6 +27,7 @@ import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileM
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
+import Lib.Printer (Printer)
 import Lib.ShowBytes (showBytes)
 import Lib.Sigint (installSigintHandler)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
@@ -44,6 +45,7 @@ import qualified Db
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
+import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified System.Directory as Dir
 import qualified System.IO as IO
@@ -65,7 +67,13 @@ data Buildsome = Buildsome
   , bsMakefile :: Makefile
   , bsRootPath :: FilePath
   , bsFsHook :: FSHook
+  , bsNextPrinterId :: IORef Int
   }
+
+nextPrinter :: Buildsome -> IO Printer
+nextPrinter buildsome = do
+  printerId <- atomicModifyIORef (bsNextPrinterId buildsome) $ \oldId -> (oldId+1, oldId+1)
+  Printer.new printerId
 
 slaveWait :: Slave -> IO ()
 slaveWait = wait . slaveExecution
@@ -124,6 +132,7 @@ withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO
 withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   semaphore <- MSem.new parallelism
+  nextPrinterId <- newIORef 0
   let
     buildsome =
       Buildsome
@@ -136,13 +145,13 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsMakefile = makefile
       , bsRootPath = takeDirectory makefilePath
       , bsFsHook = fsHook
+      , bsNextPrinterId = nextPrinterId
       }
-  body buildsome
-    `E.finally` do
-      maybeUpdateGitIgnore buildsome
-      -- We must not leak running slaves as we're not allowed to
-      -- access fsHook, db, etc after leaving here:
-      cancelAllSlaves buildsome
+  (body buildsome
+    `E.finally` maybeUpdateGitIgnore buildsome)
+    -- We must not leak running slaves as we're not allowed to
+    -- access fsHook, db, etc after leaving here:
+    `E.finally` cancelAllSlaves buildsome
   where
     maybeUpdateGitIgnore buildsome
       | writeGitIgnore = updateGitIgnore buildsome makefilePath
@@ -237,11 +246,11 @@ makeSlaves buildsome explicitness reason parents path = do
   return $ maybeToList mSlave ++ childs
 
 -- e.g: .pyc files
-handleLegalUnspecifiedOutputs :: Buildsome -> Target -> [FilePath] -> IO ()
-handleLegalUnspecifiedOutputs buildsome target paths = do
+handleLegalUnspecifiedOutputs :: Printer -> Buildsome -> Target -> [FilePath] -> IO ()
+handleLegalUnspecifiedOutputs printer buildsome target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
   -- creating job
-  unless (null paths) $ putStrLn $ concat
+  unless (null paths) $ Printer.putStrLn printer $ concat
     [ "WARNING: Leaked unspecified outputs: "
     , show paths, " from target for: ", show (targetOutputs target)
     , ", ", actionDesc
@@ -261,13 +270,13 @@ instance Show IllegalUnspecifiedOutputs where
     , " wrote to unspecified output files: ", show illegalOutputs ]
 
 -- Verify output of whole of slave/execution log
-verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
-verifyTargetOutputs buildsome outputs target = do
+verifyTargetOutputs :: Printer -> Buildsome -> Set FilePath -> Target -> IO ()
+verifyTargetOutputs printer buildsome outputs target = do
 
   let (unspecifiedOutputs, illegalOutputs) = partition allowedUnspecifiedOutput allUnspecified
 
   -- Legal unspecified need to be kept/deleted according to policy:
-  handleLegalUnspecifiedOutputs buildsome target =<<
+  handleLegalUnspecifiedOutputs printer buildsome target =<<
     filterM fileExist unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
@@ -277,11 +286,11 @@ verifyTargetOutputs buildsome outputs target = do
   -- Illegal unspecified that do exist are a problem:
   existingIllegalOutputs <- filterM fileExist illegalOutputs
   unless (null existingIllegalOutputs) $ do
-    putStrLn $ "Illegal output files created: " ++ show existingIllegalOutputs
+    Printer.putStrLn printer $ "Illegal output files created: " ++ show existingIllegalOutputs
     mapM_ removeFileOrDirectory existingIllegalOutputs
     E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
   unless (S.null unusedOutputs) $
-    putStrLn $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
+    Printer.putStrLn printer $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
   where
     phonies = S.fromList $ makefilePhonies $ bsMakefile buildsome
     unusedOutputs = (specified `S.difference` outputs) `S.difference` phonies
@@ -308,31 +317,28 @@ targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
 
-indent :: String -> String
-indent = intercalate "\n" . map ("  "++) . lines
-
-targetPrintWrap :: Target -> String -> Reason -> IO a -> IO a
-targetPrintWrap target str reason body =
-  putStrLn before *> body <* putStrLn after
+targetPrintWrap :: Printer -> Target -> String -> Reason -> IO a -> IO a
+targetPrintWrap printer target str reason body =
+  Printer.printWrap printer
+    (show (targetOutputs target)) $ do
+    Printer.putStrLn printer $ concat [str, " (", reason, ")"]
+    unless (null cmd) $ Printer.putStrLn printer cmd
+    body
   where
     cmd = targetCmds target
-    before = concat $
-      [ "{ ", show (targetOutputs target), " ", str, " (", reason, ")" ] ++
-      [ "\n" ++ indent cmd | not (null cmd) ]
-    after  = concat ["} ", show (targetOutputs target)]
 
 -- Already verified that the execution log is a match
 applyExecutionLog ::
-  Buildsome -> Target -> Reason -> Set FilePath -> StdOutputs -> IO ()
-applyExecutionLog buildsome target reason outputs stdOutputs =
-  targetPrintWrap target "REPLAY" reason $ do
+  Printer -> Buildsome -> Target -> Reason -> Set FilePath -> StdOutputs -> IO ()
+applyExecutionLog printer buildsome target reason outputs stdOutputs =
+  targetPrintWrap printer target "REPLAY" reason $ do
     printStdouts (show (targetOutputs target)) stdOutputs
-    verifyTargetOutputs buildsome outputs target
+    verifyTargetOutputs printer buildsome outputs target
 
 tryApplyExecutionLog ::
-  Buildsome -> Target -> Reason -> Parents -> Db.ExecutionLog ->
+  Printer -> Buildsome -> Target -> Reason -> Parents -> Db.ExecutionLog ->
   IO (Either (String, FilePath) ())
-tryApplyExecutionLog buildsome target reason parents executionLog = do
+tryApplyExecutionLog printer buildsome target reason parents executionLog = do
   waitForInputs
   runEitherT $ do
     forM_ (M.toList inputsDescs) $ \(filePath, oldInputAccess) ->
@@ -345,7 +351,7 @@ tryApplyExecutionLog buildsome target reason parents executionLog = do
     mapM_ (compareToNewDesc "output" getFileDesc) $ M.toList outputsDescs
 
     liftIO $
-      applyExecutionLog buildsome target reason
+      applyExecutionLog printer buildsome target reason
       (M.keysSet outputsDescs) stdOutputs
   where
     Db.ExecutionLog inputsDescs outputsDescs stdOutputs = executionLog
@@ -372,17 +378,17 @@ tryApplyExecutionLog buildsome target reason parents executionLog = do
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: Buildsome -> Target -> Reason -> Parents -> IO Bool
-findApplyExecutionLog buildsome target reason parents = do
+findApplyExecutionLog :: Printer -> Buildsome -> Target -> Reason -> Parents -> IO Bool
+findApplyExecutionLog printer buildsome target reason parents = do
   mExecutionLog <- readIRef $ Db.executionLog target $ bsDb buildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return False
     Just executionLog -> do
-      res <- tryApplyExecutionLog buildsome target reason parents executionLog
+      res <- tryApplyExecutionLog printer buildsome target reason parents executionLog
       case res of
         Left (str, filePath) -> do
-          putStrLn $ concat
+          Printer.putStrLn printer $ concat
             ["Execution log of ", show (targetOutputs target), " did not match because ", str, ": ", show filePath, " changed"]
           return False
         Right () -> return True
@@ -412,8 +418,9 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
       Nothing ->
         ( M.insert targetRep newSlaveMVar oldSlaveMap
         , mkSlave newSlaveMVar $ restoreMask $ do
-            success <- findApplyExecutionLog buildsome target reason parents
-            unless success $ buildTarget buildsome target reason parents
+            printer <- nextPrinter buildsome
+            success <- findApplyExecutionLog printer buildsome target reason parents
+            unless success $ buildTarget printer buildsome target reason parents
         )
     where
       annotate = annotateException $ "build failure of " ++ show (targetOutputs target) ++ ":\n"
@@ -430,31 +437,31 @@ instance Show UnregisteredOutputFileExists where
     , "was not created by buildsome (use --overwrite to go ahead "
     , "anyway)" ]
 
-removeOldUnregisteredOutput :: Buildsome -> FilePath -> IO ()
-removeOldUnregisteredOutput buildsome path =
+removeOldUnregisteredOutput :: Printer -> Buildsome -> FilePath -> IO ()
+removeOldUnregisteredOutput printer buildsome path =
   case bsOverwriteUnregisteredOutputs buildsome of
   DontOverwriteUnregisteredOutputs -> E.throwIO $ UnregisteredOutputFileExists path
   OverwriteUnregisteredOutputs -> do
-    putStrLn $ "Overwriting " ++ show path ++ " (due to --overwrite)"
+    Printer.putStrLn printer $ "Overwriting " ++ show path ++ " (due to --overwrite)"
     removeFileOrDirectory path
 
-removeOldOutput :: Buildsome -> Set FilePath -> FilePath -> IO ()
-removeOldOutput buildsome registeredOutputs path = do
+removeOldOutput :: Printer -> Buildsome -> Set FilePath -> FilePath -> IO ()
+removeOldOutput printer buildsome registeredOutputs path = do
   mStat <- getMFileStatus path
   case mStat of
     Nothing -> return () -- Nothing to do
     Just _
       | path `S.member` registeredOutputs -> removeFileOrDirectory path
-      | otherwise -> removeOldUnregisteredOutput buildsome path
+      | otherwise -> removeOldUnregisteredOutput printer buildsome path
 
-buildTarget :: Buildsome -> Target -> Reason -> Parents -> IO ()
-buildTarget buildsome target reason parents =
-  targetPrintWrap target "BUILDING" reason $ do
+buildTarget :: Printer -> Buildsome -> Target -> Reason -> Parents -> IO ()
+buildTarget printer buildsome target reason parents =
+  targetPrintWrap printer target "BUILDING" reason $ do
     -- TODO: Register each created subdirectory as an output?
     mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
 
     registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
-    mapM_ (removeOldOutput buildsome registeredOutputs) $ targetOutputs target
+    mapM_ (removeOldOutput printer buildsome registeredOutputs) $ targetOutputs target
 
     need buildsome Explicit
       ("Hint from " ++ show (take 1 (targetOutputs target))) parents
@@ -464,13 +471,14 @@ buildTarget buildsome target reason parents =
 
     stdOutputs <-
       withAllocatedParallelism buildsome $
-      runCmd buildsome target parents inputsRef outputsRef
+      Printer.printWrap printer ("runCmd" ++ show (targetOutputs target))
+      (runCmd buildsome target parents inputsRef outputsRef)
       `E.finally` do
         outputs <- readIORef outputsRef
         registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
 
     outputs <- readIORef outputsRef
-    verifyTargetOutputs buildsome outputs target
+    verifyTargetOutputs printer buildsome outputs target
 
     inputs <- readIORef inputsRef
     saveExecutionLog buildsome target inputs outputs stdOutputs
