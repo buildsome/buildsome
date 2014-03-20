@@ -46,6 +46,7 @@ import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
 import qualified Lib.Process as Process
 import qualified System.Directory as Dir
+import qualified System.IO as IO
 
 data Explicitness = Explicit | Implicit
   deriving (Eq)
@@ -597,9 +598,15 @@ getRequestedTargets ts
   | "clean" `elem` ts = E.throwIO $ BadCommandLine "Clean must be requested exclusively"
   | otherwise = return $ RequestedTargets ts "explicit request from cmdline"
 
+setBuffering :: IO ()
+setBuffering = do
+  IO.hSetBuffering IO.stdout IO.LineBuffering
+  IO.hSetBuffering IO.stderr IO.LineBuffering
+
 main :: IO ()
 main = do
   installSigintHandler
+  setBuffering
   FSHook.with $ \fsHook -> do
     opt <- getOpt
     makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
