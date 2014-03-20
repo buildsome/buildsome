@@ -8,7 +8,7 @@ module Lib.Directory
 import Control.Applicative ((<$>))
 import Control.Monad
 import System.IO.Error
-import System.Posix.Files (FileStatus, getFileStatus)
+import System.Posix.Files (FileStatus, getFileStatus, fileExist)
 import qualified Control.Exception as E
 import qualified System.Directory as Dir
 
@@ -21,9 +21,11 @@ catchDoesNotExist act handler =
       | otherwise = Nothing
 
 getMFileStatus :: FilePath -> IO (Maybe FileStatus)
-getMFileStatus path =
-  (Just <$> getFileStatus path)
-  `catchDoesNotExist` return Nothing
+getMFileStatus path = do
+  exists <- fileExist path
+  if exists
+    then (Just <$> getFileStatus path) `catchDoesNotExist` return Nothing
+    else return Nothing
 
 removeFileOrDirectoryOrNothing :: FilePath -> IO ()
 removeFileOrDirectoryOrNothing path = do
