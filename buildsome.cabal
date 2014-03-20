@@ -47,6 +47,7 @@ executable buildsome
                ,     Lib.Makefile.Parser
                ,     Lib.Makefile.Types
                ,     Lib.Parsec
+               ,     Lib.Printer
                ,     Lib.Process
                ,     Lib.ShowBytes
                ,     Lib.Sock
