@@ -50,6 +50,7 @@ executable buildsome
                ,     Lib.Printer
                ,     Lib.Process
                ,     Lib.ShowBytes
+               ,     Lib.Sigint
                ,     Lib.Sock
                ,     Lib.StdOutputs
                ,     Lib.StringPattern

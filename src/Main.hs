@@ -28,6 +28,7 @@ import Lib.FilePath ((</>), canonicalizePath, splitFileName)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.ShowBytes (showBytes)
+import Lib.Sigint (installSigintHandler)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
 import System.Exit (ExitCode(..))
@@ -597,45 +598,47 @@ getRequestedTargets ts
   | otherwise = return $ RequestedTargets ts "explicit request from cmdline"
 
 main :: IO ()
-main = FSHook.with $ \fsHook -> do
-  opt <- getOpt
-  makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
-  putStrLn $ "Using makefile: " ++ show makefilePath
-  let (cwd, file) = splitFileName makefilePath
-  origCwd <- Dir.getCurrentDirectory
-  Dir.setCurrentDirectory cwd
-  origMakefile <- Makefile.parse file
-  makefile <- Makefile.onMakefilePaths canonicalizePath origMakefile
-  Db.with (buildDbFilename file) $ \db ->
-    withBuildsome file fsHook db makefile opt $
-      \buildsome -> do
-      deleteRemovedOutputs buildsome
-      let
-        inOrigCwd =
-          case optMakefilePath opt of
-          -- If we found the makefile by scanning upwards, prepend
-          -- original cwd to avoid losing it:
-          Nothing -> mapM (canonicalizePath . (origCwd </>))
-          -- Otherwise: there's no useful original cwd:
-          Just _ -> return
+main = do
+  installSigintHandler
+  FSHook.with $ \fsHook -> do
+    opt <- getOpt
+    makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
+    putStrLn $ "Using makefile: " ++ show makefilePath
+    let (cwd, file) = splitFileName makefilePath
+    origCwd <- Dir.getCurrentDirectory
+    Dir.setCurrentDirectory cwd
+    origMakefile <- Makefile.parse file
+    makefile <- Makefile.onMakefilePaths canonicalizePath origMakefile
+    Db.with (buildDbFilename file) $ \db ->
+      withBuildsome file fsHook db makefile opt $
+        \buildsome -> do
+        deleteRemovedOutputs buildsome
+        let
+          inOrigCwd =
+            case optMakefilePath opt of
+            -- If we found the makefile by scanning upwards, prepend
+            -- original cwd to avoid losing it:
+            Nothing -> mapM (canonicalizePath . (origCwd </>))
+            -- Otherwise: there's no useful original cwd:
+            Just _ -> return
 
-      requested <- getRequestedTargets $ optRequestedTargets opt
+        requested <- getRequestedTargets $ optRequestedTargets opt
 
-      case requested of
-        RequestedTargets requestedTargets reason -> do
-          requestedTargetPaths <- inOrigCwd requestedTargets
-          putStrLn $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
-          want buildsome reason requestedTargetPaths
-          putStrLn "Build Successful!"
-        RequestedClean -> do
-          outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
-          leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
-          Clean.Result _totalSize totalSpace count <-
-            mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
-          writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
-          writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
-          putStrLn $ concat
-            [ "Clean Successful: Cleaned "
-            , show count, " files freeing an estimated "
-            , showBytes (fromIntegral totalSpace)
-            ]
+        case requested of
+          RequestedTargets requestedTargets reason -> do
+            requestedTargetPaths <- inOrigCwd requestedTargets
+            putStrLn $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
+            want buildsome reason requestedTargetPaths
+            putStrLn "Build Successful!"
+          RequestedClean -> do
+            outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
+            leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
+            Clean.Result _totalSize totalSpace count <-
+              mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
+            writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
+            writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
+            putStrLn $ concat
+              [ "Clean Successful: Cleaned "
+              , show count, " files freeing an estimated "
+              , showBytes (fromIntegral totalSpace)
+              ]
