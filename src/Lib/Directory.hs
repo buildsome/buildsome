@@ -14,11 +14,10 @@ import qualified System.Directory as Dir
 
 catchDoesNotExist :: IO a -> IO a -> IO a
 catchDoesNotExist act handler =
-  E.catchJust predicate act $ \() -> handler
-  where
-    predicate e
-      | isDoesNotExistErrorType (ioeGetErrorType e) = Just ()
-      | otherwise = Nothing
+  act `E.catch` \e ->
+  if isDoesNotExistErrorType (ioeGetErrorType e)
+  then handler
+  else E.throwIO e
 
 getMFileStatus :: FilePath -> IO (Maybe FileStatus)
 getMFileStatus path = do
