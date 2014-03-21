@@ -1,4 +1,9 @@
-* Need to guarantee update of registered outputs in Ctrl-c
+* mtime cache:
+  * mtime cache: Add path->(buildId, mtime, c.hash) cache to k/v store
+
+  * When looking up a path in the mtime cache, if the buildId matches
+    the current one, then the mtime must also match the current
+    one. Also update the mtime cache if needed
 
 * Performance is kind of crap:
 
