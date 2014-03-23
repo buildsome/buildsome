@@ -136,6 +136,24 @@ cancelAllSlaves bs = go 0
           -- created during cancellation
           go count
 
+infixl 1 `finally`
+finally :: IO a -> IO () -> IO a
+action `finally` cleanup =
+  E.mask $ \restore -> do
+    res <- restore action
+      `catch` \e -> do
+        logErrors ("overrides original error: " ++ show e) cleanup
+        E.throwIO e
+    logErrors "during successful finally cleanup" cleanup
+    return res
+  where
+    catch :: IO a -> (E.SomeException -> IO a) -> IO a
+    catch = E.catch
+    logErrors suffix act =
+      act `catch` \e -> do
+      IO.hPutStrLn IO.stderr $ concat ["Finally clause error: ", show e, " ", suffix]
+      E.throwIO e
+
 withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
@@ -157,11 +175,11 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsNextPrinterId = printerIdRef
       , bsBuildId = buildId
       }
-  (body buildsome
-    `E.finally` maybeUpdateGitIgnore buildsome)
+  body buildsome
+    `finally` maybeUpdateGitIgnore buildsome
     -- We must not leak running slaves as we're not allowed to
     -- access fsHook, db, etc after leaving here:
-    `E.finally` cancelAllSlaves buildsome
+    `finally` cancelAllSlaves buildsome
   where
     maybeUpdateGitIgnore buildsome
       | writeGitIgnore = updateGitIgnore buildsome makefilePath
@@ -501,7 +519,7 @@ buildTarget printer buildsome target reason parents =
       ( Printer.printWrap printer ("runCmd" ++ show (targetOutputs target))
         (runCmd printer buildsome target parents inputsRef outputsRef)
       )
-      `E.finally` do
+      `finally` do
         outputs <- readIORef outputsRef
         registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
 
