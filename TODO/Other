@@ -1,3 +1,7 @@
+* Timeout on readMVar and verifyCancelled in case of deadlocks...
+
+* Extract Lib.Fresh (for all the atomicModifyIORef (\x -> (x+1,x+1)) calls)
+
 * mtime cache:
   * mtime cache: Add path->(buildId, mtime, c.hash) cache to k/v store
 
