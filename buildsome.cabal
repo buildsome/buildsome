@@ -40,6 +40,7 @@ executable buildsome
                ,     Lib.Exception
                ,     Lib.FSHook
                ,     Lib.FSHook.Protocol
+               ,     Lib.Fifo
                ,     Lib.FileDesc
                ,     Lib.FilePath
                ,     Lib.IORef
@@ -49,6 +50,7 @@ executable buildsome
                ,     Lib.Makefile.Parser
                ,     Lib.Makefile.Types
                ,     Lib.Parsec
+               ,     Lib.PoolAlloc
                ,     Lib.Printer
                ,     Lib.Process
                ,     Lib.ShowBytes
