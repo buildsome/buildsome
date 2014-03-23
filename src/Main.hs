@@ -61,8 +61,12 @@ type Parents = [(TargetRep, Reason)]
 
 data Slave = Slave
   { slaveExecution :: Async ()
-  , _slavePrinterId :: Printer.Id
+  , slavePrinterId :: Printer.Id
+  , slaveOutputPaths :: [FilePath]
   }
+
+slaveStr :: Slave -> String
+slaveStr slave = Printer.idStr (slavePrinterId slave) ++ ": " ++ show (slaveOutputPaths slave)
 
 data Buildsome = Buildsome
   { bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
@@ -82,9 +86,9 @@ nextPrinterId :: Buildsome -> IO Printer.Id
 nextPrinterId buildsome = atomicModifyIORef (bsNextPrinterId buildsome) $ \oldId -> (oldId+1, oldId+1)
 
 slaveWait :: Printer -> Slave -> IO ()
-slaveWait printer (Slave execution printerId) =
-  Printer.printWrap printer ("Waiting for " ++ Printer.idStr printerId) $
-  wait execution
+slaveWait printer slave =
+  Printer.printWrap printer ("Waiting for " ++ slaveStr slave) $
+  wait $ slaveExecution slave
 
 -- | Opposite of MSem.with
 localSemSignal :: MSem Int -> IO a -> IO a
@@ -124,10 +128,10 @@ verifyCancelled a = do
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = go 0
   where
-    timeoutVerifyCancelled (repPath, Slave execution pid) =
+    timeoutVerifyCancelled slave =
       Timeout.warning (Timeout.seconds 2)
-      (unwords ["Slave", Printer.idStr pid, show repPath, "did not cancel in 2 seconds!"]) $
-      verifyCancelled execution
+      (unwords ["Slave", slaveStr slave, "did not cancel in 2 seconds!"]) $
+      verifyCancelled $ slaveExecution slave
     go alreadyCancelled = do
       curSlaveMap <- readIORef $ bsSlaveByRepPath bs
       slaves <-
@@ -135,7 +139,7 @@ cancelAllSlaves bs = go 0
         \(repPath, mvar) ->
         Timeout.warning (Timeout.millis 100)
         ("Slave MVar for " ++ show repPath ++ " not populated in 100 millis!") $
-        (,) repPath <$> readMVar mvar
+        readMVar mvar
       let count = length slaves
       if alreadyCancelled >= count
         then return ()
@@ -462,7 +466,7 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
             printer <- Printer.new printerId
             execution <- async $ annotate $ action printer
             return (printerId, execution)
-        let slave = Slave execution printerId
+        let slave = Slave execution printerId (targetOutputs target)
         putMVar mvar slave >> return slave
 
 data UnregisteredOutputFileExists = UnregisteredOutputFileExists FilePath deriving (Typeable)
