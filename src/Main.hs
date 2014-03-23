@@ -58,11 +58,9 @@ data Explicitness = Explicit | Implicit
 
 type Parents = [(TargetRep, Reason)]
 
-type PrinterId = Int
-
 data Slave = Slave
   { slaveExecution :: Async ()
-  , _slavePrinterId :: PrinterId
+  , _slavePrinterId :: Printer.Id
   }
 
 data Buildsome = Buildsome
@@ -75,16 +73,16 @@ data Buildsome = Buildsome
   , bsMakefile :: Makefile
   , bsRootPath :: FilePath
   , bsFsHook :: FSHook
-  , bsNextPrinterId :: IORef PrinterId
+  , bsNextPrinterId :: IORef Printer.Id
   , bsBuildId :: BuildId
   }
 
-nextPrinterId :: Buildsome -> IO PrinterId
+nextPrinterId :: Buildsome -> IO Printer.Id
 nextPrinterId buildsome = atomicModifyIORef (bsNextPrinterId buildsome) $ \oldId -> (oldId+1, oldId+1)
 
 slaveWait :: Printer -> Slave -> IO ()
 slaveWait printer (Slave execution printerId) =
-  Printer.printWrap printer ("Waiting for " ++ show printerId) $
+  Printer.printWrap printer ("Waiting for " ++ Printer.idStr printerId) $
   wait execution
 
 -- | Opposite of MSem.with

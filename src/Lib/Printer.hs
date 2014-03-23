@@ -1,5 +1,6 @@
 module Lib.Printer
-  ( Printer, new
+  ( Id, idStr
+  , Printer, new
   , putStrLn
   , printWrap
   ) where
@@ -13,8 +14,10 @@ import Data.List (intercalate)
 import Text.Printf (printf)
 import qualified Control.Exception as E
 
+type Id = Int
+
 data Printer = Printer
-  { _printerId :: Int
+  { _printerId :: Id
   , printerIndentLevelRef :: IORef Int
   }
 
@@ -24,10 +27,13 @@ new pid = Printer pid <$> newIORef 0
 prefixLines :: String -> String -> String
 prefixLines prefix = intercalate "\n" . map (prefix ++) . lines
 
+idStr :: Id -> String
+idStr = printf "%03d"
+
 putStrLn :: Printer -> String -> IO ()
 putStrLn (Printer pid indentRef) str = do
   indentLevel <- readIORef indentRef
-  let prefix = printf "%03d" pid ++ ": " ++ concat (replicate indentLevel "  ")
+  let prefix = idStr pid ++ ": " ++ concat (replicate indentLevel "  ")
   Prelude.putStrLn $ prefixLines prefix str
 
 onException :: IO a -> (E.SomeException -> IO ()) -> IO a
