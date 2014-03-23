@@ -57,7 +57,12 @@ data Explicitness = Explicit | Implicit
 
 type Parents = [(TargetRep, Reason)]
 
-newtype Slave = Slave { slaveExecution :: Async () }
+type PrinterId = Int
+
+data Slave = Slave
+  { slaveExecution :: Async ()
+  , _slavePrinterId :: PrinterId
+  }
 
 data Buildsome = Buildsome
   { bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
@@ -69,17 +74,17 @@ data Buildsome = Buildsome
   , bsMakefile :: Makefile
   , bsRootPath :: FilePath
   , bsFsHook :: FSHook
-  , bsNextPrinterId :: IORef Int
+  , bsNextPrinterId :: IORef PrinterId
   , bsBuildId :: BuildId
   }
 
-nextPrinter :: Buildsome -> IO Printer
-nextPrinter buildsome = do
-  printerId <- atomicModifyIORef (bsNextPrinterId buildsome) $ \oldId -> (oldId+1, oldId+1)
-  Printer.new printerId
+nextPrinterId :: Buildsome -> IO PrinterId
+nextPrinterId buildsome = atomicModifyIORef (bsNextPrinterId buildsome) $ \oldId -> (oldId+1, oldId+1)
 
-slaveWait :: Slave -> IO ()
-slaveWait = wait . slaveExecution
+slaveWait :: Printer -> Slave -> IO ()
+slaveWait printer (Slave execution printerId) =
+  Printer.printWrap printer ("Waiting for " ++ show printerId) $
+  wait execution
 
 -- | Opposite of MSem.with
 localSemSignal :: MSem Int -> IO a -> IO a
@@ -135,7 +140,7 @@ withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO
 withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   semaphore <- MSem.new parallelism
-  nextPrinterId <- newIORef 0
+  printerIdRef <- newIORef 0
   buildId <- BuildId.new
   let
     buildsome =
@@ -149,7 +154,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsMakefile = makefile
       , bsRootPath = takeDirectory makefilePath
       , bsFsHook = fsHook
-      , bsNextPrinterId = nextPrinterId
+      , bsNextPrinterId = printerIdRef
       , bsBuildId = buildId
       }
   (body buildsome
@@ -177,13 +182,13 @@ updateGitIgnore buildsome makefilePath = do
     map (makeRelative dir) $
     extraIgnored ++ S.toList (outputs <> leaked)
 
-need :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
-need buildsome explicitness reason parents paths = do
+need :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
+need printer buildsome explicitness reason parents paths = do
   slaves <- concat <$> mapM (makeSlaves buildsome explicitness reason parents) paths
-  mapM_ slaveWait slaves
+  mapM_ (slaveWait printer) slaves
 
-want :: Buildsome -> Reason -> [FilePath] -> IO ()
-want buildsome reason = need buildsome Explicit reason []
+want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO ()
+want printer buildsome reason = need printer buildsome Explicit reason []
 
 assertExists :: E.Exception e => FilePath -> e -> IO ()
 assertExists path err = do
@@ -382,7 +387,7 @@ tryApplyExecutionLog printer buildsome target reason parents Db.ExecutionLog {..
       let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
       hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
 
-      mapM_ slaveWait (speculativeSlaves ++ hintedSlaves)
+      mapM_ (slaveWait printer) (speculativeSlaves ++ hintedSlaves)
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -411,6 +416,14 @@ instance E.Exception TargetDependencyLoop
 instance Show TargetDependencyLoop where
   show (TargetDependencyLoop parents) = "Target loop: " ++ showParents parents
 
+data PanicError = PanicError String deriving (Show, Typeable)
+instance E.Exception PanicError
+
+panic :: String -> IO a
+panic msg = do
+  IO.hPutStrLn IO.stderr msg
+  E.throwIO $ PanicError msg
+
 -- Find existing slave for target, or spawn a new one
 getSlaveForTarget :: Buildsome -> Reason -> Parents -> (TargetRep, Target) -> IO Slave
 getSlaveForTarget buildsome reason parents (targetRep, target)
@@ -425,16 +438,22 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
       Nothing ->
         ( M.insert targetRep newSlaveMVar oldSlaveMap
-        , mkSlave newSlaveMVar $ restoreMask $ do
-            printer <- nextPrinter buildsome
+        , mkSlave newSlaveMVar $ \printer -> restoreMask $ do
             success <- findApplyExecutionLog printer buildsome target reason parents
             unless success $ buildTarget printer buildsome target reason parents
         )
     where
       annotate = annotateException $ "build failure of " ++ show (targetOutputs target) ++ ":\n"
       newParents = (targetRep, reason) : parents
+      panicHandler e@E.SomeException {} = panic $ "FAILED during making of slave: " ++ show e
       mkSlave mvar action = do
-        slave <- fmap Slave . async $ annotate action
+        (printerId, execution) <-
+          E.handle panicHandler $ do
+            printerId <- nextPrinterId buildsome
+            printer <- Printer.new printerId
+            execution <- async $ annotate $ action printer
+            return (printerId, execution)
+        let slave = Slave execution printerId
         putMVar mvar slave >> return slave
 
 data UnregisteredOutputFileExists = UnregisteredOutputFileExists FilePath deriving (Typeable)
@@ -471,7 +490,7 @@ buildTarget printer buildsome target reason parents =
     registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
     mapM_ (removeOldOutput printer buildsome registeredOutputs) $ targetOutputs target
 
-    need buildsome Explicit
+    need printer buildsome Explicit
       ("Hint from " ++ show (take 1 (targetOutputs target))) parents
       (targetAllInputs target)
     inputsRef <- newIORef M.empty
@@ -532,11 +551,11 @@ shellCmdVerify target inheritEnvs newEnvs = do
     cmd = targetCmds target
 
 runCmd ::
-  Buildsome -> Target -> Parents ->
+  Printer -> Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
   IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
   IORef (Set FilePath) -> IO StdOutputs
-runCmd buildsome target parents inputsRef outputsRef = do
+runCmd printer buildsome target parents inputsRef outputsRef = do
   rootPath <- Dir.canonicalizePath (bsRootPath buildsome)
   FSHook.runCommand (bsFsHook buildsome) rootPath
     (shellCmdVerify target ["HOME", "PATH"])
@@ -560,8 +579,9 @@ runCmd buildsome target parents inputsRef outputsRef = do
         -- Temporarily paused, so we can temporarily release parallelism
         -- semaphore
         unless (null slaves) $
+          Printer.printWrap printer ("PAUSED: " ++ show (targetOutputs target)) $
           withReleasedParallelism buildsome $
-          mapM_ slaveWait slaves
+          mapM_ (slaveWait printer) slaves
     handleOutput _actDesc path =
       atomicModifyIORef'_ outputsRef $ S.insert path
 
@@ -632,6 +652,7 @@ main = do
     Dir.setCurrentDirectory cwd
     origMakefile <- Makefile.parse file
     makefile <- Makefile.onMakefilePaths canonicalizePath origMakefile
+    printer <- Printer.new 0
     Db.with (buildDbFilename file) $ \db ->
       withBuildsome file fsHook db makefile opt $
         \buildsome -> do
@@ -646,13 +667,12 @@ main = do
             Just _ -> return
 
         requested <- getRequestedTargets $ optRequestedTargets opt
-
         case requested of
           RequestedTargets requestedTargets reason -> do
             requestedTargetPaths <- inOrigCwd requestedTargets
-            putStrLn $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
-            want buildsome reason requestedTargetPaths
-            putStrLn "Build Successful!"
+            Printer.putStrLn printer $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
+            want printer buildsome reason requestedTargetPaths
+            Printer.putStrLn printer "Build Successful!"
           RequestedClean -> do
             outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
             leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
@@ -660,7 +680,7 @@ main = do
               mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
             writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
             writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
-            putStrLn $ concat
+            Printer.putStrLn printer $ concat
               [ "Clean Successful: Cleaned "
               , show count, " files freeing an estimated "
               , showBytes (fromIntegral totalSpace)
