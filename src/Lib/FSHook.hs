@@ -151,9 +151,9 @@ handleJobMsg _tidStr conn job msg =
     reportInput accessType path
       | "/" `isPrefixOf` path =
         forwardExceptions $ handleInput handlers accessType actDesc path
-      | otherwise =
-        (`E.finally` sendGo conn) $
-        forwardExceptions $ handleDelayedInput handlers accessType actDesc path
+      | otherwise = do
+        forwardExceptions (handleDelayedInput handlers accessType actDesc path)
+        sendGo conn
     reportOutput path =
       forwardExceptions $ handleOutput handlers actDesc path
 
