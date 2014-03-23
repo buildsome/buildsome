@@ -620,9 +620,8 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
         -- Temporarily paused, so we can temporarily release parallelism
         -- semaphore
         unless (null slaves) $
-          Printer.printWrap printer ("PAUSED: " ++ show (targetOutputs target)) $
-          withReleasedParallelism buildsome $
-          mapM_ (slaveWait printer) slaves
+          Printer.printWrap printer (concat ["PAUSED: ", show (targetOutputs target), " ", actDesc]) $
+          waitForSlaves printer parCell buildsome slaves
     handleOutput _actDesc path =
       atomicModifyIORef'_ outputsRef $ S.insert path
 
