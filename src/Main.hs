@@ -20,6 +20,7 @@ import Db (Db, IRef(..), Reason)
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
+import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.FSHook (FSHook, Handlers(..))
@@ -42,6 +43,7 @@ import qualified Control.Exception as E
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Db
+import qualified Lib.BuildId as BuildId
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
@@ -68,6 +70,7 @@ data Buildsome = Buildsome
   , bsRootPath :: FilePath
   , bsFsHook :: FSHook
   , bsNextPrinterId :: IORef Int
+  , bsBuildId :: BuildId
   }
 
 nextPrinter :: Buildsome -> IO Printer
@@ -133,6 +136,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   semaphore <- MSem.new parallelism
   nextPrinterId <- newIORef 0
+  buildId <- BuildId.new
   let
     buildsome =
       Buildsome
@@ -146,6 +150,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsRootPath = takeDirectory makefilePath
       , bsFsHook = fsHook
       , bsNextPrinterId = nextPrinterId
+      , bsBuildId = buildId
       }
   (body buildsome
     `E.finally` maybeUpdateGitIgnore buildsome)
