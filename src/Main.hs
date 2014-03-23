@@ -497,9 +497,10 @@ buildTarget printer buildsome target reason parents =
     outputsRef <- newIORef S.empty
 
     stdOutputs <-
-      withAllocatedParallelism buildsome $
-      Printer.printWrap printer ("runCmd" ++ show (targetOutputs target))
-      (runCmd buildsome target parents inputsRef outputsRef)
+      withAllocatedParallelism buildsome
+      ( Printer.printWrap printer ("runCmd" ++ show (targetOutputs target))
+        (runCmd printer buildsome target parents inputsRef outputsRef)
+      )
       `E.finally` do
         outputs <- readIORef outputsRef
         registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
