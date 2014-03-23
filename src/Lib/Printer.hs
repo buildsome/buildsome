@@ -1,6 +1,6 @@
 module Lib.Printer
   ( Id, idStr
-  , Printer, new
+  , Printer, new, newFrom
   , putStrLn
   , printWrap
   ) where
@@ -21,8 +21,12 @@ data Printer = Printer
   , printerIndentLevelRef :: IORef Int
   }
 
-new :: Int -> IO Printer
+new :: Id -> IO Printer
 new pid = Printer pid <$> newIORef 0
+
+newFrom :: Printer -> Id -> IO Printer
+newFrom (Printer _id indentRef) pid = do
+  Printer pid <$> (newIORef =<< readIORef indentRef)
 
 prefixLines :: String -> String -> String
 prefixLines prefix = intercalate "\n" . map (prefix ++) . lines

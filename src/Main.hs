@@ -207,13 +207,13 @@ updateGitIgnore buildsome makefilePath = do
     map (makeRelative dir) $
     extraIgnored ++ S.toList (outputs <> leaked)
 
-mkSlavesForPaths :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO [Slave]
-mkSlavesForPaths buildsome explicitness reason parents paths =
-  concat <$> mapM (makeSlaves buildsome explicitness reason parents) paths
+mkSlavesForPaths :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO [Slave]
+mkSlavesForPaths printer buildsome explicitness reason parents paths =
+  concat <$> mapM (makeSlaves printer buildsome explicitness reason parents) paths
 
 need :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
 need printer buildsome explicitness reason parents paths =
-  mapM_ (slaveWait printer) =<< mkSlavesForPaths buildsome explicitness reason parents paths
+  mapM_ (slaveWait printer) =<< mkSlavesForPaths printer buildsome explicitness reason parents paths
 
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO ()
 want printer buildsome reason = need printer buildsome Explicit reason []
@@ -236,14 +236,14 @@ instance Show TargetNotCreated where
     , " explicitly demanded but was not created by its target rule"
     ]
 
-makeDirectSlave :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO (Maybe Slave)
-makeDirectSlave buildsome explicitness reason parents path =
+makeDirectSlave :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO (Maybe Slave)
+makeDirectSlave printer buildsome explicitness reason parents path =
   case BuildMaps.find (bsBuildMaps buildsome) path of
   Nothing -> do
     when (explicitness == Explicit) $ assertExists path $ MissingRule path reason
     return Nothing
   Just tgt -> do
-    slave <- getSlaveForTarget buildsome reason parents tgt
+    slave <- getSlaveForTarget printer buildsome reason parents tgt
     Just <$> case explicitness of
       Implicit -> return slave
       Explicit -> verifyFileGetsCreated slave
@@ -256,31 +256,31 @@ makeDirectSlave buildsome explicitness reason parents path =
         assertExists path $ TargetNotCreated path
       return slave { slaveExecution = wrappedExecution }
 
-makeChildSlaves :: Buildsome -> Reason -> Parents -> FilePath -> IO [Slave]
-makeChildSlaves buildsome reason parents path
+makeChildSlaves :: Printer -> Buildsome -> Reason -> Parents -> FilePath -> IO [Slave]
+makeChildSlaves printer buildsome reason parents path
   | not (null childPatterns) =
     fail "UNSUPPORTED: Read directory on directory with patterns"
   | otherwise =
-    traverse (getSlaveForTarget buildsome reason parents)
+    traverse (getSlaveForTarget printer buildsome reason parents)
     childTargets
   where
     DirectoryBuildMap childTargets childPatterns =
       BuildMaps.findDirectory (bsBuildMaps buildsome) path
 
 makeSlavesForAccessType ::
-  AccessType -> Buildsome -> Explicitness -> Reason ->
+  AccessType -> Printer -> Buildsome -> Explicitness -> Reason ->
   Parents -> FilePath -> IO [Slave]
-makeSlavesForAccessType accessType buildsome explicitness reason parents path =
+makeSlavesForAccessType accessType printer buildsome explicitness reason parents path =
   case accessType of
   AccessTypeFull ->
-    makeSlaves buildsome explicitness reason parents path
+    makeSlaves printer buildsome explicitness reason parents path
   AccessTypeModeOnly ->
-    maybeToList <$> makeDirectSlave buildsome explicitness reason parents path
+    maybeToList <$> makeDirectSlave printer buildsome explicitness reason parents path
 
-makeSlaves :: Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
-makeSlaves buildsome explicitness reason parents path = do
-  mSlave <- makeDirectSlave buildsome explicitness reason parents path
-  childs <- makeChildSlaves buildsome (reason ++ "(Container directory)") parents path
+makeSlaves :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
+makeSlaves printer buildsome explicitness reason parents path = do
+  mSlave <- makeDirectSlave printer buildsome explicitness reason parents path
+  childs <- makeChildSlaves printer buildsome (reason ++ "(Container directory)") parents path
   return $ maybeToList mSlave ++ childs
 
 -- e.g: .pyc files
@@ -416,10 +416,10 @@ tryApplyExecutionLog printer parCell buildsome target reason parents Db.Executio
         fmap concat $ forM (M.toList elInputsDescs) $ \(inputPath, (depReason, inputAccess)) ->
         if inputPath `S.member` hinted
         then return []
-        else makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit depReason parents inputPath
+        else makeSlavesForAccessType (inputAccessToType inputAccess) printer buildsome Implicit depReason parents inputPath
 
       let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
-      hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
+      hintedSlaves <- concat <$> mapM (makeSlaves printer buildsome Explicit hintReason parents) (targetAllInputs target)
 
       let allSlaves = speculativeSlaves ++ hintedSlaves
       unless (null allSlaves) $ waitForSlaves printer parCell buildsome allSlaves
@@ -460,8 +460,8 @@ panic msg = do
   E.throwIO $ PanicError msg
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: Buildsome -> Reason -> Parents -> (TargetRep, Target) -> IO Slave
-getSlaveForTarget buildsome reason parents (targetRep, target)
+getSlaveForTarget :: Printer -> Buildsome -> Reason -> Parents -> (TargetRep, Target) -> IO Slave
+getSlaveForTarget parentPrinter buildsome reason parents (targetRep, target)
   | any ((== targetRep) . fst) parents = E.throwIO $ TargetDependencyLoop newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
@@ -490,7 +490,7 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
           E.handle panicHandler $ do
             getParId <- PoolAlloc.startAlloc pool
             printerId <- nextPrinterId buildsome
-            printer <- Printer.new printerId
+            printer <- Printer.newFrom parentPrinter printerId
             execution <- async $ annotate $ action printer getParId
             return (printerId, execution)
         let slave = Slave execution printerId (targetOutputs target)
@@ -531,7 +531,7 @@ buildTarget printer parCell buildsome target reason parents =
     mapM_ (removeOldOutput printer buildsome registeredOutputs) $ targetOutputs target
 
     slaves <-
-      mkSlavesForPaths buildsome Explicit
+      mkSlavesForPaths printer buildsome Explicit
       ("Hint from " ++ show (take 1 (targetOutputs target))) parents
       (targetAllInputs target)
     unless (null slaves) $ waitForSlaves printer parCell buildsome slaves
@@ -616,7 +616,7 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
       handleInputCommon accessType actDesc path $ return ()
     handleDelayedInput accessType actDesc path =
       handleInputCommon accessType actDesc path $ do
-        slaves <- makeSlavesForAccessType accessType buildsome Implicit actDesc parents path
+        slaves <- makeSlavesForAccessType accessType printer buildsome Implicit actDesc parents path
         -- Temporarily paused, so we can temporarily release parallelism
         -- semaphore
         unless (null slaves) $
