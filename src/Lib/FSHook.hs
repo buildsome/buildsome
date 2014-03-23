@@ -7,8 +7,9 @@ module Lib.FSHook
   , runCommand
   ) where
 
-import Control.Concurrent (ThreadId, myThreadId)
+import Control.Concurrent (ThreadId, myThreadId, killThread)
 import Control.Concurrent.MVar
+import Control.Exception.Async (handleSync)
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IORef
@@ -50,7 +51,8 @@ data Handlers = Handlers
 
 data RunningJob = RunningJob
   { jobLabel :: String
-  , jobActiveConnections :: IORef [MVar ()]
+  , jobActiveConnections :: IORef (Map Int (ThreadId, MVar ()))
+  , jobNextConnId :: IORef Int
   , jobThreadId :: ThreadId
   , jobHandlers :: Handlers
   , jobRootFilter :: FilePath
@@ -147,7 +149,7 @@ handleJobMsg _tidStr conn job msg =
     handlers = jobHandlers job
     actDesc = Protocol.showFunc msg ++ " done by " ++ jobLabel job
     forwardExceptions =
-      E.handle $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
+      handleSync $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
     reportInput accessType path
       | "/" `isPrefixOf` path =
         forwardExceptions $ handleInput handlers accessType actDesc path
@@ -157,16 +159,26 @@ handleJobMsg _tidStr conn job msg =
     reportOutput path =
       forwardExceptions $ handleOutput handlers actDesc path
 
+withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
+withRegistered registry key val =
+  E.bracket_ register unregister
+  where
+    register = atomicModifyIORef_ registry $ M.insert key val
+    unregister = atomicModifyIORef_ registry $ M.delete key
+
 handleJobConnection :: String -> Socket -> RunningJob -> IO ()
 handleJobConnection tidStr conn job = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
+  connId <- atomicModifyIORef' (jobNextConnId job) $ \i -> (i+1, i+1)
+  tid <- myThreadId
+
   connFinishedMVar <- newEmptyMVar
-  protect connFinishedMVar $ do
-    atomicModifyIORef_ (jobActiveConnections job) (connFinishedMVar:)
-    sendGo conn
-    recvLoop_ maxMsgSize
-      (handleJobMsg tidStr conn job . Protocol.parseMsg) conn
+  protect connFinishedMVar $
+    withRegistered (jobActiveConnections job) connId (tid, connFinishedMVar) $ do
+      sendGo conn
+      recvLoop_ maxMsgSize
+        (handleJobMsg tidStr conn job . Protocol.parseMsg) conn
   where
     protect mvar act = act `E.finally` putMVar mvar ()
 
@@ -178,16 +190,10 @@ mkEnvVars fsHook rootFilter jobId =
     , ("BUILDSOME_ROOT_FILTER", rootFilter)
     ]
 
-withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
-withRegistered registry jobId job =
-  E.bracket_ registerRunningJob unregisterRunningJob
-  where
-    registerRunningJob = atomicModifyIORef_ registry $ M.insert jobId job
-    unregisterRunningJob = atomicModifyIORef_ registry $ M.delete jobId
-
 runCommand :: FSHook -> FilePath -> (Process.Env -> IO r) -> String -> Handlers -> IO r
 runCommand fsHook rootFilter cmd label handlers = do
-  activeConnections <- newIORef []
+  activeConnections <- newIORef M.empty
+  nextConnIdRef <- newIORef 0
   jobIdNum <- nextJobId fsHook
   tid <- myThreadId
 
@@ -195,19 +201,20 @@ runCommand fsHook rootFilter cmd label handlers = do
       job = RunningJob
             { jobLabel = label
             , jobActiveConnections = activeConnections
+            , jobNextConnId = nextConnIdRef
             , jobThreadId = tid
             , jobRootFilter = rootFilter
             , jobHandlers = handlers
             }
   -- Don't leak connections still running our handlers once we leave!
-  (`E.finally` awaitAllConnections activeConnections) $
+  let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
+  (`E.finally` onActiveConnections awaitConnection) $
+    (`E.onException` onActiveConnections killConnection) $
     withRegistered (fsHookRunningJobs fsHook) jobId job $
     cmd (mkEnvVars fsHook rootFilter jobId)
   where
-    awaitAllConnections activeConnections =
-      -- Give all connections a chance to complete and perhaps fail
-      -- this execution:
-      mapM_ readMVar =<< readIORef activeConnections
+    killConnection (tid, _mvar) = killThread tid
+    awaitConnection (_tid, mvar) = readMVar mvar
 
 accessDataFile :: FilePath -> FilePath -> (FilePath -> IO a) -> IO a
 accessDataFile fallbackDir fileName accessor =
