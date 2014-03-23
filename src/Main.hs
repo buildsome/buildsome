@@ -50,6 +50,7 @@ import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
+import qualified Lib.Timeout as Timeout
 import qualified System.Directory as Dir
 import qualified System.IO as IO
 
@@ -123,14 +124,23 @@ verifyCancelled a = do
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = go 0
   where
+    timeoutVerifyCancelled (repPath, Slave execution pid) =
+      Timeout.warning (Timeout.seconds 2)
+      (unwords ["Slave", Printer.idStr pid, show repPath, "did not cancel in 2 seconds!"]) $
+      verifyCancelled execution
     go alreadyCancelled = do
       curSlaveMap <- readIORef $ bsSlaveByRepPath bs
-      slaves <- mapM readMVar $ M.elems curSlaveMap
+      slaves <-
+        forM (M.toList curSlaveMap) $
+        \(repPath, mvar) ->
+        Timeout.warning (Timeout.millis 100)
+        ("Slave MVar for " ++ show repPath ++ " not populated in 100 millis!") $
+        (,) repPath <$> readMVar mvar
       let count = length slaves
       if alreadyCancelled >= count
         then return ()
         else do
-          mapM_ (verifyCancelled . slaveExecution) slaves
+          mapM_ timeoutVerifyCancelled slaves
           -- Make sure to cancel any potential new slaves that were
           -- created during cancellation
           go count
