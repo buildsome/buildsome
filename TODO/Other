@@ -1,29 +1,29 @@
-* Timeout on readMVar and verifyCancelled in case of deadlocks...
+* Refactoring: 
 
-* Extract Lib.Fresh (for all the atomicModifyIORef (\x -> (x+1,x+1)) calls)
+  * Group all the target params (Printer, ParCell, Target, Reason,
+    Parents) into their own record
 
-* mtime cache:
-  * mtime cache: Add path->(buildId, mtime, c.hash) cache to k/v store
+  * Extract Lib.Fresh (for all the atomicModifyIORef (\x -> (x+1,x+1)) calls)
 
-  * When looking up a path in the mtime cache, if the buildId matches
-    the current one, then the mtime must also match the current
-    one. Also update the mtime cache if needed
+* Better prints: Multithreaded commands will have multithreaded
+  (confusing) use of the printer in handleInput/handleDelayedInput.
+  Need to have callbacks for create connection that fork the printer,
+  and hand those over to handleInput/handleDelayedInput
 
-* Performance is kind of crap:
 
-  orig:             4.38
-  cside canon:      3.55
-  cside filter:     2.89
-  Undelayed inputs: 2.391
+* Performance:
+  * mtime cache:
 
-  ----------
+    * Add path->(buildId, mtime, c.hash) cache to k/v store
 
-  perf still sucks:
+    * When looking up a path in the mtime cache, if the buildId matches
+      the current one, then the mtime must also match the current
+      one. Also update the mtime cache if needed
 
   * Convert to bytestrings everywhere?
     The db.with is 8% of runtime! Probably writing a large string of all the file paths :(
 
-* Failures should be cached in execution log just like successes?
+* Should failures be cached in execution log like successes? Thus avoid voodoo successes, and persist failures properly?
 
 * Bugs:
   * Need to ban undeclared outputs from being inputs to anyone else
@@ -47,17 +47,20 @@
     * Only report *successful* outputs? Or perhaps report as inputs,
       output operations that failed due to FS state?
 
-* Running "as root" is another input to the build cmd, so add "is_root" to the cmd hash?
+* C-side:
 
-* C-side can be given allowed outputs rules and fail anything else
+  * C-side can be given allowed outputs rules and fail anything else
 
-* C-side can be given buildable outputs and not round-trip for other inputs
+  * C-side can be given buildable outputs and not round-trip for other inputs
 
-* Use mtime cache to see that outputs already match the execution log too
+  * C side failures should send fail messages to server, which is the
+    only way to fail the job reliably
 
-* Associate allowedUnspecifiedOutputs with targets somehow?
+* Nice to haves:
+  * Associate allowedUnspecifiedOutputs with targets somehow? generated
+    .pyc currently not associated with anything, cannot know when to
+    clean it
 
-* Add an age to keys, and delete old ones?
+  * Add an age to keys, and delete old ones?
 
-* C side failures should send fail messages to server, which is the
-  only way to fail the job reliably
+  * Running "as root" is another input to the build cmd, so add "is_root" to the cmd hash?
