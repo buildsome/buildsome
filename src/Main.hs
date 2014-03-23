@@ -86,8 +86,10 @@ nextPrinterId :: Buildsome -> IO Printer.Id
 nextPrinterId buildsome = atomicModifyIORef (bsNextPrinterId buildsome) $ \oldId -> (oldId+1, oldId+1)
 
 slaveWait :: Printer -> Slave -> IO ()
-slaveWait printer slave =
-  Printer.printWrap printer ("Waiting for " ++ slaveStr slave) $
+slaveWait _printer slave =
+  -- Keep this around so we can enable logging about slave waits
+  -- easily:
+  -- Printer.printWrap _printer ("Waiting for " ++ slaveStr slave) $
   wait $ slaveExecution slave
 
 -- | Opposite of MSem.with
