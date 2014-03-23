@@ -3,7 +3,6 @@ module Main (main) where
 
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async
-import Control.Concurrent.MSem (MSem)
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
@@ -29,6 +28,7 @@ import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileM
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
+import Lib.PoolAlloc (PoolAlloc)
 import Lib.Printer (Printer)
 import Lib.ShowBytes (showBytes)
 import Lib.Sigint (installSigintHandler)
@@ -39,7 +39,6 @@ import System.FilePath (takeDirectory, (<.>), makeRelative)
 import System.Posix.Files (FileStatus, fileExist)
 import System.Process (CmdSpec(..))
 import qualified Clean
-import qualified Control.Concurrent.MSem as MSem
 import qualified Control.Exception as E
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -48,6 +47,7 @@ import qualified Lib.BuildId as BuildId
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
+import qualified Lib.PoolAlloc as PoolAlloc
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Timeout as Timeout
@@ -68,12 +68,15 @@ data Slave = Slave
 slaveStr :: Slave -> String
 slaveStr slave = Printer.idStr (slavePrinterId slave) ++ ": " ++ show (slaveOutputPaths slave)
 
+type ParId = Int
+type ParCell = IORef ParId
+
 data Buildsome = Buildsome
   { bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
   , bsDeleteUnspecifiedOutput :: DeleteUnspecifiedOutputs
   , bsOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
   , bsBuildMaps :: BuildMaps
-  , bsRestrictedParallelism :: MSem Int
+  , bsParallelismPool :: PoolAlloc ParId
   , bsDb :: Db
   , bsMakefile :: Makefile
   , bsRootPath :: FilePath
@@ -92,15 +95,19 @@ slaveWait _printer slave =
   -- Printer.printWrap _printer ("Waiting for " ++ slaveStr slave) $
   wait $ slaveExecution slave
 
--- | Opposite of MSem.with
-localSemSignal :: MSem Int -> IO a -> IO a
-localSemSignal sem = E.bracket_ (MSem.signal sem) (MSem.wait sem)
+-- | Release the currently held item, run given action, then regain
+-- new item instead
+localReleasePool :: PoolAlloc a -> IORef a -> IO b -> IO b
+localReleasePool pool ref = E.bracket_ release alloc
+  where
+    markError = writeIORef ref $ error "Attempt to read released resource"
+    release = do
+      PoolAlloc.release pool =<< readIORef ref
+      markError
+    alloc = writeIORef ref =<< PoolAlloc.alloc pool
 
-withReleasedParallelism :: Buildsome -> IO a -> IO a
-withReleasedParallelism = localSemSignal . bsRestrictedParallelism
-
-withAllocatedParallelism :: Buildsome -> IO a -> IO a
-withAllocatedParallelism = MSem.with . bsRestrictedParallelism
+withReleasedParallelism :: ParCell -> Buildsome -> IO a -> IO a
+withReleasedParallelism parCell bs = localReleasePool (bsParallelismPool bs) parCell
 
 allowedUnspecifiedOutput :: FilePath -> Bool
 allowedUnspecifiedOutput = (".pyc" `isSuffixOf`)
@@ -154,7 +161,7 @@ cancelAllSlaves bs = go 0
 withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
-  semaphore <- MSem.new parallelism
+  pool <- PoolAlloc.new [1..parallelism]
   printerIdRef <- newIORef 0
   buildId <- BuildId.new
   let
@@ -164,7 +171,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsBuildMaps = BuildMaps.make makefile
       , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
       , bsOverwriteUnregisteredOutputs = overwriteUnregisteredOutputs
-      , bsRestrictedParallelism = semaphore
+      , bsParallelismPool = pool
       , bsDb = db
       , bsMakefile = makefile
       , bsRootPath = takeDirectory makefilePath
@@ -200,10 +207,13 @@ updateGitIgnore buildsome makefilePath = do
     map (makeRelative dir) $
     extraIgnored ++ S.toList (outputs <> leaked)
 
+mkSlavesForPaths :: Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO [Slave]
+mkSlavesForPaths buildsome explicitness reason parents paths =
+  concat <$> mapM (makeSlaves buildsome explicitness reason parents) paths
+
 need :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
-need printer buildsome explicitness reason parents paths = do
-  slaves <- concat <$> mapM (makeSlaves buildsome explicitness reason parents) paths
-  mapM_ (slaveWait printer) slaves
+need printer buildsome explicitness reason parents paths =
+  mapM_ (slaveWait printer) =<< mkSlavesForPaths buildsome explicitness reason parents paths
 
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO ()
 want printer buildsome reason = need printer buildsome Explicit reason []
@@ -367,10 +377,16 @@ applyExecutionLog printer buildsome target reason outputs stdOutputs =
     printStdouts (show (targetOutputs target)) stdOutputs
     verifyTargetOutputs printer buildsome outputs target
 
+waitForSlaves :: Printer -> ParCell -> Buildsome -> [Slave] -> IO ()
+waitForSlaves printer parCell buildsome slaves =
+  withReleasedParallelism parCell buildsome $
+  mapM_ (slaveWait printer) slaves
+
 tryApplyExecutionLog ::
-  Printer -> Buildsome -> Target -> Reason -> Parents -> Db.ExecutionLog ->
+  Printer -> ParCell -> Buildsome ->
+  Target -> Reason -> Parents -> Db.ExecutionLog ->
   IO (Either (String, FilePath) ())
-tryApplyExecutionLog printer buildsome target reason parents Db.ExecutionLog {..} = do
+tryApplyExecutionLog printer parCell buildsome target reason parents Db.ExecutionLog {..} = do
   waitForInputs
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, oldInputAccess) ->
@@ -405,18 +421,19 @@ tryApplyExecutionLog printer buildsome target reason parents Db.ExecutionLog {..
       let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
       hintedSlaves <- concat <$> mapM (makeSlaves buildsome Explicit hintReason parents) (targetAllInputs target)
 
-      mapM_ (slaveWait printer) (speculativeSlaves ++ hintedSlaves)
+      let allSlaves = speculativeSlaves ++ hintedSlaves
+      unless (null allSlaves) $ waitForSlaves printer parCell buildsome allSlaves
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: Printer -> Buildsome -> Target -> Reason -> Parents -> IO Bool
-findApplyExecutionLog printer buildsome target reason parents = do
+findApplyExecutionLog :: Printer -> ParCell -> Buildsome -> Target -> Reason -> Parents -> IO Bool
+findApplyExecutionLog printer parCell buildsome target reason parents = do
   mExecutionLog <- readIRef $ Db.executionLog target $ bsDb buildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return False
     Just executionLog -> do
-      res <- tryApplyExecutionLog printer buildsome target reason parents executionLog
+      res <- tryApplyExecutionLog printer parCell buildsome target reason parents executionLog
       case res of
         Left (str, filePath) -> do
           Printer.putStrLn printer $ concat
@@ -456,20 +473,25 @@ getSlaveForTarget buildsome reason parents (targetRep, target)
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
       Nothing ->
         ( M.insert targetRep newSlaveMVar oldSlaveMap
-        , mkSlave newSlaveMVar $ \printer -> restoreMask $ do
-            success <- findApplyExecutionLog printer buildsome target reason parents
-            unless success $ buildTarget printer buildsome target reason parents
+        , mkSlave newSlaveMVar $ \printer getParId -> do
+            parCell <- newIORef =<< getParId
+            let release = PoolAlloc.release pool =<< readIORef parCell
+            (`finally` release) $ restoreMask $ do
+              success <- findApplyExecutionLog printer parCell buildsome target reason parents
+              unless success $ buildTarget printer parCell buildsome target reason parents
         )
     where
+      pool = bsParallelismPool buildsome
       annotate = annotateException $ "build failure of " ++ show (targetOutputs target) ++ ":\n"
       newParents = (targetRep, reason) : parents
       panicHandler e@E.SomeException {} = panic $ "FAILED during making of slave: " ++ show e
       mkSlave mvar action = do
         (printerId, execution) <-
           E.handle panicHandler $ do
+            getParId <- PoolAlloc.startAlloc pool
             printerId <- nextPrinterId buildsome
             printer <- Printer.new printerId
-            execution <- async $ annotate $ action printer
+            execution <- async $ annotate $ action printer getParId
             return (printerId, execution)
         let slave = Slave execution printerId (targetOutputs target)
         putMVar mvar slave >> return slave
@@ -499,8 +521,8 @@ removeOldOutput printer buildsome registeredOutputs path = do
       | path `S.member` registeredOutputs -> removeFileOrDirectory path
       | otherwise -> removeOldUnregisteredOutput printer buildsome path
 
-buildTarget :: Printer -> Buildsome -> Target -> Reason -> Parents -> IO ()
-buildTarget printer buildsome target reason parents =
+buildTarget :: Printer -> ParCell -> Buildsome -> Target -> Reason -> Parents -> IO ()
+buildTarget printer parCell buildsome target reason parents =
   targetPrintWrap printer target "BUILDING" reason $ do
     -- TODO: Register each created subdirectory as an output?
     mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
@@ -508,17 +530,17 @@ buildTarget printer buildsome target reason parents =
     registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
     mapM_ (removeOldOutput printer buildsome registeredOutputs) $ targetOutputs target
 
-    need printer buildsome Explicit
+    slaves <-
+      mkSlavesForPaths buildsome Explicit
       ("Hint from " ++ show (take 1 (targetOutputs target))) parents
       (targetAllInputs target)
+    unless (null slaves) $ waitForSlaves printer parCell buildsome slaves
     inputsRef <- newIORef M.empty
     outputsRef <- newIORef S.empty
 
     stdOutputs <-
-      withAllocatedParallelism buildsome
-      ( Printer.printWrap printer ("runCmd" ++ show (targetOutputs target))
-        (runCmd printer buildsome target parents inputsRef outputsRef)
-      )
+      Printer.printWrap printer ("runCmd" ++ show (targetOutputs target))
+      (runCmd printer parCell buildsome target parents inputsRef outputsRef)
       `finally` do
         outputs <- readIORef outputsRef
         registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
@@ -570,11 +592,11 @@ shellCmdVerify target inheritEnvs newEnvs = do
     cmd = targetCmds target
 
 runCmd ::
-  Printer -> Buildsome -> Target -> Parents ->
+  Printer -> ParCell -> Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
   IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
   IORef (Set FilePath) -> IO StdOutputs
-runCmd printer buildsome target parents inputsRef outputsRef = do
+runCmd printer parCell buildsome target parents inputsRef outputsRef = do
   rootPath <- Dir.canonicalizePath (bsRootPath buildsome)
   FSHook.runCommand (bsFsHook buildsome) rootPath
     (shellCmdVerify target ["HOME", "PATH"])
