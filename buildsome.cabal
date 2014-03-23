@@ -37,6 +37,7 @@ executable buildsome
                ,     Lib.BuildMaps
                ,     Lib.ByteString
                ,     Lib.Directory
+               ,     Lib.Exception
                ,     Lib.FSHook
                ,     Lib.FSHook.Protocol
                ,     Lib.FileDesc

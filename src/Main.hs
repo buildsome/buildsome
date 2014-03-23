@@ -23,6 +23,7 @@ import Lib.Async (wrapAsync)
 import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
+import Lib.Exception (finally)
 import Lib.FSHook (FSHook, Handlers(..))
 import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath ((</>), canonicalizePath, splitFileName)
@@ -135,24 +136,6 @@ cancelAllSlaves bs = go 0
           -- Make sure to cancel any potential new slaves that were
           -- created during cancellation
           go count
-
-infixl 1 `finally`
-finally :: IO a -> IO () -> IO a
-action `finally` cleanup =
-  E.mask $ \restore -> do
-    res <- restore action
-      `catch` \e -> do
-        logErrors ("overrides original error: " ++ show e) cleanup
-        E.throwIO e
-    logErrors "during successful finally cleanup" cleanup
-    return res
-  where
-    catch :: IO a -> (E.SomeException -> IO a) -> IO a
-    catch = E.catch
-    logErrors suffix act =
-      act `catch` \e -> do
-      IO.hPutStrLn IO.stderr $ concat ["Finally clause error: ", show e, " ", suffix]
-      E.throwIO e
 
 withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome makefilePath fsHook db makefile opt body = do
