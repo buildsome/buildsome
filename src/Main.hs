@@ -171,10 +171,12 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsBuildId = buildId
       }
   body buildsome
-    `finally` maybeUpdateGitIgnore buildsome
     -- We must not leak running slaves as we're not allowed to
     -- access fsHook, db, etc after leaving here:
     `finally` cancelAllSlaves buildsome
+    -- Must update gitIgnore after all the slaves finished updating
+    -- the registered output lists:
+    `finally` maybeUpdateGitIgnore buildsome
   where
     maybeUpdateGitIgnore buildsome
       | writeGitIgnore = updateGitIgnore buildsome makefilePath
@@ -191,6 +193,7 @@ updateGitIgnore buildsome makefilePath = do
   let dir = takeDirectory makefilePath
       gitIgnorePath = dir </> ".gitignore"
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
+  putStrLn "Updating .gitignore"
   writeFile gitIgnorePath $ unlines $
     map (makeRelative dir) $
     extraIgnored ++ S.toList (outputs <> leaked)
