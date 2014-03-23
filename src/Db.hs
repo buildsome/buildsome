@@ -16,6 +16,7 @@ import Data.Map (Map)
 import Data.Set (Set)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
+import Lib.BuildId (BuildId)
 import Lib.Directory (catchDoesNotExist)
 import Lib.FileDesc (FileDesc, FileModeDesc)
 import Lib.Makefile (TargetType(..), Target)
@@ -29,7 +30,7 @@ import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
 
 schemaVersion :: String
-schemaVersion = "schema.ver.1"
+schemaVersion = "schema.ver.2"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -50,9 +51,10 @@ data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
 instance Binary InputAccess
 
 data ExecutionLog = ExecutionLog
-  { _elInputsDescs :: Map FilePath (Reason, InputAccess)
-  , _elOutputsDescs :: Map FilePath FileDesc
-  , _elStdoutputs :: StdOutputs
+  { elBuildId :: BuildId
+  , elInputsDescs :: Map FilePath (Reason, InputAccess)
+  , elOutputsDescs :: Map FilePath FileDesc
+  , elStdoutputs :: StdOutputs
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 

@@ -312,8 +312,12 @@ saveExecutionLog buildsome target inputs outputs stdOutputs = do
     forM (S.toList outputs) $ \outPath -> do
       fileDesc <- getFileDesc outPath
       return (outPath, fileDesc)
-  writeIRef (Db.executionLog target (bsDb buildsome)) $
-    Db.ExecutionLog inputsDescs (M.fromList outputDescPairs) stdOutputs
+  writeIRef (Db.executionLog target (bsDb buildsome)) $ Db.ExecutionLog
+    { elBuildId = bsBuildId buildsome
+    , elInputsDescs = inputsDescs
+    , elOutputsDescs = M.fromList outputDescPairs
+    , elStdoutputs = stdOutputs
+    }
   where
     inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat path mStat
     inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
@@ -343,23 +347,22 @@ applyExecutionLog printer buildsome target reason outputs stdOutputs =
 tryApplyExecutionLog ::
   Printer -> Buildsome -> Target -> Reason -> Parents -> Db.ExecutionLog ->
   IO (Either (String, FilePath) ())
-tryApplyExecutionLog printer buildsome target reason parents executionLog = do
+tryApplyExecutionLog printer buildsome target reason parents Db.ExecutionLog {..} = do
   waitForInputs
   runEitherT $ do
-    forM_ (M.toList inputsDescs) $ \(filePath, oldInputAccess) ->
+    forM_ (M.toList elInputsDescs) $ \(filePath, oldInputAccess) ->
       case snd oldInputAccess of
         Db.InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     (filePath, oldDesc)
         Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc (filePath, oldModeDesc)
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
-    mapM_ (compareToNewDesc "output" getFileDesc) $ M.toList outputsDescs
+    mapM_ (compareToNewDesc "output" getFileDesc) $ M.toList elOutputsDescs
 
     liftIO $
       applyExecutionLog printer buildsome target reason
-      (M.keysSet outputsDescs) stdOutputs
+      (M.keysSet elOutputsDescs) elStdoutputs
   where
-    Db.ExecutionLog inputsDescs outputsDescs stdOutputs = executionLog
     compareToNewDesc str getNewDesc (filePath, oldDesc) = do
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
@@ -371,7 +374,7 @@ tryApplyExecutionLog printer buildsome target reason parents executionLog = do
       -- required:
       let hinted = S.fromList $ targetAllInputs target
       speculativeSlaves <-
-        fmap concat $ forM (M.toList inputsDescs) $ \(inputPath, (depReason, inputAccess)) ->
+        fmap concat $ forM (M.toList elInputsDescs) $ \(inputPath, (depReason, inputAccess)) ->
         if inputPath `S.member` hinted
         then return []
         else makeSlavesForAccessType (inputAccessToType inputAccess) buildsome Implicit depReason parents inputPath
