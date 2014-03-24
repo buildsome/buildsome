@@ -126,8 +126,14 @@ recordInput inputsRef accessType reason path = do
      -- Keep the highest access type, and the oldest reason/mstat
      (max accessType oldAccessType, oldReason, oldMStat)
 
+specialFile :: FilePath -> Bool
+specialFile path = any (`isPrefixOf` path) ["/dev", "/proc", "/sys"]
+
 inputIgnored :: FilePath -> Bool
-inputIgnored path = any (`isPrefixOf` path) ["/dev", "/proc", "/sys"]
+inputIgnored = specialFile
+
+outputIgnored :: FilePath -> Bool
+outputIgnored = specialFile
 
 verifyCancelled :: Async a -> IO (Either E.SomeException a)
 verifyCancelled a = do
@@ -622,8 +628,9 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
         unless (null slaves) $
           Printer.printWrap printer (concat ["PAUSED: ", show (targetOutputs target), " ", actDesc]) $
           waitForSlaves printer parCell buildsome slaves
-    handleOutput _actDesc path =
-      atomicModifyIORef'_ outputsRef $ S.insert path
+    handleOutput _actDesc path
+      | outputIgnored path = return ()
+      | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
