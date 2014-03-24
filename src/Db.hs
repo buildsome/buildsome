@@ -1,3 +1,4 @@
+{-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Db
   ( Db, with
@@ -9,11 +10,12 @@ module Db
   ) where
 
 import Control.Applicative ((<$>))
-import Data.Binary (Binary)
+import Data.Binary (Binary(..))
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map (Map)
 import Data.Set (Set)
+import Data.Time (DiffTime)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.BuildId (BuildId)
@@ -30,7 +32,7 @@ import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
 
 schemaVersion :: String
-schemaVersion = "schema.ver.2"
+schemaVersion = "schema.ver.3"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -50,11 +52,16 @@ data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
   deriving (Generic, Show)
 instance Binary InputAccess
 
+instance Binary DiffTime where
+  put = put . toRational
+  get = fromRational <$> get
+
 data ExecutionLog = ExecutionLog
   { elBuildId :: BuildId
   , elInputsDescs :: Map FilePath (Reason, InputAccess)
   , elOutputsDescs :: Map FilePath FileDesc
   , elStdoutputs :: StdOutputs
+  , elSelfTime :: DiffTime
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 

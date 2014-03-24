@@ -13,6 +13,7 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Monoid
 import Data.Set (Set)
+import Data.Time (DiffTime)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
 import Db (Db, IRef(..), Reason)
@@ -33,6 +34,7 @@ import Lib.Printer (Printer)
 import Lib.ShowBytes (showBytes)
 import Lib.Sigint (installSigintHandler)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
+import Lib.TimeIt (timeIt)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
 import System.Exit (ExitCode(..))
 import System.FilePath (takeDirectory, (<.>), makeRelative)
@@ -344,8 +346,8 @@ verifyTargetOutputs printer buildsome outputs target = do
 saveExecutionLog ::
   Buildsome -> Target ->
   Map FilePath (AccessType, Reason, Maybe FileStatus) ->
-  Set FilePath -> StdOutputs -> IO ()
-saveExecutionLog buildsome target inputs outputs stdOutputs = do
+  Set FilePath -> StdOutputs -> DiffTime -> IO ()
+saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
     forM (S.toList outputs) $ \outPath -> do
@@ -356,6 +358,7 @@ saveExecutionLog buildsome target inputs outputs stdOutputs = do
     , elInputsDescs = inputsDescs
     , elOutputsDescs = M.fromList outputDescPairs
     , elStdoutputs = stdOutputs
+    , elSelfTime = selfTime
     }
   where
     inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat path mStat
@@ -377,11 +380,12 @@ targetPrintWrap printer target str reason body =
 
 -- Already verified that the execution log is a match
 applyExecutionLog ::
-  Printer -> Buildsome -> Target -> Reason -> Set FilePath -> StdOutputs -> IO ()
-applyExecutionLog printer buildsome target reason outputs stdOutputs =
+  Printer -> Buildsome -> Target -> Reason -> Set FilePath -> StdOutputs -> DiffTime -> IO ()
+applyExecutionLog printer buildsome target reason outputs stdOutputs selfTime =
   targetPrintWrap printer target "REPLAY" reason $ do
     printStdouts (show (targetOutputs target)) stdOutputs
     verifyTargetOutputs printer buildsome outputs target
+    Printer.putStrLn printer $ "Build (originally) took " ++ show selfTime ++ " seconds"
 
 waitForSlaves :: Printer -> ParCell -> Buildsome -> [Slave] -> IO ()
 waitForSlaves printer parCell buildsome slaves =
@@ -406,7 +410,7 @@ tryApplyExecutionLog printer parCell buildsome target reason parents Db.Executio
 
     liftIO $
       applyExecutionLog printer buildsome target reason
-      (M.keysSet elOutputsDescs) elStdoutputs
+      (M.keysSet elOutputsDescs) elStdoutputs elSelfTime
   where
     compareToNewDesc str getNewDesc (filePath, oldDesc) = do
       newDesc <- liftIO $ getNewDesc filePath
@@ -544,7 +548,7 @@ buildTarget printer parCell buildsome target reason parents =
     inputsRef <- newIORef M.empty
     outputsRef <- newIORef S.empty
 
-    stdOutputs <-
+    (selfTime, stdOutputs) <-
       Printer.printWrap printer ("runCmd" ++ show (targetOutputs target))
       (runCmd printer parCell buildsome target parents inputsRef outputsRef)
       `finally` do
@@ -555,7 +559,9 @@ buildTarget printer parCell buildsome target reason parents =
     verifyTargetOutputs printer buildsome outputs target
 
     inputs <- readIORef inputsRef
-    saveExecutionLog buildsome target inputs outputs stdOutputs
+    saveExecutionLog buildsome target inputs outputs stdOutputs selfTime
+
+    Printer.putStrLn printer $ "Build (now) took " ++ show selfTime ++ " seconds"
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
@@ -601,14 +607,16 @@ runCmd ::
   Printer -> ParCell -> Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
   IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
-  IORef (Set FilePath) -> IO StdOutputs
+  IORef (Set FilePath) -> IO (DiffTime, StdOutputs)
 runCmd printer parCell buildsome target parents inputsRef outputsRef = do
   rootPath <- Dir.canonicalizePath (bsRootPath buildsome)
-  FSHook.runCommand (bsFsHook buildsome) rootPath
-    (shellCmdVerify target ["HOME", "PATH"])
-    (show (targetOutputs target))
-    Handlers {..}
-  where
+  pauseTime <- newIORef 0
+  let
+    addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
+    measurePauseTime act = do
+      (time, res) <- timeIt act
+      addPauseTime time
+      return res
     handleInputCommon accessType actDesc path useInput
       | inputIgnored path = return ()
       | otherwise = do
@@ -621,6 +629,7 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
     handleInput accessType actDesc path =
       handleInputCommon accessType actDesc path $ return ()
     handleDelayedInput accessType actDesc path =
+      measurePauseTime $
       handleInputCommon accessType actDesc path $ do
         slaves <- makeSlavesForAccessType accessType printer buildsome Implicit actDesc parents path
         -- Temporarily paused, so we can temporarily release parallelism
@@ -631,6 +640,13 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
     handleOutput _actDesc path
       | outputIgnored path = return ()
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
+  (time, stdOutputs) <-
+    FSHook.runCommand (bsFsHook buildsome) rootPath
+    (timeIt . shellCmdVerify target ["HOME", "PATH"])
+    (show (targetOutputs target))
+    Handlers {..}
+  subtractedTime <- (time-) <$> readIORef pauseTime
+  return (realToFrac subtractedTime, stdOutputs)
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
@@ -718,8 +734,8 @@ main = do
           RequestedTargets requestedTargets reason -> do
             requestedTargetPaths <- inOrigCwd requestedTargets
             Printer.putStrLn printer $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
-            want printer buildsome reason requestedTargetPaths
-            Printer.putStrLn printer "Build Successful!"
+            (buildTime, ()) <- timeIt $ want printer buildsome reason requestedTargetPaths
+            Printer.putStrLn printer $ "Build Successful: " ++ show buildTime ++ " seconds total."
           RequestedClean -> do
             outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
             leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
