@@ -27,4 +27,4 @@ printStdouts strLabel (StdOutputs stdout stderr) = do
     plabel = "(" <> BS8.pack strLabel <> ")"
     showOutput name bs
       | BS8.null bs = return ()
-      | otherwise = BS8.putStr $ (name <> ":\n") <> indent bs
+      | otherwise = BS8.putStrLn $ (name <> ":\n") <> indent bs
