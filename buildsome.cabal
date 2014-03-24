@@ -58,6 +58,7 @@ executable buildsome
                ,     Lib.Sock
                ,     Lib.StdOutputs
                ,     Lib.StringPattern
+               ,     Lib.TimeIt
                ,     Lib.Timeout
                ,     Opts
                ,     Paths_buildsome
