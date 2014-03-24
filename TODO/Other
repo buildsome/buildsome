@@ -1,4 +1,9 @@
-* Refactoring: 
+* local "clean" support
+
+* Allow /dev,/proc,/sys for both read AND WRITE!
+* Time all commands!
+
+* Refactoring:
 
   * Group all the target params (Printer, ParCell, Target, Reason,
     Parents) into their own record
