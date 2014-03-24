@@ -16,9 +16,6 @@ data StdOutputs = StdOutputs
   } deriving (Generic, Show)
 instance Binary StdOutputs
 
-indent :: ByteString -> ByteString
-indent = BS8.intercalate "\n" . map ("  " <>) . BS8.lines
-
 printStdouts :: String -> StdOutputs -> IO ()
 printStdouts strLabel (StdOutputs stdout stderr) = do
   showOutput ("STDOUT" <> plabel) stdout
@@ -27,4 +24,8 @@ printStdouts strLabel (StdOutputs stdout stderr) = do
     plabel = "(" <> BS8.pack strLabel <> ")"
     showOutput name bs
       | BS8.null bs = return ()
-      | otherwise = BS8.putStrLn $ (name <> ":\n") <> indent bs
+      | otherwise =
+        BS8.putStrLn $ mconcat
+        [ name, ":\n"
+        , BS8.intercalate "\n" $ BS8.lines bs
+        ]
