@@ -204,7 +204,7 @@ updateGitIgnore buildsome makefilePath = do
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
   putStrLn "Updating .gitignore"
   writeFile gitIgnorePath $ unlines $
-    map (makeRelative dir) $
+    map (('/' :) . makeRelative dir) $
     extraIgnored ++ S.toList (outputs <> leaked)
 
 mkSlavesForPaths :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO [Slave]
