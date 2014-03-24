@@ -677,11 +677,18 @@ findMakefile = do
       exists <- liftIO $ fileExist path
       when exists $ left path
 
+data SpecifiedInexistentMakefilePath = SpecifiedInexistentMakefilePath FilePath deriving (Typeable)
+instance Show SpecifiedInexistentMakefilePath where
+  show (SpecifiedInexistentMakefilePath path) =
+    concat ["Specified makefile path: ", show path, " does not exist"]
+instance E.Exception SpecifiedInexistentMakefilePath
+
 specifiedMakefile :: FilePath -> IO FilePath
 specifiedMakefile path = do
-  _ <- Dir.canonicalizePath path -- Verifies it exists
-  d <- Dir.doesDirectoryExist path
-  return $ if d then path </> "Makefile" else path
+  exist <- fileExist path
+  unless exist $ E.throwIO $ SpecifiedInexistentMakefilePath path
+  isDir <- Dir.doesDirectoryExist path
+  return $ if isDir then path </> "Makefile" else path
 
 data Requested = RequestedClean | RequestedTargets [FilePath] Reason
 
