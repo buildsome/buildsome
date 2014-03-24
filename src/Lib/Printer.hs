@@ -1,7 +1,8 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Lib.Printer
   ( Id, idStr
   , Printer, new, newFrom
-  , putStrLn
+  , putStrLn, bsPutStrLn
   , printWrap
   ) where
 
@@ -11,8 +12,10 @@ import qualified Prelude
 import Control.Applicative ((<$>))
 import Data.IORef
 import Data.List (intercalate)
+import Data.Monoid
 import Text.Printf (printf)
 import qualified Control.Exception as E
+import qualified Data.ByteString.Char8 as BS8
 
 type Id = Int
 
@@ -28,17 +31,25 @@ newFrom :: Printer -> Id -> IO Printer
 newFrom (Printer _id indentRef) pid = do
   Printer pid <$> (newIORef =<< readIORef indentRef)
 
-prefixLines :: String -> String -> String
-prefixLines prefix = intercalate "\n" . map (prefix ++) . lines
 
 idStr :: Id -> String
-idStr = printf "%03d"
+idStr = printf "T%03d"
 
 putStrLn :: Printer -> String -> IO ()
 putStrLn (Printer pid indentRef) str = do
   indentLevel <- readIORef indentRef
-  let prefix = idStr pid ++ ": " ++ concat (replicate indentLevel "  ")
+  let prefix = idStr pid <> " " <> concat (replicate indentLevel "  ")
   Prelude.putStrLn $ prefixLines prefix str
+  where
+    prefixLines prefix = intercalate "\n" . map (prefix <>) . lines
+
+bsPutStrLn :: Printer -> BS8.ByteString -> IO ()
+bsPutStrLn (Printer pid indentRef) str = do
+  indentLevel <- readIORef indentRef
+  let prefix = BS8.pack (idStr pid) <> " " <> BS8.concat (replicate indentLevel "  ")
+  BS8.putStrLn $ prefixLines prefix str
+  where
+    prefixLines prefix = BS8.intercalate "\n" . map (prefix <>) . BS8.lines
 
 onException :: IO a -> (E.SomeException -> IO ()) -> IO a
 onException act f = act `E.catch` \e -> f e >> E.throwIO e
@@ -47,7 +58,7 @@ printWrap :: Printer -> String -> IO a -> IO a
 printWrap printer str body = do
   putStrLn printer before
   res <-
-    wrappedBody `onException` \e -> putStrLn printer $ after $ "EXCEPTION: " ++ show e
+    wrappedBody `onException` \e -> putStrLn printer $ after $ "EXCEPTION: " <> show e
   putStrLn printer $ after "OK"
   return res
   where
