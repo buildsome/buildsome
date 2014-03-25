@@ -1,7 +1,14 @@
-* local "clean" support
+* Performance:
+  * Convert to bytestrings everywhere?
+    The db.with is 8% of runtime! Probably writing a large string of all the file paths :(
 
-* Allow /dev,/proc,/sys for both read AND WRITE!
-* Time all commands!
+  * mtime cache:
+
+    * Add path->(buildId, mtime, c.hash) cache to k/v store
+
+    * When looking up a path in the mtime cache, if the buildId matches
+      the current one, then the mtime must also match the current
+      one. Also update the mtime cache if needed
 
 * Refactoring:
 
@@ -15,18 +22,7 @@
   Need to have callbacks for create connection that fork the printer,
   and hand those over to handleInput/handleDelayedInput
 
-
-* Performance:
-  * mtime cache:
-
-    * Add path->(buildId, mtime, c.hash) cache to k/v store
-
-    * When looking up a path in the mtime cache, if the buildId matches
-      the current one, then the mtime must also match the current
-      one. Also update the mtime cache if needed
-
-  * Convert to bytestrings everywhere?
-    The db.with is 8% of runtime! Probably writing a large string of all the file paths :(
+* local "clean" support
 
 * Should failures be cached in execution log like successes? Thus avoid voodoo successes, and persist failures properly?
 
