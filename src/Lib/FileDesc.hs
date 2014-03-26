@@ -1,10 +1,10 @@
 {-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE DeriveGeneric, DeriveDataTypeable #-}
 module Lib.FileDesc
-  ( FileDesc(..)
+  ( FileDesc
   , fileDescOfMStat
   , getFileDesc
-  , FileModeDesc(..)
+  , FileModeDesc
   , fileModeDescOfMStat
   , getFileModeDesc
   ) where
