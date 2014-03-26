@@ -14,12 +14,15 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Posix.ByteString as Posix
 
+{-# INLINE recvLoop_ #-}
 recvLoop_ :: Int -> (BS.ByteString -> IO ()) -> Socket -> IO ()
-recvLoop_ maxFrameSize f sock = do
-  frame <- SockBS.recv sock maxFrameSize
-  unless (BS.null frame) $ do
-    f frame
-    recvLoop_ maxFrameSize f sock
+recvLoop_ maxFrameSize f sock = go
+  where
+    go = do
+      frame <- SockBS.recv sock maxFrameSize
+      unless (BS.null frame) $ do
+        f frame
+        go
 
 withUnixSeqPacketListener :: FilePath -> (Socket -> IO a) -> IO a
 withUnixSeqPacketListener path body =

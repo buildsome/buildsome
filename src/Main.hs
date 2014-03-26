@@ -630,7 +630,6 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
     handleInput accessType actDesc path =
       handleInputCommon accessType actDesc path $ return ()
     handleDelayedInput accessType actDesc path =
-      measurePauseTime $
       handleInputCommon accessType actDesc path $ do
         slaves <- makeSlavesForAccessType accessType printer buildsome Implicit actDesc parents path
         -- Temporarily paused, so we can temporarily release parallelism
@@ -638,7 +637,7 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
         unless (null slaves) $
           Printer.bsPrintWrap printer
           (BS8.concat ["PAUSED: ", (BS8.pack . show . targetOutputs) target, " ", actDesc]) $
-          waitForSlaves printer parCell buildsome slaves
+          measurePauseTime $ waitForSlaves printer parCell buildsome slaves
     handleOutput _actDesc path
       | outputIgnored path = return ()
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path

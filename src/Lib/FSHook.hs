@@ -112,9 +112,11 @@ with body = do
         AsyncContext.spawn ctx $ serve fsHook conn
       body fsHook
 
+{-# INLINE sendGo #-}
 sendGo :: Socket -> IO ()
 sendGo conn = void $ SockBS.send conn (BS8.pack "GO")
 
+{-# INLINE handleJobMsg #-}
 handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Func -> IO ()
 handleJobMsg _tidStr conn job msg =
   case msg of
@@ -174,13 +176,11 @@ handleJobConnection tidStr conn job = do
   tid <- myThreadId
 
   connFinishedMVar <- newEmptyMVar
-  protect connFinishedMVar $
+  (`E.finally` putMVar connFinishedMVar ()) $
     withRegistered (jobActiveConnections job) connId (tid, connFinishedMVar) $ do
       sendGo conn
       recvLoop_ maxMsgSize
         (handleJobMsg tidStr conn job . Protocol.parseMsg) conn
-  where
-    protect mvar act = act `E.finally` putMVar mvar ()
 
 mkEnvVars :: FSHook -> FilePath -> JobId -> Process.Env
 mkEnvVars fsHook rootFilter jobId =

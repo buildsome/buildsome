@@ -24,12 +24,14 @@ data OpenMode = OpenReadMode | OpenWriteMode
 showOpenMode :: OpenMode -> String
 showOpenMode OpenReadMode = "R"
 showOpenMode OpenWriteMode = "W"
+{-# INLINE showOpenMode #-}
 
 data CreationMode = NoCreate | Create Word32 -- Unix permissions
   deriving (Show)
 showCreationMode :: CreationMode -> String
 showCreationMode NoCreate = ""
 showCreationMode (Create x) = "(CREATE:" ++ showOct x "" ++ ")"
+{-# INLINE showCreationMode #-}
 
 data Func
   = Open FilePath OpenMode CreationMode
@@ -51,6 +53,7 @@ data Func
   | Chown FilePath Word32 Word32
   deriving (Show)
 
+{-# INLINE showFunc #-}
 showFunc :: Func -> String
 showFunc (Open path mode creation) = "open:" ++ showOpenMode mode ++ show path ++ showCreationMode creation
 showFunc (Stat path) = "stat:" ++ show path
@@ -84,6 +87,7 @@ fLAG_WRITE = 1
 fLAG_CREATE :: Word32
 fLAG_CREATE = 2
 
+{-# INLINE parseOpen #-}
 parseOpen :: Get Func
 parseOpen = mkOpen <$> getPath <*> getWord32le <*> getWord32le
   where
@@ -117,6 +121,7 @@ funcs =
   , (0x10010, ("chown", Chown <$> getPath <*> getWord32le <*> getWord32le))
   ]
 
+{-# INLINE parseMsgLazy #-}
 parseMsgLazy :: BSL.ByteString -> Func
 parseMsgLazy = runGet $ do
   funcId <- getWord32le
@@ -126,8 +131,10 @@ parseMsgLazy = runGet $ do
   unless finished $ fail "Unexpected trailing input in message"
   return func
 
+{-# INLINE strictToLazy #-}
 strictToLazy :: BS.ByteString -> BSL.ByteString
 strictToLazy x = BSL.fromChunks [x]
 
+{-# INLINE parseMsg #-}
 parseMsg :: BS.ByteString -> Func
 parseMsg = parseMsgLazy . strictToLazy
