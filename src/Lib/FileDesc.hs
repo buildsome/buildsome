@@ -1,5 +1,5 @@
-{-# LANGUAGE DeriveGeneric, DeriveDataTypeable #-}
 {-# OPTIONS -fno-warn-orphans #-}
+{-# LANGUAGE DeriveGeneric, DeriveDataTypeable #-}
 module Lib.FileDesc
   ( FileDesc(..)
   , fileDescOfMStat

@@ -1,4 +1,3 @@
-{-# OPTIONS -Wall -O2 #-}
 module Lib.Sock
   ( recvLoop_
   , withUnixSeqPacketListener
