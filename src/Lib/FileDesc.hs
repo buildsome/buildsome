@@ -21,10 +21,10 @@ import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus, catchDoesNotExist, getDirectoryContents)
 import Lib.FilePath (FilePath)
 import Prelude hiding (FilePath)
-import System.Posix.ByteString (FileStatus, isRegularFile, isDirectory, isSymbolicLink, modificationTime, readSymbolicLink, fileMode, FileMode, CMode(..))
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS8
+import qualified System.Posix.ByteString as Posix
 
 type ContentHash = ByteString
 
@@ -37,13 +37,13 @@ data FileDesc
   deriving (Generic, Eq, Show)
 instance Binary FileDesc
 
-data FileModeDesc = FileModeDesc FileMode | NoFileMode
+data FileModeDesc = FileModeDesc Posix.FileMode | NoFileMode
   deriving (Generic, Eq, Show)
 instance Binary FileModeDesc
 
-instance Binary CMode where
-  get = CMode <$> getWord32le
-  put (CMode x) = putWord32le x
+instance Binary Posix.CMode where
+  get = Posix.CMode <$> getWord32le
+  put (Posix.CMode x) = putWord32le x
 
 data ThirdPartyMeddlingError = ThirdPartyMeddlingError FilePath String deriving (Show, Typeable)
 instance E.Exception ThirdPartyMeddlingError
@@ -51,24 +51,24 @@ instance E.Exception ThirdPartyMeddlingError
 data UnsupportedFileTypeError = UnsupportedFileTypeError FilePath deriving (Show, Typeable)
 instance E.Exception UnsupportedFileTypeError
 
-fileModeDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileModeDesc
+fileModeDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileModeDesc
 fileModeDescOfMStat path oldMStat = do
   newMStat <- getMFileStatus path
-  when ((fileMode <$> newMStat) /= (fileMode <$> oldMStat)) $ E.throwIO $
+  when ((Posix.fileMode <$> newMStat) /= (Posix.fileMode <$> oldMStat)) $ E.throwIO $
     ThirdPartyMeddlingError path "mode changed during build!"
   case newMStat of
     Nothing -> return NoFileMode
-    Just stat -> return $ FileModeDesc $ fileMode stat
+    Just stat -> return $ FileModeDesc $ Posix.fileMode stat
 
-fileDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileDesc
+fileDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileDesc
 fileDescOfMStat path oldMStat = do
   mContentHash <-
     case oldMStat of
     Just stat
-      | isRegularFile stat ->
+      | Posix.isRegularFile stat ->
         Just . MD5.hash <$>
         assertExists (BS8.readFile (BS8.unpack path))
-      | isDirectory stat ->
+      | Posix.isDirectory stat ->
         Just . MD5.hash . BS8.unlines <$>
         assertExists (getDirectoryContents path)
     _ -> return Nothing
@@ -79,23 +79,23 @@ fileDescOfMStat path oldMStat = do
   case newMStat of
     Nothing -> return NoFile
     Just stat
-      | isRegularFile stat ->
+      | Posix.isRegularFile stat ->
         return $ RegularFile $
         fromMaybe (error ("File disappeared: " ++ show path))
         mContentHash
-      | isDirectory stat ->
+      | Posix.isDirectory stat ->
         return $ Directory $
         fromMaybe (error ("Directory disappeared: " ++ show path))
         mContentHash
-      | isSymbolicLink stat -> Symlink <$> readSymbolicLink path
+      | Posix.isSymbolicLink stat -> Symlink <$> Posix.readSymbolicLink path
       | otherwise -> E.throwIO $ UnsupportedFileTypeError path
   where
     assertExists act =
       act `catchDoesNotExist`
       E.throwIO (ThirdPartyMeddlingError path "deleted during build!")
     compareMTimes x y =
-      (modificationTime <$> x) ==
-      (modificationTime <$> y)
+      (Posix.modificationTime <$> x) ==
+      (Posix.modificationTime <$> y)
 
 getFileDesc :: FilePath -> IO FileDesc
 getFileDesc path = fileDescOfMStat path =<< getMFileStatus path
