@@ -1,7 +1,7 @@
 module Lib.Sigint (installSigintHandler) where
 
 import Control.Concurrent (myThreadId)
-import System.Posix.Signals (Handler(..), keyboardSignal, installHandler)
+import System.Posix.ByteString (Handler(..), keyboardSignal, installHandler)
 import qualified Control.Exception as E
 
 installSigintHandler :: IO ()

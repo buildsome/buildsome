@@ -4,10 +4,11 @@ module Lib.Makefile.InstantiatePattern
   ) where
 
 import Control.Monad (guard, msum)
-import Lib.FilePath (splitFileName, (</>))
+import Lib.FilePath ((</>), FilePath, splitFileName)
 import Lib.Makefile.Parser (interpolateCmds)
 import Lib.Makefile.Types
 import Lib.StringPattern (matchPlaceHolder)
+import Prelude hiding (FilePath)
 import qualified Lib.StringPattern as StringPattern
 
 plugFilePattern :: StringPattern.Match -> FilePattern -> FilePath

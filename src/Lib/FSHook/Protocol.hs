@@ -12,9 +12,10 @@ import Data.Bits
 import Data.IntMap (IntMap, (!))
 import Data.Word
 import Lib.ByteString (truncateAt)
+import Lib.FilePath (FilePath)
 import Numeric (showOct)
+import Prelude hiding (FilePath)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntMap as M
 
@@ -76,7 +77,7 @@ mAX_PATH :: Int
 mAX_PATH = 256
 
 getPath :: Get FilePath
-getPath = BS8.unpack . truncateAt 0 <$> getByteString mAX_PATH
+getPath = truncateAt 0 <$> getByteString mAX_PATH
 
 fLAG_WRITE :: Word32
 fLAG_WRITE = 1

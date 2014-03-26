@@ -3,19 +3,20 @@ module Lib.Printer
   ( Id, idStr
   , Printer, new, newFrom
   , putStrLn, bsPutStrLn
-  , printWrap
+  , printWrap, bsPrintWrap
   ) where
 
-import Prelude hiding (putStrLn)
-import qualified Prelude
-
 import Control.Applicative ((<$>))
+import Data.ByteString (ByteString)
 import Data.IORef
 import Data.List (intercalate)
 import Data.Monoid
+import Data.String (IsString(..))
+import Prelude hiding (putStrLn)
 import Text.Printf (printf)
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
+import qualified Prelude
 
 type Id = Int
 
@@ -43,7 +44,7 @@ putStrLn (Printer pid indentRef) str = do
   where
     prefixLines prefix = intercalate "\n" . map (prefix <>) . lines
 
-bsPutStrLn :: Printer -> BS8.ByteString -> IO ()
+bsPutStrLn :: Printer -> ByteString -> IO ()
 bsPutStrLn (Printer pid indentRef) str = do
   indentLevel <- readIORef indentRef
   let prefix = BS8.pack (idStr pid) <> " " <> BS8.concat (replicate indentLevel "  ")
@@ -54,16 +55,25 @@ bsPutStrLn (Printer pid indentRef) str = do
 onException :: IO a -> (E.SomeException -> IO ()) -> IO a
 onException act f = act `E.catch` \e -> f e >> E.throwIO e
 
-printWrap :: Printer -> String -> IO a -> IO a
-printWrap printer str body = do
-  putStrLn printer before
+printWrapWith ::
+  (IsString s, Monoid s) =>
+  (Printer -> s -> IO ()) ->
+  Printer -> s -> IO a -> IO a
+printWrapWith putLn printer str body = do
+  putLn printer before
   res <-
-    wrappedBody `onException` \e -> putStrLn printer $ after $ "EXCEPTION: " <> show e
-  putStrLn printer $ after "OK"
+    wrappedBody `onException` \e -> putLn printer $ after $ "EXCEPTION: " <> fromString (show e)
+  putLn printer $ after "OK"
   return res
   where
     indentLevel  = printerIndentLevelRef printer
     addIndent d  = modifyIORef indentLevel (+d)
     wrappedBody  = E.bracket_ (addIndent 1) (addIndent (-1)) body
-    before       = unwords ["{", str]
-    after suffix = unwords ["}", str, suffix]
+    before       = mconcat ["{ ", str]
+    after suffix = mconcat ["} ", str, " ", suffix]
+
+printWrap :: Printer -> String -> IO a -> IO a
+printWrap = printWrapWith putStrLn
+
+bsPrintWrap :: Printer -> ByteString -> IO a -> IO a
+bsPrintWrap = printWrapWith bsPutStrLn

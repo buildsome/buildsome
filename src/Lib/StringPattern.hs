@@ -6,29 +6,31 @@ module Lib.StringPattern
   ) where
 
 import Control.Applicative
-import Data.List.Split (splitOn)
-import Lib.List (unprefixed, unsuffixed)
+import Data.ByteString (ByteString)
+import Data.Monoid ((<>))
+import Lib.ByteString (unprefixed, unsuffixed)
+import qualified Data.ByteString.Char8 as BS8
 
 data StringPattern = StringPattern
-  { stringPatternPrefix :: String
-  , stringPatternSuffix :: String
+  { stringPatternPrefix :: ByteString
+  , stringPatternSuffix :: ByteString
   } deriving (Show)
 
 newtype Match = Match
-  { matchPlaceHolder :: String -- which value % took in this match
+  { matchPlaceHolder :: ByteString -- which value % took in this match
   }
 
-match :: StringPattern -> String -> Maybe Match
+match :: StringPattern -> ByteString -> Maybe Match
 match (StringPattern prefix suffix) string =
   Match <$> (unprefixed prefix string >>= unsuffixed suffix)
 
-plug :: Match -> StringPattern -> String
+plug :: Match -> StringPattern -> ByteString
 plug (Match component) (StringPattern prefix suffix) =
-  prefix ++ component ++ suffix
+  prefix <> component <> suffix
 
-fromString :: String -> String -> Maybe StringPattern
+fromString :: Char -> ByteString -> Maybe StringPattern
 fromString splitter pattern =
-  case splitOn splitter pattern of
+  case BS8.split splitter pattern of
   [] -> Nothing
   [_] -> Nothing
   [prefix, suffix] ->

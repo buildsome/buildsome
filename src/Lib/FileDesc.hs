@@ -18,14 +18,13 @@ import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
-import Lib.Directory (getMFileStatus, catchDoesNotExist)
-import System.Posix.Files (FileStatus, isRegularFile, isDirectory, isSymbolicLink, modificationTime, readSymbolicLink, fileMode)
-import System.Posix.Types (FileMode, CMode(..))
+import Lib.Directory (getMFileStatus, catchDoesNotExist, getDirectoryContents)
+import Lib.FilePath (FilePath)
+import Prelude hiding (FilePath)
+import System.Posix.ByteString (FileStatus, isRegularFile, isDirectory, isSymbolicLink, modificationTime, readSymbolicLink, fileMode, FileMode, CMode(..))
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import qualified System.Directory as Dir
 
 type ContentHash = ByteString
 
@@ -49,7 +48,7 @@ instance Binary CMode where
 data ThirdPartyMeddlingError = ThirdPartyMeddlingError FilePath String deriving (Show, Typeable)
 instance E.Exception ThirdPartyMeddlingError
 
-data UnsupportedFileTypeError = UnsupportedFileTypeError String deriving (Show, Typeable)
+data UnsupportedFileTypeError = UnsupportedFileTypeError FilePath deriving (Show, Typeable)
 instance E.Exception UnsupportedFileTypeError
 
 fileModeDescOfMStat :: FilePath -> Maybe FileStatus -> IO FileModeDesc
@@ -68,10 +67,10 @@ fileDescOfMStat path oldMStat = do
     Just stat
       | isRegularFile stat ->
         Just . MD5.hash <$>
-        assertExists (BS.readFile path)
+        assertExists (BS8.readFile (BS8.unpack path))
       | isDirectory stat ->
-        Just . MD5.hash . BS8.pack . unlines <$>
-        assertExists (Dir.getDirectoryContents path)
+        Just . MD5.hash . BS8.unlines <$>
+        assertExists (getDirectoryContents path)
     _ -> return Nothing
   -- Verify file did not change since we took its first mtime:
   newMStat <- getMFileStatus path

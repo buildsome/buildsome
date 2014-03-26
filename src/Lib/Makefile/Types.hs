@@ -8,14 +8,17 @@ module Lib.Makefile.Types
   ) where
 
 import Control.Applicative (Applicative(..), (<$>))
+import Data.ByteString (ByteString)
 import Data.Traversable (traverse)
+import Lib.FilePath (FilePath)
 import Lib.StringPattern (StringPattern)
+import Prelude hiding (FilePath)
 
 data TargetType output input = Target
   { targetOutputs :: [output]
   , targetInputs :: [input]
   , targetOrderOnlyInputs :: [input]
-  , targetCmds :: String
+  , targetCmds :: ByteString
   } deriving (Show)
 
 type Target = TargetType FilePath FilePath

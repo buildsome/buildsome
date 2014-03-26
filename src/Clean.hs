@@ -2,8 +2,9 @@ module Clean (Result(..), output) where
 
 import Data.Monoid
 import Lib.Directory (getMFileStatus, removeFileOrDirectory)
-import System.Posix.Types (FileOffset)
-import System.Posix.Files (fileSize)
+import Lib.FilePath (FilePath)
+import Prelude hiding (FilePath)
+import System.Posix.ByteString (FileOffset, fileSize)
 
 data Result = Result
   { cleanedTotalSize :: FileOffset

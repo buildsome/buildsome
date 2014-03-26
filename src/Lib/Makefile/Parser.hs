@@ -1,4 +1,4 @@
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE Rank2Types, OverloadedStrings #-}
 module Lib.Makefile.Parser
   ( makefile, parse, interpolateCmds, metaVariable
   ) where
@@ -6,19 +6,22 @@ module Lib.Makefile.Parser
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
+import Data.ByteString (ByteString)
 import Data.Char (isAlphaNum)
 import Data.Either (partitionEithers)
-import Data.List (partition, isInfixOf, intercalate)
+import Data.List (partition)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Lib.FilePath (splitFileName, (</>))
-import Lib.List (unprefixed)
+import Data.Monoid ((<>))
+import Lib.ByteString (unprefixed)
+import Lib.FilePath ((</>), splitFileName, takeDirectory, takeFileName, FilePath)
 import Lib.Makefile.Types
 import Lib.Parsec (parseFromFile, showErr, showPos)
-import System.FilePath (takeDirectory, takeFileName)
+import Prelude hiding (FilePath)
 import System.IO (hPutStrLn, stderr)
 import Text.Parsec ((<?>))
 import qualified Control.Exception as E
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Lib.StringPattern as StringPattern
@@ -26,13 +29,13 @@ import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
 data State = State
-  { stateIncludeStack :: [(Pos.SourcePos, String)]
+  { stateIncludeStack :: [(Pos.SourcePos, ByteString)]
   , stateRootDir :: FilePath
   , stateVars :: Vars
   }
-type Vars = Map String String
-type Parser = P.ParsecT String State IO
-type ParserG = P.ParsecT String
+type Vars = Map ByteString ByteString
+type Parser = P.ParsecT ByteString State IO
+type ParserG = P.ParsecT ByteString
 
 atStateVars :: (Vars -> Vars) -> State -> State
 atStateVars f (State i r v) = State i r (f v)
@@ -53,19 +56,19 @@ skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
 
 filepaths :: Parser [FilePath]
-filepaths = words <$> interpolateVariables unescapedSequence ":#|\n"
+filepaths = BS8.words <$> interpolateVariables unescapedSequence ":#|\n"
 
 filepaths1 :: Parser [FilePath]
 filepaths1 = do
-  paths <- words <$> interpolateVariables unescapedSequence ":#|\n"
+  paths <- BS8.words <$> interpolateVariables unescapedSequence ":#|\n"
   if null paths
     then fail "need at least 1 file path"
     else return paths
 
-escapeSequence :: Monad m => ParserG u m String
+escapeSequence :: Monad m => ParserG u m ByteString
 escapeSequence = build <$> P.char '\\' <*> P.anyChar
   where
-    build x y = [x, y]
+    build x y = BS8.singleton x <> BS8.singleton y
 
 unescapedChar :: Monad m => ParserG u m Char
 unescapedChar = P.char '\\' *> (unescape <$> P.anyChar)
@@ -76,18 +79,19 @@ unescapedChar = P.char '\\' *> (unescape <$> P.anyChar)
     unescape '\n' = ' '
     unescape x = x
 
-unescapedSequence :: Monad m => ParserG u m String
-unescapedSequence = (:[]) <$> unescapedChar
+unescapedSequence :: Monad m => ParserG u m ByteString
+unescapedSequence = BS8.singleton <$> unescapedChar
 
 isIdentChar :: Char -> Bool
 isIdentChar x = isAlphaNum x || x `elem` "_.~"
 
-ident :: Monad m => ParserG u m String
-ident = P.many1 (P.satisfy isIdentChar)
+ident :: Monad m => ParserG u m ByteString
+ident = BS8.pack <$> P.many1 (P.satisfy isIdentChar)
 
 metaVarId ::
   Monad m => [FilePath] -> [FilePath] -> [FilePath] ->
-  Maybe String -> ParserG u m ((String -> String) -> String)
+  Maybe FilePath ->
+  ParserG u m ((FilePath -> FilePath) -> FilePath)
 metaVarId outputPaths inputPaths ooInputPaths mStem =
   P.choice $
   [ firstOutput <$ P.char '@'
@@ -102,17 +106,19 @@ metaVarId outputPaths inputPaths ooInputPaths mStem =
     getFirst err paths = fromMaybe (error err) $ listToMaybe paths
     firstOutput toString = toString $ getFirst "No first output for @ variable" outputPaths
     firstInput  toString = toString $ getFirst "No first input for < variable"  inputPaths
-    allInputs   toString = unwords $ map toString inputPaths
-    allOOInputs toString = unwords $ map toString ooInputPaths
+    allInputs   toString = BS8.unwords $ map toString inputPaths
+    allOOInputs toString = BS8.unwords $ map toString ooInputPaths
 
-metaVarModifier :: Monad m => ParserG u m (String -> String)
+metaVarModifier :: Monad m => ParserG u m (FilePath -> FilePath)
 metaVarModifier =
   P.choice
   [ takeDirectory <$ P.char 'D'
   , takeFileName  <$ P.char 'F'
   ]
 
-metaVariable :: Monad m => [FilePath] -> [FilePath] -> [FilePath] -> Maybe String -> ParserG u m String
+metaVariable ::
+  Monad m => [FilePath] -> [FilePath] -> [FilePath] ->
+  Maybe ByteString -> ParserG u m ByteString
 metaVariable outputPaths inputPaths ooInputPaths mStem =
   P.choice
   [ P.char '(' *> (vid <*> metaVarModifier) <* P.char ')'
@@ -122,26 +128,26 @@ metaVariable outputPaths inputPaths ooInputPaths mStem =
     vid = metaVarId outputPaths inputPaths ooInputPaths mStem
 
 -- Parse succeeds only if meta-variable, but preserve the meta-variable as is
-preserveMetavar :: Monad m => ParserG u m String
+preserveMetavar :: Monad m => ParserG u m ByteString
 preserveMetavar =
-  fmap ('$':) $
+  fmap ("$" <>) $
   (char4 <$> P.char '(' <*> P.oneOf "@<^|*" <*> P.oneOf "DF" <*> P.char ')') <|>
-  ((: []) <$> P.oneOf "@<^|*")
+  (BS8.singleton <$> P.oneOf "@<^|*")
   where
-    char4 a b c d = [a, b, c, d]
+    char4 a b c d = BS8.pack [a, b, c, d]
 
-interpolateVariables :: (forall u m. Monad m => ParserG u m String) -> String -> Parser String
+interpolateVariables :: (forall u m. Monad m => ParserG u m ByteString) -> [Char] -> Parser ByteString
 interpolateVariables escapeParse stopChars = do
   varsEnv <- stateVars <$> P.getState
   let
-    interpolate :: Monad m => ParserG u m String
+    interpolate :: Monad m => ParserG u m ByteString
     interpolate = interpolateString escapeParse stopChars (variable <|> preserveMetavar)
-    variable :: Monad m => ParserG u m String
+    variable :: Monad m => ParserG u m ByteString
     variable = do
       -- '$' already parsed
       varName <- P.choice
         [ P.char '{' *> ident <* P.char '}'
-        , (:[]) <$> P.satisfy isIdentChar
+        , BS8.singleton <$> P.satisfy isIdentChar
         ]
       case M.lookup varName varsEnv of
         Nothing -> do
@@ -153,25 +159,25 @@ interpolateVariables escapeParse stopChars = do
   interpolate
 
 -- Inside a single line
-interpolateString :: Monad m => ParserG u m String -> [Char] -> ParserG u m String -> ParserG u m String
+interpolateString :: Monad m => ParserG u m ByteString -> [Char] -> ParserG u m ByteString -> ParserG u m ByteString
 interpolateString escapeParser stopChars dollarHandler =
   concatMany (literalString '\'' <|> doubleQuotes <|> interpolatedChar stopChars)
   where
-    concatMany x = concat <$> P.many x
+    concatMany x = BS8.concat <$> P.many x
     doubleQuotes = doubleQuoted <$> P.char '"' <*> concatMany (interpolatedChar "\"\n") <*> P.char '"'
-    doubleQuoted begin chars end = concat [[begin], chars, [end]]
+    doubleQuoted begin chars end = BS8.singleton begin <> chars <> BS8.singleton end
     interpolatedChar stopChars' = P.choice
       [ (P.char '$' *> dollarHandler)
       , escapeParser
-      , (: []) <$> P.noneOf stopChars'
+      , BS8.singleton <$> P.noneOf stopChars'
       ]
     literalString delimiter = do
       x <- P.char delimiter
-      str <- concat <$> P.many p
+      str <- BS8.concat <$> P.many p
       y <- P.char delimiter
-      return $ concat [[x], str, [y]]
+      return $ BS8.singleton x <> str <> BS8.singleton y
       where
-        p = escapeSequence <|> ((: []) <$> P.satisfy (`notElem` ['\n', delimiter]))
+        p = escapeSequence <|> (BS8.singleton <$> P.satisfy (`notElem` ['\n', delimiter]))
 
 type IncludePath = FilePath
 
@@ -180,25 +186,25 @@ includeLine = do
   fileNameStr <-
     P.try (horizSpaces *> P.string "include" *> horizSpace) *>
     horizSpaces *> interpolateVariables unescapedSequence " #\n" <* skipLineSuffix
-  case reads fileNameStr of
+  case reads (BS8.unpack fileNameStr) of
     [(path, "")] -> return path
     _ -> return fileNameStr
 
 runInclude :: IncludePath -> Parser ()
 runInclude rawIncludedPath = do
   includedPath <- computeIncludePath
-  eFileContent <- liftIO $ E.try $ readFile includedPath
+  eFileContent <- liftIO $ E.try $ BS8.readFile $ BS8.unpack includedPath
   case eFileContent of
     Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e
     Right fileContent ->
       void $ P.updateParserState $ \(P.State input pos (State includeStack rootDir vars)) ->
-        P.State fileContent (Pos.initialPos includedPath) $
+        P.State fileContent (Pos.initialPos (BS8.unpack includedPath)) $
         State ((pos, input) : includeStack) rootDir vars
   where
     computeIncludePath =
       case unprefixed "ROOT/" rawIncludedPath of
       Nothing -> do
-        curPath <- takeDirectory . P.sourceName <$> P.getPosition
+        curPath <- takeDirectory . BS8.pack . P.sourceName <$> P.getPosition
         return $ curPath </> rawIncludedPath
       Just pathSuffix -> do
         state <- P.getState
@@ -250,7 +256,7 @@ noiseLines =
   where
     eol = skipLineSuffix *> newline
 
-cmdLine :: Parser String
+cmdLine :: Parser ByteString
 cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t') *>
     interpolateVariables escapeSequence "#\n" <* skipLineSuffix
@@ -258,9 +264,9 @@ cmdLine =
 
 mkFilePattern :: FilePath -> Maybe FilePattern
 mkFilePattern path
-  | "%" `isInfixOf` dir =
+  | "%" `BS8.isInfixOf` dir =
     error $ "Directory component may not be a pattern: " ++ show path
-  | otherwise = FilePattern dir <$> StringPattern.fromString "%" file
+  | otherwise = FilePattern dir <$> StringPattern.fromString '%' file
   where
     (dir, file) = splitFileName path
 
@@ -268,12 +274,12 @@ targetPattern :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Pattern
 targetPattern outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
-  cmdLines <- P.many cmdLine
+  cmdLines <- BS8.intercalate "\n" <$> P.many cmdLine
   return Target
     { targetOutputs = map mkOutputPattern outputPaths
     , targetInputs = inputPats
     , targetOrderOnlyInputs = orderOnlyInputPats
-    , targetCmds = intercalate "\n" cmdLines
+    , targetCmds = cmdLines
     }
   where
     mkOutputPattern outputPath =
@@ -283,13 +289,13 @@ targetPattern outputPaths inputPaths orderOnlyInputs = do
     orderOnlyInputPats = map tryMakePattern orderOnlyInputs
     tryMakePattern path = maybe (InputPath path) InputPattern $ mkFilePattern path
 
-interpolateCmds :: Maybe String -> Target -> Target
+interpolateCmds :: Maybe ByteString -> Target -> Target
 interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds) =
   tgt
   { targetCmds = either (error . show) id $ interpolateMetavars cmds
   }
   where
-    interpolateMetavars = P.runParser (intercalate "\n" <$> (cmdInterpolate `P.sepBy` P.char '\n') <* P.eof) () (show tgt)
+    interpolateMetavars = P.runParser (BS8.intercalate "\n" <$> (cmdInterpolate `P.sepBy` P.char '\n') <* P.eof) () (show tgt)
     cmdInterpolate =
       interpolateString escapeSequence "#\n"
       (metaVariable outputs inputs ooInputs mStem)
@@ -303,7 +309,7 @@ targetSimple outputPaths inputPaths orderOnlyInputs = do
     { targetOutputs = outputPaths
     , targetInputs = inputPaths
     , targetOrderOnlyInputs = orderOnlyInputs
-    , targetCmds = intercalate "\n" cmdLines
+    , targetCmds = BS8.intercalate "\n" cmdLines
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
@@ -320,7 +326,7 @@ target = do
     fmap (fromMaybe []) . P.optionMaybe $
     P.try (horizSpaces *> P.char '|') *> horizSpaces *> filepaths
   skipLineSuffix
-  if "%" `isInfixOf` (concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
+  if "%" `BS8.isInfixOf` (BS8.concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
     then Left <$> targetPattern outputPaths inputPaths orderOnlyInputs
     else Right <$> targetSimple outputPaths inputPaths orderOnlyInputs
 
@@ -335,12 +341,12 @@ mkMakefile allTargets
     , makefilePhonies = phonies
     }
   where
-    phoniesWithCmds = filter (not . null . targetCmds) phonyTargets
+    phoniesWithCmds = filter (not . BS8.null . targetCmds) phonyTargets
     (targetPatterns, targets) = partitionEithers allTargets
     missingPhonies = S.toList $ S.fromList phonies `S.difference` outputPathsSet
     outputPathsSet = S.fromList (concatMap targetOutputs regularTargets)
     phonies = concatMap getPhonyInputs phonyTargets
-    getPhonyInputs (Target [".PHONY"] inputs [] []) = inputs
+    getPhonyInputs (Target [".PHONY"] inputs [] cmd) | BS8.null cmd = inputs
     getPhonyInputs t = error $ "Invalid .PHONY target: " ++ show t
     (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputs) targets
 
@@ -355,7 +361,7 @@ properEof = do
 varAssignment :: Parser ()
 varAssignment = do
   varName <- P.try $ ident <* P.char '='
-  value <- P.many (unescapedChar <|> P.noneOf "#\n")
+  value <- BS8.pack <$> P.many (unescapedChar <|> P.noneOf "#\n")
   skipLineSuffix
   P.updateState $ atStateVars $ M.insert varName value
 
@@ -363,7 +369,7 @@ echoStatement :: Parser ()
 echoStatement = do
   P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string "echo" *> horizSpaces1
   str <- interpolateVariables unescapedSequence "#\n" <* skipLineSuffix
-  liftIO $ putStrLn $ "ECHO: " ++ str
+  liftIO $ BS8.putStrLn $ "ECHO: " <> str
 
 makefile :: Parser Makefile
 makefile =

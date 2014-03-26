@@ -19,19 +19,20 @@ import Data.Time (DiffTime)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.BuildId (BuildId)
-import Lib.Directory (catchDoesNotExist)
+import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
 import Lib.FileDesc (FileDesc, FileModeDesc)
+import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
-import System.Directory (createDirectoryIfMissing, getCurrentDirectory, renameFile)
-import System.FilePath ((</>), (<.>))
+import Prelude hiding (FilePath)
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
-import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
+import qualified System.Posix.ByteString as Posix
 
-schemaVersion :: String
+schemaVersion :: ByteString
 schemaVersion = "schema.ver.3"
 
 data Db = Db
@@ -46,7 +47,7 @@ registeredOutputsRef = dbRegisteredOutputs
 leakedOutputsRef :: Db -> IORef (Set FilePath)
 leakedOutputsRef = dbLeakedOutputs
 
-type Reason = String
+type Reason = ByteString
 
 data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
   deriving (Generic, Show)
@@ -71,15 +72,12 @@ setKey db key val = Sophia.setValue (dbSophia db) key $ encode val
 getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
 getKey db key = fmap decode <$> Sophia.getValue (dbSophia db) key
 
-makeAbsolutePath :: FilePath -> IO FilePath
-makeAbsolutePath path = (</> path) <$> getCurrentDirectory
-
 with :: FilePath -> (Db -> IO a) -> IO a
 with rawDbPath body = do
   dbPath <- makeAbsolutePath rawDbPath
-  createDirectoryIfMissing False dbPath
+  createDirectories dbPath
   Sophia.withEnv $ \env -> do
-    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation (dbPath </> schemaVersion)
+    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation (BS8.unpack (dbPath </> schemaVersion))
     Sophia.withDb env $ \db ->
       withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
       withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
@@ -93,9 +91,10 @@ with rawDbPath body = do
       E.bracket (newIORef =<< decodeFileOrEmpty path)
                 (writeBack path)
     writeBack path ref = do
-      writeFile (path <.> "tmp") . show . S.toList =<< readIORef ref
-      renameFile (path <.> "tmp") path
-    decodeFileOrEmpty path = (S.fromList . readOrError path <$> readFile path) `catchDoesNotExist` return S.empty
+      writeFile (BS8.unpack (path <.> "tmp")) .
+        show . S.toList =<< readIORef ref
+      Posix.rename (path <.> "tmp") path
+    decodeFileOrEmpty path = (S.fromList . readOrError path <$> readFile (BS8.unpack path)) `catchDoesNotExist` return S.empty
 
 data IRef a = IRef
   { readIRef :: IO (Maybe a)
@@ -111,5 +110,4 @@ mkIRefKey key db = IRef
 executionLog :: Target -> Db -> IRef ExecutionLog
 executionLog target = mkIRefKey targetKey
   where
-    targetKey =
-      MD5.hash $ BS.pack (targetCmds target) -- TODO: Canonicalize commands (whitespace/etc)
+    targetKey = MD5.hash $ targetCmds target -- TODO: Canonicalize commands (whitespace/etc)

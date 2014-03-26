@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable, RecordWildCards #-}
+{-# LANGUAGE DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Main (main) where
 
 import Control.Applicative ((<$>))
@@ -7,8 +7,9 @@ import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Either
+import Data.ByteString (ByteString)
 import Data.IORef
-import Data.List (isPrefixOf, isSuffixOf, partition, intercalate)
+import Data.List (partition, intercalate)
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, maybeToList, isJust)
 import Data.Monoid
@@ -22,11 +23,11 @@ import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
 import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
-import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
+import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories)
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook, Handlers(..))
 import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
-import Lib.FilePath ((</>), canonicalizePath, splitFileName)
+import Lib.FilePath (FilePath, (</>), (<.>), canonicalizePath, canonicalizePathAsRelative, splitFileName, takeDirectory, makeRelative, makeRelativeToCurrentDirectory)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.PoolAlloc (PoolAlloc)
@@ -36,12 +37,12 @@ import Lib.Sigint (installSigintHandler)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Lib.TimeIt (timeIt)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
+import Prelude hiding (FilePath)
 import System.Exit (ExitCode(..))
-import System.FilePath (takeDirectory, (<.>), makeRelative)
-import System.Posix.Files (FileStatus, fileExist)
 import System.Process (CmdSpec(..))
 import qualified Clean
 import qualified Control.Exception as E
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Db
@@ -53,8 +54,8 @@ import qualified Lib.PoolAlloc as PoolAlloc
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Timeout as Timeout
-import qualified System.Directory as Dir
 import qualified System.IO as IO
+import qualified System.Posix.ByteString as Posix
 
 data Explicitness = Explicit | Implicit
   deriving (Eq)
@@ -112,10 +113,10 @@ withReleasedParallelism :: ParCell -> Buildsome -> IO a -> IO a
 withReleasedParallelism parCell bs = localReleasePool (bsParallelismPool bs) parCell
 
 allowedUnspecifiedOutput :: FilePath -> Bool
-allowedUnspecifiedOutput = (".pyc" `isSuffixOf`)
+allowedUnspecifiedOutput = (".pyc" `BS8.isSuffixOf`)
 
 recordInput ::
-  IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
+  IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
   AccessType -> Reason -> FilePath -> IO ()
 recordInput inputsRef accessType reason path = do
   mstat <- getMFileStatus path
@@ -129,7 +130,7 @@ recordInput inputsRef accessType reason path = do
      (max accessType oldAccessType, oldReason, oldMStat)
 
 specialFile :: FilePath -> Bool
-specialFile path = any (`isPrefixOf` path) ["/dev", "/proc", "/sys"]
+specialFile path = any (`BS8.isPrefixOf` path) ["/dev", "/proc", "/sys"]
 
 inputIgnored :: FilePath -> Bool
 inputIgnored = specialFile
@@ -211,8 +212,8 @@ updateGitIgnore buildsome makefilePath = do
       gitIgnorePath = dir </> ".gitignore"
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
   putStrLn "Updating .gitignore"
-  writeFile gitIgnorePath $ unlines $
-    map (('/' :) . makeRelative dir) $
+  BS8.writeFile (BS8.unpack gitIgnorePath) $ BS8.unlines $
+    map (("/" <>) . makeRelative dir) $
     extraIgnored ++ S.toList (outputs <> leaked)
 
 mkSlavesForPaths :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO [Slave]
@@ -228,13 +229,13 @@ want printer buildsome reason = need printer buildsome Explicit reason []
 
 assertExists :: E.Exception e => FilePath -> e -> IO ()
 assertExists path err = do
-  doesExist <- fileExist path
+  doesExist <- Posix.fileExist path
   unless doesExist $ E.throwIO err
 
 data MissingRule = MissingRule FilePath Reason deriving (Typeable)
 instance E.Exception MissingRule
 instance Show MissingRule where
-  show (MissingRule path reason) = concat ["ERROR: No rule to build ", show path, " (", reason, ")"]
+  show (MissingRule path reason) = concat ["ERROR: No rule to build ", show path, " (", BS8.unpack reason, ")"]
 
 data TargetNotCreated = TargetNotCreated FilePath deriving (Typeable)
 instance E.Exception TargetNotCreated
@@ -288,7 +289,7 @@ makeSlavesForAccessType accessType printer buildsome explicitness reason parents
 makeSlaves :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
 makeSlaves printer buildsome explicitness reason parents path = do
   mSlave <- makeDirectSlave printer buildsome explicitness reason parents path
-  childs <- makeChildSlaves printer buildsome (reason ++ "(Container directory)") parents path
+  childs <- makeChildSlaves printer buildsome (reason <> "(Container directory)") parents path
   return $ maybeToList mSlave ++ childs
 
 -- e.g: .pyc files
@@ -305,7 +306,7 @@ handleLegalUnspecifiedOutputs printer buildsome target paths = do
   where
     (actionDesc, action) =
       case bsDeleteUnspecifiedOutput buildsome of
-      DeleteUnspecifiedOutputs -> ("deleting", mapM_ Dir.removeFile paths)
+      DeleteUnspecifiedOutputs -> ("deleting", mapM_ removeFileOrDirectoryOrNothing paths)
       DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs buildsome (S.fromList paths))
 
 data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs Target [FilePath] deriving (Typeable)
@@ -323,14 +324,14 @@ verifyTargetOutputs printer buildsome outputs target = do
 
   -- Legal unspecified need to be kept/deleted according to policy:
   handleLegalUnspecifiedOutputs printer buildsome target =<<
-    filterM fileExist unspecifiedOutputs
+    filterM Posix.fileExist unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
   -- input use by any other job:
   -- TODO: Add to a ban-from-input-list (by other jobs)
 
   -- Illegal unspecified that do exist are a problem:
-  existingIllegalOutputs <- filterM fileExist illegalOutputs
+  existingIllegalOutputs <- filterM Posix.fileExist illegalOutputs
   unless (null existingIllegalOutputs) $ do
     Printer.putStrLn printer $ "Illegal output files created: " ++ show existingIllegalOutputs
     mapM_ removeFileOrDirectory existingIllegalOutputs
@@ -345,7 +346,7 @@ verifyTargetOutputs printer buildsome outputs target = do
 
 saveExecutionLog ::
   Buildsome -> Target ->
-  Map FilePath (AccessType, Reason, Maybe FileStatus) ->
+  Map FilePath (AccessType, Reason, Maybe Posix.FileStatus) ->
   Set FilePath -> StdOutputs -> DiffTime -> IO ()
 saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
@@ -368,12 +369,12 @@ targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
 
-targetPrintWrap :: Printer -> Target -> String -> Reason -> IO a -> IO a
+targetPrintWrap :: Printer -> Target -> ByteString -> Reason -> IO a -> IO a
 targetPrintWrap printer target str reason body =
   Printer.printWrap printer
     (show (targetOutputs target)) $ do
-    Printer.putStrLn printer $ concat [str, " (", reason, ")"]
-    unless (null cmd) $ Printer.putStrLn printer cmd
+    Printer.bsPutStrLn printer $ BS8.concat [str, " (", reason, ")"]
+    unless (BS8.null cmd) $ Printer.bsPutStrLn printer cmd
     body
   where
     cmd = targetCmds target
@@ -428,7 +429,7 @@ tryApplyExecutionLog printer parCell buildsome target reason parents Db.Executio
         then return []
         else makeSlavesForAccessType (inputAccessToType inputAccess) printer buildsome Implicit depReason parents inputPath
 
-      let hintReason = "Hint from " ++ show (take 1 (targetOutputs target))
+      let hintReason = "Hint from " <> (BS8.pack . show . targetOutputs) target
       hintedSlaves <- concat <$> mapM (makeSlaves printer buildsome Explicit hintReason parents) (targetAllInputs target)
 
       let allSlaves = speculativeSlaves ++ hintedSlaves
@@ -451,15 +452,15 @@ findApplyExecutionLog printer parCell buildsome target reason parents = do
           return False
         Right () -> return True
 
-showParents :: Parents -> String
-showParents = concatMap showParent
+showParents :: Parents -> ByteString
+showParents = BS8.concat . map showParent
   where
-    showParent (targetRep, reason) = concat ["\n-> ", show targetRep, " (", reason, ")"]
+    showParent (targetRep, reason) = BS8.concat ["\n-> ", BS8.pack (show targetRep), " (", reason, ")"]
 
 data TargetDependencyLoop = TargetDependencyLoop Parents deriving (Typeable)
 instance E.Exception TargetDependencyLoop
 instance Show TargetDependencyLoop where
-  show (TargetDependencyLoop parents) = "Target loop: " ++ showParents parents
+  show (TargetDependencyLoop parents) = BS8.unpack $ "Target loop: " <> showParents parents
 
 data PanicError = PanicError String deriving (Show, Typeable)
 instance E.Exception PanicError
@@ -535,14 +536,14 @@ buildTarget :: Printer -> ParCell -> Buildsome -> Target -> Reason -> Parents ->
 buildTarget printer parCell buildsome target reason parents =
   targetPrintWrap printer target "BUILDING" reason $ do
     -- TODO: Register each created subdirectory as an output?
-    mapM_ (Dir.createDirectoryIfMissing True . takeDirectory) $ targetOutputs target
+    mapM_ (createDirectories . takeDirectory) $ targetOutputs target
 
     registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
     mapM_ (removeOldOutput printer buildsome registeredOutputs) $ targetOutputs target
 
     slaves <-
       mkSlavesForPaths printer buildsome Explicit
-      ("Hint from " ++ show (take 1 (targetOutputs target))) parents
+      ("Hint from " <> (BS8.pack . show . targetOutputs) target) parents
       (targetAllInputs target)
     unless (null slaves) $ waitForSlaves printer parCell buildsome slaves
     inputsRef <- newIORef M.empty
@@ -582,19 +583,19 @@ deleteRemovedOutputs buildsome = do
     putStrLn $ "Removing old output: " ++ show path
     removeFileOrDirectoryOrNothing path
 
-data CommandFailed = CommandFailed String ExitCode deriving (Typeable)
+data CommandFailed = CommandFailed ByteString ExitCode deriving (Typeable)
 instance E.Exception CommandFailed
 instance Show CommandFailed where
   show (CommandFailed cmd exitCode)
-    | '\n' `elem` cmd = "\"\"\"" ++ cmd ++ "\"\"\"" ++ suffix
-    | otherwise = show cmd ++ suffix
+    | '\n' `BS8.elem` cmd = "\"\"\"" <> BS8.unpack cmd <> "\"\"\"" <> suffix
+    | otherwise = show cmd <> suffix
     where
-      suffix = " failed: " ++ show exitCode
+      suffix = " failed: " <> show exitCode
 
 shellCmdVerify :: Target -> [String] -> Process.Env -> IO StdOutputs
 shellCmdVerify target inheritEnvs newEnvs = do
   (exitCode, stdout, stderr) <-
-    Process.getOutputs (ShellCommand cmd) inheritEnvs newEnvs
+    Process.getOutputs (ShellCommand (BS8.unpack cmd)) inheritEnvs newEnvs
   let stdouts = StdOutputs stdout stderr
   printStdouts (show (targetOutputs target)) stdouts
   case exitCode of
@@ -606,10 +607,10 @@ shellCmdVerify target inheritEnvs newEnvs = do
 runCmd ::
   Printer -> ParCell -> Buildsome -> Target -> Parents ->
   -- TODO: Clean this arg list up
-  IORef (Map FilePath (AccessType, Reason, Maybe FileStatus)) ->
+  IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
   IORef (Set FilePath) -> IO (DiffTime, StdOutputs)
 runCmd printer parCell buildsome target parents inputsRef outputsRef = do
-  rootPath <- Dir.canonicalizePath (bsRootPath buildsome)
+  rootPath <- canonicalizePath $ bsRootPath buildsome
   pauseTime <- newIORef 0
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
@@ -635,7 +636,8 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
         -- Temporarily paused, so we can temporarily release parallelism
         -- semaphore
         unless (null slaves) $
-          Printer.printWrap printer (concat ["PAUSED: ", show (targetOutputs target), " ", actDesc]) $
+          Printer.bsPrintWrap printer
+          (BS8.concat ["PAUSED: ", (BS8.pack . show . targetOutputs) target, " ", actDesc]) $
           waitForSlaves printer parCell buildsome slaves
     handleOutput _actDesc path
       | outputIgnored path = return ()
@@ -643,7 +645,7 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
   (time, stdOutputs) <-
     FSHook.runCommand (bsFsHook buildsome) rootPath
     (timeIt . shellCmdVerify target ["HOME", "PATH"])
-    (show (targetOutputs target))
+    (BS8.pack (show (targetOutputs target)))
     Handlers {..}
   subtractedTime <- (time-) <$> readIORef pauseTime
   return (realToFrac subtractedTime, stdOutputs)
@@ -651,7 +653,7 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
 
-standardMakeFilename :: String
+standardMakeFilename :: FilePath
 standardMakeFilename = "Makefile"
 
 data MakefileScanFailed = MakefileScanFailed deriving (Typeable)
@@ -661,7 +663,7 @@ instance Show MakefileScanFailed where
 
 findMakefile :: IO FilePath
 findMakefile = do
-  cwd <- Dir.getCurrentDirectory
+  cwd <- Posix.getWorkingDirectory
   let
     -- NOTE: Excludes root (which is probably fine)
     parents = takeWhile (/= "/") $ iterate takeDirectory cwd
@@ -670,11 +672,11 @@ findMakefile = do
   -- falling through to the end of the loop:
   res <- runEitherT $ mapM_ check candidates
   case res of
-    Left found -> Dir.makeRelativeToCurrentDirectory found
+    Left found -> makeRelativeToCurrentDirectory found
     Right () -> E.throwIO MakefileScanFailed
   where
     check path = do
-      exists <- liftIO $ fileExist path
+      exists <- liftIO $ Posix.fileExist path
       when exists $ left path
 
 data SpecifiedInexistentMakefilePath = SpecifiedInexistentMakefilePath FilePath deriving (Typeable)
@@ -685,10 +687,12 @@ instance E.Exception SpecifiedInexistentMakefilePath
 
 specifiedMakefile :: FilePath -> IO FilePath
 specifiedMakefile path = do
-  exist <- fileExist path
-  unless exist $ E.throwIO $ SpecifiedInexistentMakefilePath path
-  isDir <- Dir.doesDirectoryExist path
-  return $ if isDir then path </> "Makefile" else path
+  mStat <- getMFileStatus path
+  case mStat of
+    Nothing -> E.throwIO $ SpecifiedInexistentMakefilePath path
+    Just stat
+      | Posix.isDirectory stat -> return $ path </> "Makefile"
+      | otherwise -> return path
 
 data Requested = RequestedClean | RequestedTargets [FilePath] Reason
 
@@ -697,7 +701,7 @@ instance E.Exception BadCommandLine
 instance Show BadCommandLine where
   show (BadCommandLine msg) = "Invalid command line options: " ++ msg
 
-getRequestedTargets :: [String] -> IO Requested
+getRequestedTargets :: [ByteString] -> IO Requested
 getRequestedTargets ["clean"] = return RequestedClean
 getRequestedTargets [] = return $ RequestedTargets ["default"] "implicit 'default' target"
 getRequestedTargets ts
@@ -718,10 +722,10 @@ main = do
     makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
     putStrLn $ "Using makefile: " ++ show makefilePath
     let (cwd, file) = splitFileName makefilePath
-    origCwd <- Dir.getCurrentDirectory
-    Dir.setCurrentDirectory cwd
+    origCwd <- Posix.getWorkingDirectory
+    unless (BS8.null cwd) $ Posix.changeWorkingDirectory cwd
     origMakefile <- Makefile.parse file
-    makefile <- Makefile.onMakefilePaths canonicalizePath origMakefile
+    makefile <- Makefile.onMakefilePaths canonicalizePathAsRelative origMakefile
     printer <- Printer.new 0
     Db.with (buildDbFilename file) $ \db ->
       withBuildsome file fsHook db makefile opt $
@@ -732,7 +736,7 @@ main = do
             case optMakefilePath opt of
             -- If we found the makefile by scanning upwards, prepend
             -- original cwd to avoid losing it:
-            Nothing -> mapM (canonicalizePath . (origCwd </>))
+            Nothing -> mapM (canonicalizePathAsRelative . (origCwd </>))
             -- Otherwise: there's no useful original cwd:
             Just _ -> return
 

@@ -1,40 +1,105 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Lib.FilePath
-  ( splitFileName
+  ( FilePath
+  , splitFileName
   , canonicalizePath
-  , canonicalizeAbsPath
-  , (</>)
+  , canonicalizePathAsRelative
+  , dropTrailingPathSeparator, addTrailingPathSeparator
+  , (</>), (<.>)
+  , takeDirectory, takeFileName
+  , makeRelative, makeRelativeToCurrentDirectory
   ) where
 
-import qualified System.Directory as Dir
-import qualified System.FilePath as FilePath
+import Control.Applicative ((<$>))
+import Data.ByteString.Char8 (ByteString)
+import Data.Maybe (fromMaybe)
+import Data.Monoid
+import Lib.ByteString (unprefixed)
+import Prelude hiding (FilePath)
+import qualified Data.ByteString.Char8 as BS8
+import qualified System.Posix.ByteString as Posix
+
+type FilePath = Posix.RawFilePath
+
+splitPath :: FilePath -> [FilePath]
+splitPath path
+  | "/" `BS8.isPrefixOf` path = "/" : BS8.split '/' (BS8.tail path)
+  | otherwise = BS8.split '/' path
+
+joinPath :: [FilePath] -> FilePath
+joinPath (path:paths) | path == "/" = "/" <> BS8.intercalate "/" paths
+joinPath       paths                =        BS8.intercalate "/" paths
+
+onFst :: (a -> a') -> (a, b) -> (a', b)
+onFst f (x, y) = (f x, y)
+
+splitFileName :: FilePath -> (FilePath, ByteString)
+splitFileName = onFst joinPath . f . splitPath
+  where
+    f [] = ([], "")
+    f [x] = ([], x)
+    f (x:xs) = onFst (x:) $ f xs
+
+takeDirectory :: FilePath -> FilePath
+takeDirectory = joinPath . reverse . drop 1 . reverse . splitPath
+
+takeFileName :: FilePath -> FilePath
+takeFileName path =
+  case splitPath path of
+  [] -> ""
+  xs -> last xs
 
 removeRedundantComponents :: FilePath -> FilePath
 removeRedundantComponents =
-  FilePath.joinPath .
+  joinPath .
   foldr step [] .
   filter (/= ".") .
-  map FilePath.dropTrailingPathSeparator .
-  FilePath.splitPath
+  splitPath
   where
     step "/" xs = "/" : xs
     step ".." xs = ".." : xs
     step _ ("..":xs) = xs
     step x xs = x:xs
 
-splitFileName :: FilePath -> (FilePath, String)
-splitFileName path = (FilePath.dropTrailingPathSeparator dir, file)
-  where
-    (dir, file) = FilePath.splitFileName path
+dropTrailingPathSeparator :: FilePath -> FilePath
+dropTrailingPathSeparator x
+  | "/" `BS8.isSuffixOf` x = BS8.init x
+  | otherwise = x
+
+addTrailingPathSeparator :: FilePath -> FilePath
+addTrailingPathSeparator x
+  | "/" `BS8.isSuffixOf` x = x
+  | otherwise = x <> "/"
 
 (</>) :: FilePath -> FilePath -> FilePath
 "." </> y = y
-x </> y = x FilePath.</> y
+"" </> y = y
+x </> y
+  | isAbsolute y = y
+  | otherwise = dropTrailingPathSeparator x <> "/" <> y
 
-canonicalizeAbsPath :: FilePath -> IO FilePath
-canonicalizeAbsPath path =
-  Dir.makeRelativeToCurrentDirectory $ removeRedundantComponents path
+(<.>) :: FilePath -> ByteString -> FilePath
+f <.> g = f <> "." <> g
+
+isAbsolute :: FilePath -> Bool
+isAbsolute = ("/" `BS8.isPrefixOf`)
+
+makeRelative :: FilePath -> FilePath -> FilePath
+makeRelative prefix full =
+  case unprefixed prefix' full' of
+  Nothing -> full
+  Just suffix -> fromMaybe suffix $ unprefixed "/" suffix
+  where
+    prefix' = dropTrailingPathSeparator prefix
+    full' = dropTrailingPathSeparator full
+
+makeRelativeToCurrentDirectory :: FilePath -> IO FilePath
+makeRelativeToCurrentDirectory path = (`makeRelative` path) <$> Posix.getWorkingDirectory
 
 canonicalizePath :: FilePath -> IO FilePath
 canonicalizePath path = do
-  curDir <- Dir.getCurrentDirectory
-  canonicalizeAbsPath (curDir </> path)
+  curDir <- Posix.getWorkingDirectory
+  return $ dropTrailingPathSeparator $ removeRedundantComponents $ curDir </> path
+
+canonicalizePathAsRelative :: FilePath -> IO FilePath
+canonicalizePathAsRelative path = makeRelativeToCurrentDirectory =<< canonicalizePath path
