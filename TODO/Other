@@ -1,15 +1,14 @@
+* Verify that the mtime of all files does not change during run, not just during single command
+
 * Performance:
-  * mtime cache:
 
-    * Add path->(buildId, mtime, c.hash) cache to k/v store
+  * Empty run
+    * What's slow here?
 
-    * When looking up a path in the mtime cache, if the buildId matches
-      the current one, then the mtime must also match the current
-      one. Also update the mtime cache if needed
-
-  * C side should get list of delay-requiring inputs (patterns and normal files)
-    * Via /tmp file?
-    * Only delay those?
+  * Real run
+    * C side should get list of delay-requiring inputs (patterns and normal files)
+      * Via /tmp file?
+      * Only delay those?
 
 * Refactoring:
 
