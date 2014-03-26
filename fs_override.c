@@ -518,8 +518,8 @@ int fchdir(int fd)
 
 DEFINE_WRAPPER(int, chdir, (const char *path))
 {
-    SILENT_CALL_REAL(int, chdir, path);
     update_cwd();
+    SILENT_CALL_REAL(int, chdir, path);
 }
 
 /* TODO: Track utime? */
