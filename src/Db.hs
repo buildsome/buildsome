@@ -83,18 +83,14 @@ with rawDbPath body = do
       withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
       body (Db db registeredOutputs leakedOutputs)
   where
-    readOrError path str =
-      case reads str of
-      [(x, "")] -> x
-      _ -> error $ "Failed to parse: " ++ show path
     withIORefFile path =
       E.bracket (newIORef =<< decodeFileOrEmpty path)
                 (writeBack path)
     writeBack path ref = do
-      writeFile (BS8.unpack (path <.> "tmp")) .
-        show . S.toList =<< readIORef ref
+      BS8.writeFile (BS8.unpack (path <.> "tmp")) .
+        BS8.unlines . S.toList =<< readIORef ref
       Posix.rename (path <.> "tmp") path
-    decodeFileOrEmpty path = (S.fromList . readOrError path <$> readFile (BS8.unpack path)) `catchDoesNotExist` return S.empty
+    decodeFileOrEmpty path = (S.fromList . BS8.lines <$> BS8.readFile (BS8.unpack path)) `catchDoesNotExist` return S.empty
 
 data IRef a = IRef
   { readIRef :: IO (Maybe a)
