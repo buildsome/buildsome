@@ -28,7 +28,7 @@ import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirecto
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook, Handlers(..))
 import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc)
-import Lib.FilePath (FilePath, (</>), (<.>), canonicalizePath, canonicalizePathAsRelative, splitFileName, takeDirectory, makeRelative, makeRelativeToCurrentDirectory)
+import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.PoolAlloc (PoolAlloc)
@@ -50,6 +50,7 @@ import qualified Db
 import qualified Lib.BuildId as BuildId
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.FSHook as FSHook
+import qualified Lib.FilePath as FilePath
 import qualified Lib.Makefile as Makefile
 import qualified Lib.PoolAlloc as PoolAlloc
 import qualified Lib.Printer as Printer
@@ -184,7 +185,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsParallelismPool = pool
       , bsDb = db
       , bsMakefile = makefile
-      , bsRootPath = takeDirectory makefilePath
+      , bsRootPath = FilePath.takeDirectory makefilePath
       , bsFsHook = fsHook
       , bsNextPrinterId = printerIdRef
       , bsBuildId = buildId
@@ -209,12 +210,12 @@ updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
   outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
   leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
-  let dir = takeDirectory makefilePath
+  let dir = FilePath.takeDirectory makefilePath
       gitIgnorePath = dir </> ".gitignore"
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
   putStrLn "Updating .gitignore"
   BS8.writeFile (BS8.unpack gitIgnorePath) $ BS8.unlines $
-    map (("/" <>) . makeRelative dir) $
+    map (("/" <>) . FilePath.makeRelative dir) $
     extraIgnored ++ S.toList (outputs <> leaked)
 
 mkSlavesForPaths :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO [Slave]
@@ -536,7 +537,7 @@ buildTarget :: Printer -> ParCell -> Buildsome -> Target -> Reason -> Parents ->
 buildTarget printer parCell buildsome target reason parents =
   targetPrintWrap printer target "BUILDING" reason $ do
     -- TODO: Register each created subdirectory as an output?
-    mapM_ (createDirectories . takeDirectory) $ targetOutputs target
+    mapM_ (createDirectories . FilePath.takeDirectory) $ targetOutputs target
 
     registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
     mapM_ (removeOldOutput printer buildsome registeredOutputs) $ targetOutputs target
@@ -610,7 +611,7 @@ runCmd ::
   IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
   IORef (Set FilePath) -> IO (DiffTime, StdOutputs)
 runCmd printer parCell buildsome target parents inputsRef outputsRef = do
-  rootPath <- canonicalizePath $ bsRootPath buildsome
+  rootPath <- FilePath.canonicalizePath $ bsRootPath buildsome
   pauseTime <- newIORef 0
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
@@ -668,13 +669,13 @@ findMakefile = do
   cwd <- Posix.getWorkingDirectory
   let
     -- NOTE: Excludes root (which is probably fine)
-    parents = takeWhile (/= "/") $ iterate takeDirectory cwd
+    parents = takeWhile (/= "/") $ iterate FilePath.takeDirectory cwd
     candidates = map (</> standardMakeFilename) parents
   -- Use EitherT with Left short-circuiting when found, and Right
   -- falling through to the end of the loop:
   res <- runEitherT $ mapM_ check candidates
   case res of
-    Left found -> makeRelativeToCurrentDirectory found
+    Left found -> FilePath.makeRelativeToCurrentDirectory found
     Right () -> E.throwIO MakefileScanFailed
   where
     check path = do
@@ -722,13 +723,13 @@ main = do
   FSHook.with $ \fsHook -> do
     opt <- getOpt
     makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
-    let (cwd, file) = splitFileName makefilePath
+    let (cwd, file) = FilePath.splitFileName makefilePath
     origCwd <- Posix.getWorkingDirectory
     unless (BS8.null cwd) $ Posix.changeWorkingDirectory cwd
     (parseTime, makefile) <-
       timeIt $ do
         origMakefile <- Makefile.parse file
-        Makefile.onMakefilePaths canonicalizePathAsRelative origMakefile
+        Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative origMakefile
     putStrLn $ concat
       ["Parsed makefile: ", show makefilePath, " (took ", show parseTime, "sec)"]
     printer <- Printer.new 0
@@ -741,7 +742,7 @@ main = do
             case optMakefilePath opt of
             -- If we found the makefile by scanning upwards, prepend
             -- original cwd to avoid losing it:
-            Nothing -> mapM (canonicalizePathAsRelative . (origCwd </>))
+            Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
             -- Otherwise: there's no useful original cwd:
             Just _ -> return
 
