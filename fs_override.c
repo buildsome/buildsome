@@ -183,22 +183,23 @@ struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
     ret_type name params
 
 #define SILENT_CALL_REAL(ret_type, name, ...)           \
-    name##_func *real = dlsym(RTLD_NEXT, #name);        \
-    ret_type rc = real(__VA_ARGS__);                    \
-    return rc;
+    ({                                                  \
+        name##_func *real = dlsym(RTLD_NEXT, #name);    \
+        real(__VA_ARGS__);                              \
+    })
 
 #define SEND_CALL_REAL(msg, ...)                \
-    do {                                        \
+    ({                                          \
         send_connection(PS(msg));               \
         SILENT_CALL_REAL(__VA_ARGS__);          \
-    } while(0)
+    })
 
 #define AWAIT_CALL_REAL(input_path, msg, ...)   \
-    do {                                        \
+    ({                                          \
         send_connection(PS(msg));               \
         await_go_for_path(input_path);          \
         SILENT_CALL_REAL(__VA_ARGS__);          \
-    } while(0)
+    })
 
 #define DEFINE_MSG(msg, name)                   \
     initialize_process_state();                 \
@@ -312,7 +313,7 @@ DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
     va_end(args);
 
     /* open_common handles the reporting */
-    SILENT_CALL_REAL(int, open, path, flags, mode);
+    return SILENT_CALL_REAL(int, open, path, flags, mode);
 }
 
 /* Ditto open */
@@ -324,7 +325,7 @@ DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
     va_end(args);
 
     /* open_common handles the reporting */
-    SILENT_CALL_REAL(int, open64, path, flags, mode);
+    return SILENT_CALL_REAL(int, open64, path, flags, mode);
 }
 
 static void fopen_common(const char *path, const char *mode)
@@ -351,7 +352,7 @@ DEFINE_WRAPPER(FILE *, fopen, (const char *path, const char *mode))
 {
     fopen_common(path, mode);
     /* fopen_common handles the reporting */
-    SILENT_CALL_REAL(FILE *, fopen, path, mode);
+    return SILENT_CALL_REAL(FILE *, fopen, path, mode);
 }
 
 /* Ditto open */
@@ -359,7 +360,7 @@ DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *mode))
 {
     fopen_common(path, mode);
     /* fopen_common handles the reporting */
-    SILENT_CALL_REAL(FILE *, fopen64, path, mode);
+    return SILENT_CALL_REAL(FILE *, fopen64, path, mode);
 }
 
 /* Ditto open(W) */
@@ -368,7 +369,7 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
     DEFINE_MSG(msg, creat);
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
-    SEND_CALL_REAL(msg, int, creat, path, mode);
+    return SEND_CALL_REAL(msg, int, creat, path, mode);
 }
 
 /* Depends on the full path */
@@ -376,7 +377,7 @@ DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
 {
     DEFINE_MSG(msg, stat);
     PATH_COPY(msg.args.path, path);
-    AWAIT_CALL_REAL(msg.args.path, msg, int, stat, path, buf);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, stat, path, buf);
 }
 
 /* Depends on the full direct path */
@@ -384,7 +385,7 @@ DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
 {
     DEFINE_MSG(msg, lstat);
     PATH_COPY(msg.args.path, path);
-    AWAIT_CALL_REAL(msg.args.path, msg, int, lstat, path, buf);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, lstat, path, buf);
 }
 
 /* Depends on the full path */
@@ -392,7 +393,7 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 {
     DEFINE_MSG(msg, opendir);
     PATH_COPY(msg.args.path, path);
-    AWAIT_CALL_REAL(msg.args.path, msg, DIR *, opendir, path);
+    return AWAIT_CALL_REAL(msg.args.path, msg, DIR *, opendir, path);
 }
 
 /* Depends on the full path */
@@ -401,7 +402,7 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
     DEFINE_MSG(msg, access);
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
-    AWAIT_CALL_REAL(msg.args.path, msg, int, access, path, mode);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, access, path, mode);
 }
 
 /* Outputs the full path */
@@ -409,7 +410,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
     DEFINE_MSG(msg, truncate);
     PATH_COPY(msg.args.path, path);
-    SEND_CALL_REAL(msg, int, truncate, path, length);
+    return SEND_CALL_REAL(msg, int, truncate, path, length);
 }
 
 /* Outputs the full path */
@@ -417,7 +418,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
 {
     DEFINE_MSG(msg, unlink);
     PATH_COPY(msg.args.path, path);
-    SEND_CALL_REAL(msg, int, unlink, path);
+    return SEND_CALL_REAL(msg, int, unlink, path);
 }
 
 /* Outputs both full paths */
@@ -426,7 +427,7 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
     DEFINE_MSG(msg, rename);
     PATH_COPY(msg.args.oldpath, oldpath);
     PATH_COPY(msg.args.newpath, newpath);
-    SEND_CALL_REAL(msg, int, rename, oldpath, newpath);
+    return SEND_CALL_REAL(msg, int, rename, oldpath, newpath);
 }
 
 /* Outputs the full path */
@@ -435,7 +436,7 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
     DEFINE_MSG(msg, chmod);
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
-    SEND_CALL_REAL(msg, int, chmod, path, mode);
+    return SEND_CALL_REAL(msg, int, chmod, path, mode);
 }
 
 /* Depends on the full direct path */
@@ -443,7 +444,7 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
     DEFINE_MSG(msg, readlink);
     PATH_COPY(msg.args.path, path);
-    AWAIT_CALL_REAL(msg.args.path, msg, ssize_t, readlink, path, buf, bufsiz);
+    return AWAIT_CALL_REAL(msg.args.path, msg, ssize_t, readlink, path, buf, bufsiz);
 }
 
 /* Outputs the full path, must be deleted aftewards? */
@@ -453,7 +454,7 @@ DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
     msg.args.dev = dev;
-    SEND_CALL_REAL(msg, int, mknod, path, mode, dev);
+    return SEND_CALL_REAL(msg, int, mknod, path, mode, dev);
 }
 
 /* Outputs the full path */
@@ -462,7 +463,7 @@ DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
     DEFINE_MSG(msg, mkdir);
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
-    SEND_CALL_REAL(msg, int, mkdir, path, mode);
+    return SEND_CALL_REAL(msg, int, mkdir, path, mode);
 }
 
 /* Outputs the full path */
@@ -470,7 +471,7 @@ DEFINE_WRAPPER(int, rmdir, (const char *path))
 {
     DEFINE_MSG(msg, rmdir);
     PATH_COPY(msg.args.path, path);
-    SEND_CALL_REAL(msg, int, rmdir, path);
+    return SEND_CALL_REAL(msg, int, rmdir, path);
 }
 
 /* Outputs the full linkpath, input the target (to make the symlink,
@@ -483,7 +484,7 @@ DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
     PATH_COPY(msg.args.target, target);
     PATH_COPY(msg.args.linkpath, linkpath);
     /* TODO: Maybe not AWAIT here, and handle it properly? */
-    AWAIT_CALL_REAL(msg.args.target, msg, int, symlink, linkpath, target);
+    return AWAIT_CALL_REAL(msg.args.target, msg, int, symlink, linkpath, target);
 }
 
 /* Inputs the full oldpath, outputs the full newpath (treated like a
@@ -493,7 +494,7 @@ DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
     DEFINE_MSG(msg, link);
     PATH_COPY(msg.args.oldpath, oldpath);
     PATH_COPY(msg.args.newpath, newpath);
-    AWAIT_CALL_REAL(msg.args.oldpath, msg, int, link, oldpath, newpath);
+    return AWAIT_CALL_REAL(msg.args.oldpath, msg, int, link, oldpath, newpath);
 }
 
 /* Outputs the full path */
@@ -503,7 +504,7 @@ DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
     PATH_COPY(msg.args.path, path);
     msg.args.owner = owner;
     msg.args.group = group;
-    SEND_CALL_REAL(msg, int, chown, path, owner, group);
+    return SEND_CALL_REAL(msg, int, chown, path, owner, group);
 }
 
 int fchdir(int fd)
@@ -519,7 +520,7 @@ int fchdir(int fd)
 DEFINE_WRAPPER(int, chdir, (const char *path))
 {
     update_cwd();
-    SILENT_CALL_REAL(int, chdir, path);
+    return SILENT_CALL_REAL(int, chdir, path);
 }
 
 /* TODO: Track utime? */
