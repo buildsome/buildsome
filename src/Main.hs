@@ -638,7 +638,7 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
     handleOutput _actDesc path
       | outputIgnored path = return ()
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
-  unless (BS8.null cmd) $ BS8.putStrLn cmd
+  unless (BS8.null cmd) $ Printer.bsPutStrLn printer cmd
   (time, stdOutputs) <-
     FSHook.runCommand (bsFsHook buildsome) rootPath
     (timeIt . shellCmdVerify target ["HOME", "PATH"])
