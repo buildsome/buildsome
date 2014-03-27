@@ -25,17 +25,20 @@ data Printer = Printer
   , printerIndentLevelRef :: IORef Int
   }
 
+{-# INLINE new #-}
 new :: Id -> IO Printer
 new pid = Printer pid <$> newIORef 0
 
+{-# INLINE newFrom #-}
 newFrom :: Printer -> Id -> IO Printer
 newFrom (Printer _id indentRef) pid = do
   Printer pid <$> (newIORef =<< readIORef indentRef)
 
-
+{-# INLINE idStr #-}
 idStr :: Id -> String
 idStr = printf "T%03d"
 
+{-# INLINE putStrLn #-}
 putStrLn :: Printer -> String -> IO ()
 putStrLn (Printer pid indentRef) str = do
   indentLevel <- readIORef indentRef
@@ -44,6 +47,7 @@ putStrLn (Printer pid indentRef) str = do
   where
     prefixLines prefix = intercalate "\n" . map (prefix <>) . lines
 
+{-# INLINE bsPutStrLn #-}
 bsPutStrLn :: Printer -> ByteString -> IO ()
 bsPutStrLn (Printer pid indentRef) str = do
   indentLevel <- readIORef indentRef
@@ -52,9 +56,11 @@ bsPutStrLn (Printer pid indentRef) str = do
   where
     prefixLines prefix = BS8.intercalate "\n" . map (prefix <>) . BS8.lines
 
+{-# INLINE onException #-}
 onException :: IO a -> (E.SomeException -> IO ()) -> IO a
 onException act f = act `E.catch` \e -> f e >> E.throwIO e
 
+{-# INLINE printWrapWith #-}
 printWrapWith ::
   (IsString s, Monoid s) =>
   (Printer -> s -> IO ()) ->
@@ -72,8 +78,10 @@ printWrapWith putLn printer str body = do
     before       = mconcat ["{ ", str]
     after suffix = mconcat ["} ", str, " ", suffix]
 
+{-# INLINE printWrap #-}
 printWrap :: Printer -> String -> IO a -> IO a
 printWrap = printWrapWith putStrLn
 
+{-# INLINE bsPrintWrap #-}
 bsPrintWrap :: Printer -> ByteString -> IO a -> IO a
 bsPrintWrap = printWrapWith bsPutStrLn
