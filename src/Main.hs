@@ -389,6 +389,7 @@ applyExecutionLog printer buildsome target reason outputs stdOutputs selfTime =
     Printer.putStrLn printer $ "Build (originally) took " ++ show selfTime ++ " seconds"
 
 waitForSlaves :: Printer -> ParCell -> Buildsome -> [Slave] -> IO ()
+waitForSlaves _ _ _ [] = return ()
 waitForSlaves printer parCell buildsome slaves =
   withReleasedParallelism parCell buildsome $
   mapM_ (slaveWait printer) slaves
@@ -434,7 +435,7 @@ tryApplyExecutionLog printer parCell buildsome target reason parents Db.Executio
       hintedSlaves <- concat <$> mapM (makeSlaves printer buildsome Explicit hintReason parents) (targetAllInputs target)
 
       let allSlaves = speculativeSlaves ++ hintedSlaves
-      unless (null allSlaves) $ waitForSlaves printer parCell buildsome allSlaves
+      waitForSlaves printer parCell buildsome allSlaves
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -546,7 +547,7 @@ buildTarget printer parCell buildsome target reason parents =
       mkSlavesForPaths printer buildsome Explicit
       ("Hint from " <> (BS8.pack . show . targetOutputs) target) parents
       (targetAllInputs target)
-    unless (null slaves) $ waitForSlaves printer parCell buildsome slaves
+    waitForSlaves printer parCell buildsome slaves
     inputsRef <- newIORef M.empty
     outputsRef <- newIORef S.empty
 
@@ -635,10 +636,7 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
         slaves <- makeSlavesForAccessType accessType printer buildsome Implicit actDesc parents path
         -- Temporarily paused, so we can temporarily release parallelism
         -- semaphore
-        unless (null slaves) $
-          Printer.bsPrintWrap printer
-          (BS8.concat ["PAUSED: ", (BS8.pack . show . targetOutputs) target, " ", actDesc]) $
-          measurePauseTime $ waitForSlaves printer parCell buildsome slaves
+        measurePauseTime $ waitForSlaves printer parCell buildsome slaves
     handleOutput _actDesc path
       | outputIgnored path = return ()
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
