@@ -376,10 +376,7 @@ targetPrintWrap printer target str reason body =
   Printer.printWrap printer
     (show (targetOutputs target)) $ do
     Printer.bsPutStrLn printer $ BS8.concat [str, " (", reason, ")"]
-    unless (BS8.null cmd) $ Printer.bsPutStrLn printer cmd
     body
-  where
-    cmd = targetCmds target
 
 -- Already verified that the execution log is a match
 applyExecutionLog ::
@@ -644,6 +641,7 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
     handleOutput _actDesc path
       | outputIgnored path = return ()
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
+  unless (BS8.null cmd) $ BS8.putStrLn cmd
   (time, stdOutputs) <-
     FSHook.runCommand (bsFsHook buildsome) rootPath
     (timeIt . shellCmdVerify target ["HOME", "PATH"])
@@ -651,6 +649,8 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
     Handlers {..}
   subtractedTime <- (time-) <$> readIORef pauseTime
   return (realToFrac subtractedTime, stdOutputs)
+  where
+    cmd = targetCmds target
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
