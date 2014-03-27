@@ -3,7 +3,7 @@
 * Performance:
 
   * Empty run
-    * What's slow here?
+    * What's slow here?  98% of time spent in futex calls?!
 
   * Real run
     * C side should get list of delay-requiring inputs (patterns and normal files)
