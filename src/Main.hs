@@ -722,12 +722,15 @@ main = do
   FSHook.with $ \fsHook -> do
     opt <- getOpt
     makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
-    putStrLn $ "Using makefile: " ++ show makefilePath
     let (cwd, file) = splitFileName makefilePath
     origCwd <- Posix.getWorkingDirectory
     unless (BS8.null cwd) $ Posix.changeWorkingDirectory cwd
-    origMakefile <- Makefile.parse file
-    makefile <- Makefile.onMakefilePaths canonicalizePathAsRelative origMakefile
+    (parseTime, makefile) <-
+      timeIt $ do
+        origMakefile <- Makefile.parse file
+        Makefile.onMakefilePaths canonicalizePathAsRelative origMakefile
+    putStrLn $ concat
+      ["Parsed makefile: ", show makefilePath, " (took ", show parseTime, "sec)"]
     printer <- Printer.new 0
     Db.with (buildDbFilename file) $ \db ->
       withBuildsome file fsHook db makefile opt $
