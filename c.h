@@ -1,12 +1,8 @@
 #ifndef __c_h_
 #define __c_h_
 
-#include <bsd/string.h>         /* strlcpy */
 #include <stdio.h>              /* fprintf */
 #include <stdlib.h>             /* abort */
-
-#define SAFE_STRCPY(dest, src)      strlcpy(dest, src, sizeof (dest))
-#define SAFE_STRCAT(dest, src)      strlcat(dest, src, sizeof (dest))
 
 FILE *log_file(void);
 

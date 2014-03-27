@@ -1,6 +1,9 @@
 #ifndef __writer_h_
 #define __writer_h_
 
+#include "c.h"                  /* ASSERT */
+#include <string.h>             /* memcpy */
+
 /* Can pass/copy by value */
 struct writer {
     char *buf;
