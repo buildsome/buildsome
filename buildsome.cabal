@@ -27,6 +27,7 @@ executable buildsome
   ghc-prof-options:  -auto-all -caf-all -O2 -rtsopts
   other-modules:     Clean
                ,     Db
+               ,     FileDescCache
                ,     Lib.AccessType
                ,     Lib.AnnotatedException
                ,     Lib.Argv0

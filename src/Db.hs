@@ -4,9 +4,10 @@ module Db
   ( Db, with
   , registeredOutputsRef, leakedOutputsRef
   , InputAccess(..)
-  , ExecutionLog(..), Reason
-  , IRef, readIRef, writeIRef
-  , executionLog
+  , ExecutionLog(..), executionLog
+  , FileDescCache(..), fileDescCache
+  , Reason
+  , IRef(..)
   ) where
 
 import Control.Applicative ((<$>))
@@ -16,6 +17,7 @@ import Data.IORef
 import Data.Map (Map)
 import Data.Set (Set)
 import Data.Time (DiffTime)
+import Foreign.C.Types (CTime(..))
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.BuildId (BuildId)
@@ -41,11 +43,15 @@ data Db = Db
   , dbLeakedOutputs :: IORef (Set FilePath)
   }
 
-registeredOutputsRef :: Db -> IORef (Set FilePath)
-registeredOutputsRef = dbRegisteredOutputs
+instance Binary CTime where
+  put (CTime x) = put x
+  get = CTime <$> get
 
-leakedOutputsRef :: Db -> IORef (Set FilePath)
-leakedOutputsRef = dbLeakedOutputs
+data FileDescCache = FileDescCache
+  { fdcModificationTime :: Posix.EpochTime
+  , fdcFileDesc :: FileDesc
+  } deriving (Generic, Show)
+instance Binary FileDescCache
 
 type Reason = ByteString
 
@@ -66,11 +72,20 @@ data ExecutionLog = ExecutionLog
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 
+registeredOutputsRef :: Db -> IORef (Set FilePath)
+registeredOutputsRef = dbRegisteredOutputs
+
+leakedOutputsRef :: Db -> IORef (Set FilePath)
+leakedOutputsRef = dbLeakedOutputs
+
 setKey :: Binary a => Db -> ByteString -> a -> IO ()
 setKey db key val = Sophia.setValue (dbSophia db) key $ encode val
 
 getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
 getKey db key = fmap decode <$> Sophia.getValue (dbSophia db) key
+
+deleteKey :: Db -> ByteString -> IO ()
+deleteKey db key = Sophia.delValue (dbSophia db) key
 
 with :: FilePath -> (Db -> IO a) -> IO a
 with rawDbPath body = do
@@ -95,15 +110,20 @@ with rawDbPath body = do
 data IRef a = IRef
   { readIRef :: IO (Maybe a)
   , writeIRef :: a -> IO ()
+  , delIRef :: IO ()
   }
 
 mkIRefKey :: Binary a => ByteString -> Db -> IRef a
 mkIRefKey key db = IRef
   { readIRef = getKey db key
   , writeIRef = setKey db key
+  , delIRef = deleteKey db key
   }
 
 executionLog :: Target -> Db -> IRef ExecutionLog
 executionLog target = mkIRefKey targetKey
   where
     targetKey = MD5.hash $ targetCmds target -- TODO: Canonicalize commands (whitespace/etc)
+
+fileDescCache :: FilePath -> Db -> IRef FileDescCache
+fileDescCache path = mkIRefKey path

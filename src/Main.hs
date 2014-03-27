@@ -18,6 +18,7 @@ import Data.Time (DiffTime)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
 import Db (Db, IRef(..), Reason)
+import FileDescCache (getFileDesc, fileDescOfMStat)
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.Async (wrapAsync)
@@ -26,7 +27,7 @@ import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories)
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook, Handlers(..))
-import Lib.FileDesc (fileDescOfMStat, getFileDesc, fileModeDescOfMStat, getFileModeDesc)
+import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath (FilePath, (</>), (<.>), canonicalizePath, canonicalizePathAsRelative, splitFileName, takeDirectory, makeRelative, makeRelativeToCurrentDirectory)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
@@ -352,7 +353,7 @@ saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
     forM (S.toList outputs) $ \outPath -> do
-      fileDesc <- getFileDesc outPath
+      fileDesc <- getFileDesc db outPath
       return (outPath, fileDesc)
   writeIRef (Db.executionLog target (bsDb buildsome)) $ Db.ExecutionLog
     { elBuildId = bsBuildId buildsome
@@ -362,7 +363,8 @@ saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
     , elSelfTime = selfTime
     }
   where
-    inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat path mStat
+    db = bsDb buildsome
+    inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
     inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
 targetAllInputs :: Target -> [FilePath]
@@ -402,17 +404,18 @@ tryApplyExecutionLog printer parCell buildsome target reason parents Db.Executio
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, oldInputAccess) ->
       case snd oldInputAccess of
-        Db.InputAccessFull oldDesc ->         compareToNewDesc "input"       getFileDesc     (filePath, oldDesc)
-        Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc (filePath, oldModeDesc)
+        Db.InputAccessFull oldDesc ->         compareToNewDesc "input"       (getFileDesc db) (filePath, oldDesc)
+        Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc  (filePath, oldModeDesc)
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
-    mapM_ (compareToNewDesc "output" getFileDesc) $ M.toList elOutputsDescs
+    mapM_ (compareToNewDesc "output" (getFileDesc db)) $ M.toList elOutputsDescs
 
     liftIO $
       applyExecutionLog printer buildsome target reason
       (M.keysSet elOutputsDescs) elStdoutputs elSelfTime
   where
+    db = bsDb buildsome
     compareToNewDesc str getNewDesc (filePath, oldDesc) = do
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation

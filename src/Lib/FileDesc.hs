@@ -3,10 +3,10 @@
 module Lib.FileDesc
   ( FileDesc
   , fileDescOfMStat
-  , getFileDesc
   , FileModeDesc
   , fileModeDescOfMStat
   , getFileModeDesc
+  , assertSameMTimes
   ) where
 
 import Control.Applicative ((<$>))
@@ -60,6 +60,15 @@ fileModeDescOfMStat path oldMStat = do
     Nothing -> return NoFileMode
     Just stat -> return $ FileModeDesc $ Posix.fileMode stat
 
+assertSameMTimes :: FilePath -> Maybe Posix.FileStatus -> Maybe Posix.FileStatus -> IO ()
+assertSameMTimes path oldMStat newMStat =
+  unless (compareMTimes oldMStat newMStat) $ E.throwIO $
+  ThirdPartyMeddlingError path "changed during build!"
+  where
+    compareMTimes x y =
+      (Posix.modificationTime <$> x) ==
+      (Posix.modificationTime <$> y)
+
 fileDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileDesc
 fileDescOfMStat path oldMStat = do
   mContentHash <-
@@ -74,8 +83,7 @@ fileDescOfMStat path oldMStat = do
     _ -> return Nothing
   -- Verify file did not change since we took its first mtime:
   newMStat <- getMFileStatus path
-  unless (compareMTimes oldMStat newMStat) $ E.throwIO $
-    ThirdPartyMeddlingError path "changed during build!"
+  assertSameMTimes path oldMStat newMStat
   case newMStat of
     Nothing -> return NoFile
     Just stat
@@ -93,12 +101,6 @@ fileDescOfMStat path oldMStat = do
     assertExists act =
       act `catchDoesNotExist`
       E.throwIO (ThirdPartyMeddlingError path "deleted during build!")
-    compareMTimes x y =
-      (Posix.modificationTime <$> x) ==
-      (Posix.modificationTime <$> y)
-
-getFileDesc :: FilePath -> IO FileDesc
-getFileDesc path = fileDescOfMStat path =<< getMFileStatus path
 
 getFileModeDesc :: FilePath -> IO FileModeDesc
 getFileModeDesc path = fileModeDescOfMStat path =<< getMFileStatus path
