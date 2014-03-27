@@ -634,8 +634,6 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
     handleDelayedInput accessType actDesc path =
       handleInputCommon accessType actDesc path $ do
         slaves <- makeSlavesForAccessType accessType printer buildsome Implicit actDesc parents path
-        -- Temporarily paused, so we can temporarily release parallelism
-        -- semaphore
         measurePauseTime $ waitForSlaves printer parCell buildsome slaves
     handleOutput _actDesc path
       | outputIgnored path = return ()
