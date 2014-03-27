@@ -1,3 +1,20 @@
+* Better prints:
+
+  * Print the need of each dependency exactly once (hints and then delayed inputs)
+
+    * Can't print when "waitForSlaves" because that's after the thread
+      was spawned (and started printing)
+
+    * Difficult to print when spawning the slaves because that's
+      nested deep in code
+
+  * Singlethreaded prints are still bad when paused cmd switches to another cmd
+
+  * Multithreaded commands will have multithreaded (confusing) use of
+  the printer in handleInput/handleDelayedInput.  Need to have
+  callbacks for create connection that fork the printer, and hand
+  those over to handleInput/handleDelayedInput
+
 * Verify that the mtime of all files does not change during run, not just during single command
 
 * Performance:
@@ -9,18 +26,6 @@
     * C side should get list of delay-requiring inputs (patterns and normal files)
       * Via /tmp file?
       * Only delay those?
-
-* Refactoring:
-
-  * Group all the target params (Printer, ParCell, Target, Reason,
-    Parents) into their own record
-
-  * Extract Lib.Fresh (for all the atomicModifyIORef (\x -> (x+1,x+1)) calls)
-
-* Better prints: Multithreaded commands will have multithreaded
-  (confusing) use of the printer in handleInput/handleDelayedInput.
-  Need to have callbacks for create connection that fork the printer,
-  and hand those over to handleInput/handleDelayedInput
 
 * local "clean" support
 
