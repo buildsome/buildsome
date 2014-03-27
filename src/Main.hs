@@ -721,7 +721,10 @@ main = do
     makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
     let (cwd, file) = FilePath.splitFileName makefilePath
     origCwd <- Posix.getWorkingDirectory
-    unless (BS8.null cwd) $ Posix.changeWorkingDirectory cwd
+    unless (BS8.null cwd) $ do
+      Posix.changeWorkingDirectory cwd
+      fullCwd <- FilePath.canonicalizePath $ origCwd </> cwd
+      BS8.putStrLn $ "make: Entering directory `" <> fullCwd <> "'"
     (parseTime, makefile) <-
       timeIt $ do
         origMakefile <- Makefile.parse file
