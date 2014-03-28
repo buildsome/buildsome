@@ -349,28 +349,6 @@ verifyTargetOutputs printer buildsome outputs target = do
     allUnspecified = S.toList $ outputs `S.difference` specified
     specified = S.fromList $ targetOutputs target
 
-saveExecutionLog ::
-  Buildsome -> Target ->
-  Map FilePath (AccessType, Reason, Maybe Posix.FileStatus) ->
-  Set FilePath -> StdOutputs -> DiffTime -> IO ()
-saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
-  inputsDescs <- M.traverseWithKey inputAccess inputs
-  outputDescPairs <-
-    forM (S.toList outputs) $ \outPath -> do
-      fileDesc <- getFileDesc db outPath
-      return (outPath, fileDesc)
-  writeIRef (Db.executionLog target (bsDb buildsome)) $ Db.ExecutionLog
-    { elBuildId = bsBuildId buildsome
-    , elInputsDescs = inputsDescs
-    , elOutputsDescs = M.fromList outputDescPairs
-    , elStdoutputs = stdOutputs
-    , elSelfTime = selfTime
-    }
-  where
-    db = bsDb buildsome
-    inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
-    inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
-
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
@@ -540,6 +518,83 @@ removeOldOutput printer buildsome registeredOutputs path = do
       | path `S.member` registeredOutputs -> removeFileOrDirectory path
       | otherwise -> removeOldUnregisteredOutput printer buildsome path
 
+data RunCmdResults = RunCmdResults
+  { rcrSelfTime :: DiffTime -- excluding pause times
+  , rcrStdOutputs :: StdOutputs
+  , rcrInputs :: Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)
+  , rcrOutputs :: Set FilePath
+  }
+
+runCmd :: BuildTargetEnv -> ParCell -> Target -> IO RunCmdResults
+runCmd bte@BuildTargetEnv{..} parCell target = do
+  rootPath <- FilePath.canonicalizePath $ bsRootPath bteBuildsome
+  pauseTime <- newIORef 0
+  inputsRef <- newIORef M.empty
+  outputsRef <- newIORef S.empty
+  let
+    addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
+    measurePauseTime act = do
+      (time, res) <- timeIt act
+      addPauseTime time
+      return res
+    handleInputCommon accessType actDesc path useInput
+      | inputIgnored path = return ()
+      | otherwise = do
+        actualOutputs <- readIORef outputsRef
+        -- There's no problem for a target to read its own outputs freely:
+        unless (path `S.member` actualOutputs) $ do
+          () <- useInput
+          unless (path `elem` targetOutputs target || allowedUnspecifiedOutput path) $
+            recordInput inputsRef accessType actDesc path
+    handleInput accessType actDesc path =
+      handleInputCommon accessType actDesc path $ return ()
+    handleDelayedInput accessType actDesc path =
+      handleInputCommon accessType actDesc path $
+        measurePauseTime . waitForSlaves btePrinter parCell bteBuildsome =<<
+        makeSlavesForAccessType accessType bte { bteReason = actDesc } Implicit path
+    handleOutput _actDesc path
+      | outputIgnored path = return ()
+      | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
+  unless (BS8.null cmd) $ Printer.bsPutStrLn btePrinter cmd
+  (time, stdOutputs) <-
+    FSHook.runCommand (bsFsHook bteBuildsome) rootPath
+    (timeIt . shellCmdVerify target ["HOME", "PATH"])
+    (BS8.pack (show (targetOutputs target)))
+    Handlers {..}
+    `finally` do
+      outputs <- readIORef outputsRef
+      registerOutputs bteBuildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
+  subtractedTime <- (time-) <$> readIORef pauseTime
+  inputs <- readIORef inputsRef
+  outputs <- readIORef outputsRef
+  return RunCmdResults
+    { rcrStdOutputs = stdOutputs
+    , rcrSelfTime = realToFrac subtractedTime
+    , rcrInputs = inputs
+    , rcrOutputs = outputs
+    }
+  where
+    cmd = targetCmds target
+
+saveExecutionLog :: Buildsome -> Target -> RunCmdResults -> IO ()
+saveExecutionLog buildsome target RunCmdResults{..} = do
+  inputsDescs <- M.traverseWithKey inputAccess rcrInputs
+  outputDescPairs <-
+    forM (S.toList rcrOutputs) $ \outPath -> do
+      fileDesc <- getFileDesc db outPath
+      return (outPath, fileDesc)
+  writeIRef (Db.executionLog target (bsDb buildsome)) $ Db.ExecutionLog
+    { elBuildId = bsBuildId buildsome
+    , elInputsDescs = inputsDescs
+    , elOutputsDescs = M.fromList outputDescPairs
+    , elStdoutputs = rcrStdOutputs
+    , elSelfTime = rcrSelfTime
+    }
+  where
+    db = bsDb buildsome
+    inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
+    inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
+
 buildTarget :: BuildTargetEnv -> ParCell -> Target -> IO ()
 buildTarget bte@BuildTargetEnv{..} parCell target =
   targetPrintWrap bte target "BUILDING" $ do
@@ -554,23 +609,15 @@ buildTarget bte@BuildTargetEnv{..} parCell target =
         { bteReason = "Hint from " <> (BS8.pack . show . targetOutputs) target
         } Explicit $ targetAllInputs target
     waitForSlaves btePrinter parCell bteBuildsome slaves
-    inputsRef <- newIORef M.empty
-    outputsRef <- newIORef S.empty
 
-    (selfTime, stdOutputs) <-
-      Printer.printWrap btePrinter ("runCmd" ++ show (targetOutputs target))
-      (runCmd bte parCell target inputsRef outputsRef)
-      `finally` do
-        outputs <- readIORef outputsRef
-        registerOutputs bteBuildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
+    rcr@RunCmdResults{..} <-
+      Printer.printWrap btePrinter ("runCmd" ++ show (targetOutputs target)) $
+      runCmd bte parCell target
 
-    outputs <- readIORef outputsRef
-    verifyTargetOutputs btePrinter bteBuildsome outputs target
+    verifyTargetOutputs btePrinter bteBuildsome rcrOutputs target
+    saveExecutionLog bteBuildsome target rcr
 
-    inputs <- readIORef inputsRef
-    saveExecutionLog bteBuildsome target inputs outputs stdOutputs selfTime
-
-    Printer.putStrLn btePrinter $ "Build (now) took " ++ show selfTime ++ " seconds"
+    Printer.putStrLn btePrinter $ "Build (now) took " ++ show rcrSelfTime ++ " seconds"
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
@@ -609,49 +656,6 @@ shellCmdVerify target inheritEnvs newEnvs = do
   case exitCode of
     ExitFailure {} -> E.throwIO $ CommandFailed cmd exitCode
     _ -> return stdouts
-  where
-    cmd = targetCmds target
-
-runCmd ::
-  BuildTargetEnv -> ParCell -> Target ->
-  IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
-  IORef (Set FilePath) ->
-  IO (DiffTime, StdOutputs)
-runCmd bte@BuildTargetEnv{..} parCell target inputsRef outputsRef = do
-  rootPath <- FilePath.canonicalizePath $ bsRootPath bteBuildsome
-  pauseTime <- newIORef 0
-  let
-    addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
-    measurePauseTime act = do
-      (time, res) <- timeIt act
-      addPauseTime time
-      return res
-    handleInputCommon accessType actDesc path useInput
-      | inputIgnored path = return ()
-      | otherwise = do
-        actualOutputs <- readIORef outputsRef
-        -- There's no problem for a target to read its own outputs freely:
-        unless (path `S.member` actualOutputs) $ do
-          () <- useInput
-          unless (path `elem` targetOutputs target || allowedUnspecifiedOutput path) $
-            recordInput inputsRef accessType actDesc path
-    handleInput accessType actDesc path =
-      handleInputCommon accessType actDesc path $ return ()
-    handleDelayedInput accessType actDesc path =
-      handleInputCommon accessType actDesc path $
-        measurePauseTime . waitForSlaves btePrinter parCell bteBuildsome =<<
-        makeSlavesForAccessType accessType bte { bteReason = actDesc } Implicit path
-    handleOutput _actDesc path
-      | outputIgnored path = return ()
-      | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
-  unless (BS8.null cmd) $ Printer.bsPutStrLn btePrinter cmd
-  (time, stdOutputs) <-
-    FSHook.runCommand (bsFsHook bteBuildsome) rootPath
-    (timeIt . shellCmdVerify target ["HOME", "PATH"])
-    (BS8.pack (show (targetOutputs target)))
-    Handlers {..}
-  subtractedTime <- (time-) <$> readIORef pauseTime
-  return (realToFrac subtractedTime, stdOutputs)
   where
     cmd = targetCmds target
 
