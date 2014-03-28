@@ -15,9 +15,9 @@ plugFilePattern :: StringPattern.Match -> FilePattern -> FilePath
 plugFilePattern match (FilePattern dir file) = dir </> StringPattern.plug match file
 
 instantiatePatternByMatch :: StringPattern.Match -> Pattern -> Target
-instantiatePatternByMatch match (Target outputs inputs ooInputs cmds) =
+instantiatePatternByMatch match (Target outputs inputs ooInputs cmds pos) =
   interpolateCmds mStem $
-  Target pluggedOutputs pluggedInputs pluggedOOInputs cmds
+  Target pluggedOutputs pluggedInputs pluggedOOInputs cmds pos
   where
     mStem = Just (matchPlaceHolder match)
     plugInputMatch (InputPattern pat) = plugFilePattern match pat

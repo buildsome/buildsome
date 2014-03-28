@@ -1,4 +1,4 @@
-{-# LANGUAGE Rank2Types, OverloadedStrings #-}
+{-# LANGUAGE Rank2Types, OverloadedStrings, DeriveDataTypeable #-}
 module Lib.Makefile.Parser
   ( makefile, parse, interpolateCmds, metaVariable
   ) where
@@ -13,6 +13,7 @@ import Data.List (partition)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Monoid ((<>))
+import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
 import Lib.FilePath ((</>), splitFileName, takeDirectory, takeFileName, FilePath)
 import Lib.Makefile.Types
@@ -149,13 +150,12 @@ interpolateVariables escapeParse stopChars = do
         [ P.char '{' *> ident <* P.char '}'
         , BS8.singleton <$> P.satisfy isIdentChar
         ]
+      pos <- P.getPosition
       case M.lookup varName varsEnv of
-        Nothing -> do
-          pos <- P.getPosition
-          error $ showPos pos ++ ": No such variable: " ++ show varName
+        Nothing -> error $ showPos pos ++ ": No such variable: " ++ show varName
         Just val ->
           either (fail . show) return $
-          P.runParser (interpolate <* P.eof) () "" val
+          P.runParser (P.setPosition pos *> interpolate <* P.eof) () "" val
   interpolate
 
 -- Inside a single line
@@ -270,8 +270,8 @@ mkFilePattern path
   where
     (dir, file) = splitFileName path
 
-targetPattern :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Pattern
-targetPattern outputPaths inputPaths orderOnlyInputs = do
+targetPattern :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser Pattern
+targetPattern pos outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
   cmdLines <- BS8.intercalate "\n" <$> P.many cmdLine
@@ -280,6 +280,7 @@ targetPattern outputPaths inputPaths orderOnlyInputs = do
     , targetInputs = inputPats
     , targetOrderOnlyInputs = orderOnlyInputPats
     , targetCmds = cmdLines
+    , targetPos = pos
     }
   where
     mkOutputPattern outputPath =
@@ -290,19 +291,24 @@ targetPattern outputPaths inputPaths orderOnlyInputs = do
     tryMakePattern path = maybe (InputPath path) InputPattern $ mkFilePattern path
 
 interpolateCmds :: Maybe ByteString -> Target -> Target
-interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds) =
+interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds pos) =
   tgt
   { targetCmds = either (error . show) id $ interpolateMetavars cmds
   }
   where
-    interpolateMetavars = P.runParser (BS8.intercalate "\n" <$> (cmdInterpolate `P.sepBy` P.char '\n') <* P.eof) () (show tgt)
+    interpolateMetavars =
+      P.runParser
+      ( P.setPosition pos
+        *> (BS8.intercalate "\n" <$> (cmdInterpolate `P.sepBy` P.char '\n')) <*
+        P.eof
+      ) () ""
     cmdInterpolate =
       interpolateString escapeSequence "#\n"
       (metaVariable outputs inputs ooInputs mStem)
       <* skipLineSuffix
 
-targetSimple :: [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
-targetSimple outputPaths inputPaths orderOnlyInputs = do
+targetSimple :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
+targetSimple pos outputPaths inputPaths orderOnlyInputs = do
   cmdLines <- P.many cmdLine
   -- Immediately interpolate cmdLine metaVars (after having expanded ordinary vars):
   return $ interpolateCmds Nothing Target
@@ -310,11 +316,13 @@ targetSimple outputPaths inputPaths orderOnlyInputs = do
     , targetInputs = inputPaths
     , targetOrderOnlyInputs = orderOnlyInputs
     , targetCmds = BS8.intercalate "\n" cmdLines
+    , targetPos = pos
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
 target :: Parser (Either Pattern Target)
 target = do
+  pos <- P.getPosition
   outputPaths <- P.try $
     -- disallow tab here
     P.skipMany (P.char ' ') *>
@@ -327,27 +335,33 @@ target = do
     P.try (horizSpaces *> P.char '|') *> horizSpaces *> filepaths
   skipLineSuffix
   if "%" `BS8.isInfixOf` (BS8.concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
-    then Left <$> targetPattern outputPaths inputPaths orderOnlyInputs
-    else Right <$> targetSimple outputPaths inputPaths orderOnlyInputs
+    then Left <$> targetPattern pos outputPaths inputPaths orderOnlyInputs
+    else Right <$> targetSimple pos outputPaths inputPaths orderOnlyInputs
+
+data PosError = PosError Pos.SourcePos ByteString deriving (Typeable)
+instance Show PosError where
+  show (PosError pos msg) = concat [showPos pos, ": ", BS8.unpack msg]
+instance E.Exception PosError
 
 mkMakefile :: [Either Pattern Target] -> Makefile
-mkMakefile allTargets
-  | not $ null phoniesWithCmds = error $ ".PHONY targets may not have commands: " ++ show phoniesWithCmds
-  | not $ null missingPhonies = error $ "missing .PHONY targets: " ++ show missingPhonies
-  | otherwise =
-    Makefile
-    { makefileTargets = regularTargets
-    , makefilePatterns = targetPatterns
-    , makefilePhonies = phonies
-    }
+mkMakefile allTargets =
+  either E.throw id $ do
+    phonies <- concat <$> mapM getPhonyInputs phonyTargets
+    return Makefile
+      { makefileTargets = regularTargets
+      , makefilePatterns = targetPatterns
+      , makefilePhonies = phonies
+      }
   where
-    phoniesWithCmds = filter (not . BS8.null . targetCmds) phonyTargets
     (targetPatterns, targets) = partitionEithers allTargets
-    missingPhonies = S.toList $ S.fromList phonies `S.difference` outputPathsSet
     outputPathsSet = S.fromList (concatMap targetOutputs regularTargets)
-    phonies = concatMap getPhonyInputs phonyTargets
-    getPhonyInputs (Target [".PHONY"] inputs [] cmd) | BS8.null cmd = inputs
-    getPhonyInputs t = error $ "Invalid .PHONY target: " ++ show t
+    badPhony t str = Left $ PosError (targetPos t) $ ".PHONY target " <> str
+    getPhonyInputs t@(Target [".PHONY"] inputs [] cmd _) =
+      case filter (`S.notMember` outputPathsSet) inputs of
+      (danglingInput:_) -> badPhony t $ "refers to inexistent target " <> danglingInput
+      [] | not (BS8.null cmd) -> badPhony t $ "may not specify commands"
+         | otherwise -> return inputs
+    getPhonyInputs t = badPhony t "invalid"
     (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputs) targets
 
 properEof :: Parser ()

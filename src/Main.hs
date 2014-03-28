@@ -31,6 +31,7 @@ import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.Parallelism (Parallelism)
+import Lib.Parsec (showPos)
 import Lib.Printer (Printer)
 import Lib.ShowBytes (showBytes)
 import Lib.Sigint (installSigintHandler)
@@ -243,13 +244,13 @@ makeSlaves bte@BuildTargetEnv{..} explicitness path = do
 
 -- e.g: .pyc files
 handleLegalUnspecifiedOutputs :: Printer -> Buildsome -> Target -> [FilePath] -> IO ()
-handleLegalUnspecifiedOutputs printer buildsome target paths = do
+handleLegalUnspecifiedOutputs _printer buildsome target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
   -- creating job
-  unless (null paths) $ Printer.putStrLn printer $ concat
-    [ "WARNING: Leaked unspecified outputs: "
-    , show paths, " from target for: ", show (targetOutputs target)
-    , ", ", actionDesc
+  unless (null paths) $ putStrLn $ concat
+    [ showPos (targetPos target)
+    , ": WARNING: Leaked unspecified outputs: "
+    , show paths, ", ", actionDesc
     ]
   action
   where
@@ -268,7 +269,6 @@ instance Show IllegalUnspecifiedOutputs where
 -- Verify output of whole of slave/execution log
 verifyTargetOutputs :: Printer -> Buildsome -> Set FilePath -> Target -> IO ()
 verifyTargetOutputs printer buildsome outputs target = do
-
   let (unspecifiedOutputs, illegalOutputs) = partition MagicFiles.allowedUnspecifiedOutput allUnspecified
 
   -- Legal unspecified need to be kept/deleted according to policy:
@@ -286,7 +286,10 @@ verifyTargetOutputs printer buildsome outputs target = do
     mapM_ removeFileOrDirectory existingIllegalOutputs
     E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
   unless (S.null unusedOutputs) $
-    Printer.putStrLn printer $ "WARNING: Over-specified outputs: " ++ show (S.toList unusedOutputs)
+    putStrLn $ concat
+    [ showPos (targetPos target), ": WARNING: Over-specified outputs: "
+    , show (S.toList unusedOutputs)
+    ]
   where
     phonies = S.fromList $ makefilePhonies $ bsMakefile buildsome
     unusedOutputs = (specified `S.difference` outputs) `S.difference` phonies
