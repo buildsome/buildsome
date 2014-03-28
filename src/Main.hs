@@ -36,7 +36,7 @@ import Lib.Printer (Printer)
 import Lib.ShowBytes (showBytes)
 import Lib.Sigint (installSigintHandler)
 import Lib.Slave (Slave)
-import Lib.StdOutputs (StdOutputs(..), printStdouts)
+import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeIt (timeIt)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
 import Prelude hiding (FilePath)
@@ -58,6 +58,7 @@ import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Slave as Slave
+import qualified Lib.StdOutputs as StdOutputs
 import qualified Lib.Timeout as Timeout
 import qualified MagicFiles
 import qualified System.IO as IO
@@ -312,7 +313,7 @@ applyExecutionLog ::
   BuildTargetEnv -> Target -> Set FilePath -> StdOutputs -> DiffTime -> IO ()
 applyExecutionLog bte@BuildTargetEnv{..} target outputs stdOutputs selfTime =
   targetPrintWrap bte target "REPLAY" $ do
-    printStdouts (show (targetOutputs target)) stdOutputs
+    BS8.putStr $ StdOutputs.str (BS8.pack (show (targetOutputs target))) stdOutputs
     verifyTargetOutputs btePrinter bteBuildsome outputs target
     Printer.putStrLn btePrinter $ "Build (originally) took " ++ show selfTime ++ " seconds"
 
@@ -597,7 +598,7 @@ shellCmdVerify target inheritEnvs newEnvs = do
   (exitCode, stdout, stderr) <-
     Process.getOutputs (ShellCommand (BS8.unpack cmd)) inheritEnvs newEnvs
   let stdouts = StdOutputs stdout stderr
-  printStdouts (show (targetOutputs target)) stdouts
+  BS8.putStr $ StdOutputs.str (BS8.pack (show (targetOutputs target))) stdouts
   case exitCode of
     ExitFailure {} -> E.throwIO $ CommandFailed cmd exitCode
     _ -> return stdouts

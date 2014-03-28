@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Lib.StdOutputs
   ( StdOutputs(..)
-  , printStdouts
+  , str
   ) where
 
 import Data.Binary (Binary)
@@ -16,16 +16,21 @@ data StdOutputs = StdOutputs
   } deriving (Generic, Show)
 instance Binary StdOutputs
 
-printStdouts :: String -> StdOutputs -> IO ()
-printStdouts strLabel (StdOutputs stdout stderr) = do
-  showOutput ("STDOUT" <> plabel) stdout
-  showOutput ("STDERR" <> plabel) stderr
+guaranteeTrailingNewline :: ByteString -> ByteString
+guaranteeTrailingNewline bs
+  | "\n" `BS8.isSuffixOf` bs = bs
+  | otherwise = bs <> "\n"
+
+-- Always ends with a newline
+str :: ByteString -> StdOutputs -> ByteString
+str strLabel (StdOutputs stdout stderr)
+  | BS8.null stdout && BS8.null stderr = mconcat ["(", strLabel, "): no outputs\n"]
+  | otherwise = mconcat
+  [ "(", strLabel, ")\n"
+  , showOutput "STDOUT" stdout
+  , showOutput "STDERR" stderr
+  ]
   where
-    plabel = "(" <> BS8.pack strLabel <> ")"
     showOutput name bs
-      | BS8.null bs = return ()
-      | otherwise =
-        BS8.putStrLn $ mconcat
-        [ name, ":\n"
-        , BS8.intercalate "\n" $ BS8.lines bs
-        ]
+      | BS8.null bs = ""
+      | otherwise = mconcat [name, ":\n", guaranteeTrailingNewline bs]
