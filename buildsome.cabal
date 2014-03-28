@@ -57,6 +57,7 @@ executable buildsome
                ,     Lib.Process
                ,     Lib.ShowBytes
                ,     Lib.Sigint
+               ,     Lib.Slave
                ,     Lib.Sock
                ,     Lib.StdOutputs
                ,     Lib.StringPattern

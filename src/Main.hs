@@ -2,7 +2,6 @@
 module Main (main) where
 
 import Control.Applicative ((<$>))
-import Control.Concurrent.Async
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
@@ -21,7 +20,6 @@ import Db (Db, IRef(..), Reason)
 import FileDescCache (getFileDesc, fileDescOfMStat)
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
-import Lib.Async (wrapAsync, verifyCancelled)
 import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories)
@@ -36,6 +34,7 @@ import Lib.PoolAlloc (PoolAlloc)
 import Lib.Printer (Printer)
 import Lib.ShowBytes (showBytes)
 import Lib.Sigint (installSigintHandler)
+import Lib.Slave (Slave)
 import Lib.StdOutputs (StdOutputs(..), printStdouts)
 import Lib.TimeIt (timeIt)
 import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
@@ -57,6 +56,7 @@ import qualified Lib.Makefile as Makefile
 import qualified Lib.PoolAlloc as PoolAlloc
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
+import qualified Lib.Slave as Slave
 import qualified Lib.Timeout as Timeout
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
@@ -65,15 +65,6 @@ data Explicitness = Explicit | Implicit
   deriving (Eq)
 
 type Parents = [(TargetRep, Reason)]
-
-data Slave = Slave
-  { slaveExecution :: Async ()
-  , slavePrinterId :: Printer.Id
-  , slaveOutputPaths :: [FilePath]
-  }
-
-slaveStr :: Slave -> String
-slaveStr slave = Printer.idStr (slavePrinterId slave) ++ ": " ++ show (slaveOutputPaths slave)
 
 type ParId = Int
 type ParCell = IORef ParId
@@ -92,13 +83,6 @@ data Buildsome = Buildsome
   , bsParallelismPool :: PoolAlloc ParId
   , bsFreshPrinterIds :: Fresh Printer.Id
   }
-
-slaveWait :: Printer -> Slave -> IO ()
-slaveWait _printer slave =
-  -- Keep this around so we can enable logging about slave waits
-  -- easily:
-  -- Printer.printWrap _printer ("Waiting for " ++ slaveStr slave) $
-  wait $ slaveExecution slave
 
 -- | Release the currently held item, run given action, then regain
 -- new item instead
@@ -145,8 +129,8 @@ cancelAllSlaves bs = go 0
   where
     timeoutVerifyCancelled slave =
       Timeout.warning (Timeout.seconds 2)
-      (unwords ["Slave", slaveStr slave, "did not cancel in 2 seconds!"]) $
-      verifyCancelled $ slaveExecution slave
+      (unwords ["Slave", Slave.str slave, "did not cancel in 2 seconds!"]) $
+      Slave.cancel slave
     go alreadyCancelled = do
       curSlaveMap <- readIORef $ bsSlaveByRepPath bs
       slaves <-
@@ -221,7 +205,7 @@ mkSlavesForPaths bte explicitness = fmap concat . mapM (makeSlaves bte explicitn
 
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO ()
 want printer buildsome reason paths =
-  mapM_ (slaveWait printer) =<<
+  mapM_ (Slave.wait printer) =<<
   mkSlavesForPaths BuildTargetEnv
     { bteBuildsome = buildsome
     , btePrinter = printer
@@ -261,11 +245,8 @@ makeDirectSlave bte@BuildTargetEnv{..} explicitness path =
   where
     verifyFileGetsCreated slave
       | path `elem` makefilePhonies (bsMakefile bteBuildsome) = return slave
-      | otherwise = do
-      wrappedExecution <-
-        wrapAsync (slaveExecution slave) $ \() ->
-        assertExists path $ TargetNotCreated path
-      return slave { slaveExecution = wrappedExecution }
+      | otherwise =
+        Slave.wrap (>>= \() -> assertExists path $ TargetNotCreated path) slave
 
 makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
 makeChildSlaves bte@BuildTargetEnv{..} path
@@ -365,7 +346,7 @@ waitForSlaves :: Printer -> ParCell -> Buildsome -> [Slave] -> IO ()
 waitForSlaves _ _ _ [] = return ()
 waitForSlaves printer parCell buildsome slaves =
   withReleasedParallelism parCell buildsome $
-  mapM_ (slaveWait printer) slaves
+  mapM_ (Slave.wait printer) slaves
 
 tryApplyExecutionLog ::
   BuildTargetEnv -> ParCell -> Target -> Db.ExecutionLog ->
@@ -475,15 +456,14 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
       newParents = (targetRep, bteReason) : bteParents
       panicHandler e@E.SomeException {} = panic $ "FAILED during making of slave: " ++ show e
       mkSlave mvar action = do
-        (printerId, execution) <-
+        slave <-
           E.handle panicHandler $ do
             getParId <- PoolAlloc.startAlloc pool
             depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
             depPrinter <- Printer.newFrom btePrinter depPrinterId
-            execution <- async $ annotate $ action depPrinter getParId
-            return (depPrinterId, execution)
-        let slave = Slave execution printerId (targetOutputs target)
-        putMVar mvar slave >> return slave
+            Slave.new depPrinterId (targetOutputs target) $ annotate $ action depPrinter getParId
+        putMVar mvar slave
+        return slave
 
 data UnregisteredOutputFileExists = UnregisteredOutputFileExists FilePath deriving (Typeable)
 instance E.Exception UnregisteredOutputFileExists
