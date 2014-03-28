@@ -1,4 +1,4 @@
-* Warnings about makefile (over-specified outputs, etc) to carry makefile position information
+* Warnings about unused inputs too?
 
 * Dump include stack when reporting errors
 
