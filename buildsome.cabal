@@ -39,6 +39,7 @@ executable buildsome
                ,     Lib.ByteString
                ,     Lib.Directory
                ,     Lib.Exception
+               ,     Lib.Fresh
                ,     Lib.FSHook
                ,     Lib.FSHook.Protocol
                ,     Lib.Fifo

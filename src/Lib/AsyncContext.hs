@@ -5,27 +5,28 @@ module Lib.AsyncContext
 
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
-import Data.IORef
 import Data.IntMap (IntMap)
+import Lib.Fresh (Fresh)
 import qualified Control.Exception as E
 import qualified Data.IntMap as IntMap
+import qualified Lib.Fresh as Fresh
 
 data AsyncContext = AsyncContext
-  { _ctxNextName :: IORef Int
+  { _ctxFreshNames :: Fresh Int
   , _ctxCancelActions :: MVar (IntMap (IO ()))
   }
 
 new :: (AsyncContext -> IO a) -> IO a
 new body = do
-  nextNameRef <- newIORef 0
+  freshNames <- Fresh.new 0
   cancelActionsVar <- newMVar IntMap.empty
-  body (AsyncContext nextNameRef cancelActionsVar) `E.finally` do
+  body (AsyncContext freshNames cancelActionsVar) `E.finally` do
     cancelActions <- readMVar cancelActionsVar
     sequence_ $ IntMap.elems cancelActions
 
 spawn :: AsyncContext -> IO a -> IO (Async a)
-spawn (AsyncContext nextNameRef cancelActionsVar) act = do
-  name <- atomicModifyIORef' nextNameRef $ \name -> (name+1, name)
+spawn (AsyncContext freshNames cancelActionsVar) act = do
+  name <- Fresh.next freshNames
   modifyMVarMasked cancelActionsVar $ \cancelActions -> do
     actAsync <-
       async $

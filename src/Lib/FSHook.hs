@@ -21,6 +21,7 @@ import Lib.AccessType (AccessType(..))
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.FilePath (FilePath, takeDirectory, (</>))
+import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
@@ -31,6 +32,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Lib.AsyncContext as AsyncContext
 import qualified Lib.FSHook.Protocol as Protocol
+import qualified Lib.Fresh as Fresh
 import qualified Lib.Process as Process
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
@@ -52,7 +54,7 @@ data Handlers = Handlers
 data RunningJob = RunningJob
   { jobLabel :: ByteString
   , jobActiveConnections :: IORef (Map Int (ThreadId, MVar ()))
-  , jobNextConnId :: IORef Int
+  , jobFreshConnIds :: Fresh Int
   , jobThreadId :: ThreadId
   , jobHandlers :: Handlers
   , jobRootFilter :: FilePath
@@ -60,14 +62,10 @@ data RunningJob = RunningJob
 
 data FSHook = FSHook
   { fsHookRunningJobs :: IORef (Map JobId RunningJob)
-  , fsHookCurJobId :: IORef Int
+  , fsHookFreshJobIds :: Fresh Int
   , fsHookLdPreloadPath :: FilePath
   , fsHookServerAddress :: FilePath
   }
-
-nextJobId :: FSHook -> IO Int
-nextJobId fsHook =
-  atomicModifyIORef (fsHookCurJobId fsHook) $ \oldJobId -> (oldJobId+1, oldJobId)
 
 data ProtocolError = ProtocolError String deriving (Show, Typeable)
 instance E.Exception ProtocolError
@@ -95,14 +93,14 @@ with :: (FSHook -> IO a) -> IO a
 with body = do
   ldPreloadPath <- getLdPreloadPath
   pid <- Posix.getProcessID
-  curJobId <- newIORef 0
+  freshJobIds <- Fresh.new 0
   let serverFilename = "/tmp/fshook-" <> BS8.pack (show pid)
   withUnixSeqPacketListener serverFilename $ \listener -> do
     runningJobsRef <- newIORef M.empty
     let
       fsHook = FSHook
         { fsHookRunningJobs = runningJobsRef
-        , fsHookCurJobId = curJobId
+        , fsHookFreshJobIds = freshJobIds
         , fsHookLdPreloadPath = ldPreloadPath
         , fsHookServerAddress = serverFilename
         }
@@ -172,7 +170,7 @@ handleJobConnection :: String -> Socket -> RunningJob -> IO ()
 handleJobConnection tidStr conn job = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
-  connId <- atomicModifyIORef' (jobNextConnId job) $ \i -> (i+1, i+1)
+  connId <- Fresh.next $ jobFreshConnIds job
   tid <- myThreadId
 
   connFinishedMVar <- newEmptyMVar
@@ -194,15 +192,15 @@ mkEnvVars fsHook rootFilter jobId =
 runCommand :: FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString -> Handlers -> IO r
 runCommand fsHook rootFilter cmd label handlers = do
   activeConnections <- newIORef M.empty
-  nextConnIdRef <- newIORef 0
-  jobIdNum <- nextJobId fsHook
+  freshConnIds <- Fresh.new 0
+  jobIdNum <- Fresh.next $ fsHookFreshJobIds fsHook
   tid <- myThreadId
 
   let jobId = BS8.pack ("cmd" ++ show jobIdNum)
       job = RunningJob
             { jobLabel = label
             , jobActiveConnections = activeConnections
-            , jobNextConnId = nextConnIdRef
+            , jobFreshConnIds = freshConnIds
             , jobThreadId = tid
             , jobRootFilter = rootFilter
             , jobHandlers = handlers

@@ -29,6 +29,7 @@ import Lib.Exception (finally)
 import Lib.FSHook (FSHook, Handlers(..))
 import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
+import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.PoolAlloc (PoolAlloc)
@@ -51,6 +52,7 @@ import qualified Lib.BuildId as BuildId
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.FSHook as FSHook
 import qualified Lib.FilePath as FilePath
+import qualified Lib.Fresh as Fresh
 import qualified Lib.Makefile as Makefile
 import qualified Lib.PoolAlloc as PoolAlloc
 import qualified Lib.Printer as Printer
@@ -86,12 +88,9 @@ data Buildsome = Buildsome
   , bsMakefile :: Makefile
   , bsRootPath :: FilePath
   , bsFsHook :: FSHook
-  , bsNextPrinterId :: IORef Printer.Id
+  , bsFreshPrinterIds :: Fresh Printer.Id
   , bsBuildId :: BuildId
   }
-
-nextPrinterId :: Buildsome -> IO Printer.Id
-nextPrinterId buildsome = atomicModifyIORef (bsNextPrinterId buildsome) $ \oldId -> (oldId+1, oldId+1)
 
 slaveWait :: Printer -> Slave -> IO ()
 slaveWait _printer slave =
@@ -173,7 +172,7 @@ withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO
 withBuildsome makefilePath fsHook db makefile opt body = do
   slaveMapByRepPath <- newIORef M.empty
   pool <- PoolAlloc.new [1..parallelism]
-  printerIdRef <- newIORef 0
+  freshPrinterIds <- Fresh.new 1
   buildId <- BuildId.new
   let
     buildsome =
@@ -187,7 +186,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       , bsMakefile = makefile
       , bsRootPath = FilePath.takeDirectory makefilePath
       , bsFsHook = fsHook
-      , bsNextPrinterId = printerIdRef
+      , bsFreshPrinterIds = freshPrinterIds
       , bsBuildId = buildId
       }
   body buildsome
@@ -502,7 +501,7 @@ getSlaveForTarget parentPrinter buildsome reason parents (targetRep, target)
         (printerId, execution) <-
           E.handle panicHandler $ do
             getParId <- PoolAlloc.startAlloc pool
-            printerId <- nextPrinterId buildsome
+            printerId <- Fresh.next $ bsFreshPrinterIds buildsome
             printer <- Printer.newFrom parentPrinter printerId
             execution <- async $ annotate $ action printer getParId
             return (printerId, execution)
