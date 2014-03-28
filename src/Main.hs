@@ -21,7 +21,7 @@ import Db (Db, IRef(..), Reason)
 import FileDescCache (getFileDesc, fileDescOfMStat)
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
-import Lib.Async (wrapAsync)
+import Lib.Async (wrapAsync, verifyCancelled)
 import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories)
@@ -139,11 +139,6 @@ inputIgnored = specialFile
 
 outputIgnored :: FilePath -> Bool
 outputIgnored = specialFile
-
-verifyCancelled :: Async a -> IO (Either E.SomeException a)
-verifyCancelled a = do
-  cancel a
-  waitCatch a
 
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = go 0
