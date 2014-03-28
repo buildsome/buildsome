@@ -24,9 +24,9 @@ guaranteeTrailingNewline bs
 -- Always ends with a newline
 str :: ByteString -> StdOutputs -> ByteString
 str strLabel (StdOutputs stdout stderr)
-  | BS8.null stdout && BS8.null stderr = mconcat ["(", strLabel, "): no outputs\n"]
+  | BS8.null stdout && BS8.null stderr = ""
   | otherwise = mconcat
-  [ "(", strLabel, ")\n"
+  [ strLabel, "\n"
   , showOutput "STDOUT" stdout
   , showOutput "STDERR" stderr
   ]
