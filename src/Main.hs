@@ -705,6 +705,13 @@ switchDirectory makefilePath = do
   where
     (cwd, file) = FilePath.splitFileName makefilePath
 
+parseMakefile :: FilePath -> FilePath -> IO Makefile
+parseMakefile makefilePath path = do
+  (parseTime, makefile) <- timeIt $ Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative =<< Makefile.parse path
+  putStrLn $ concat
+    ["Parsed makefile: ", show makefilePath, " (took ", show parseTime, "sec)"]
+  return makefile
+
 main :: IO ()
 main = do
   installSigintHandler
@@ -713,12 +720,7 @@ main = do
     opt <- getOpt
     makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
     (origCwd, file) <- switchDirectory makefilePath
-    (parseTime, makefile) <-
-      timeIt $ do
-        origMakefile <- Makefile.parse file
-        Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative origMakefile
-    putStrLn $ concat
-      ["Parsed makefile: ", show makefilePath, " (took ", show parseTime, "sec)"]
+    makefile <- parseMakefile makefilePath file
     printer <- Printer.new 0
     Db.with (buildDbFilename file) $ \db ->
       withBuildsome file fsHook db makefile opt $
