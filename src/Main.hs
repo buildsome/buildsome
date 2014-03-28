@@ -584,26 +584,29 @@ deleteRemovedOutputs buildsome = do
     putStrLn $ "Removing old output: " ++ show path
     removeFileOrDirectoryOrNothing path
 
-data CommandFailed = CommandFailed ByteString ExitCode deriving (Typeable)
-instance E.Exception CommandFailed
-instance Show CommandFailed where
-  show (CommandFailed cmd exitCode)
-    | '\n' `BS8.elem` cmd = "\"\"\"" <> BS8.unpack cmd <> "\"\"\"" <> suffix
-    | otherwise = show cmd <> suffix
+data TargetCommandFailed = TargetCommandFailed Target ExitCode StdOutputs deriving (Typeable)
+instance E.Exception TargetCommandFailed
+instance Show TargetCommandFailed where
+  show (TargetCommandFailed target exitCode stdOutputs) =
+    BS8.unpack $
+    StdOutputs.str (mconcat [showCmd, " failed: ", BS8.pack (show exitCode)]) stdOutputs
     where
-      suffix = " failed: " <> show exitCode
+      multilineDelimiter = "\"\"\""
+      showCmd
+        | '\n' `BS8.notElem` cmd = cmd
+        | otherwise = multilineDelimiter <> cmd <> multilineDelimiter
+      cmd = targetCmds target
 
 shellCmdVerify :: Target -> [String] -> Process.Env -> IO StdOutputs
 shellCmdVerify target inheritEnvs newEnvs = do
   (exitCode, stdout, stderr) <-
-    Process.getOutputs (ShellCommand (BS8.unpack cmd)) inheritEnvs newEnvs
+    Process.getOutputs (ShellCommand (BS8.unpack (targetCmds target))) inheritEnvs newEnvs
   let stdouts = StdOutputs stdout stderr
-  BS8.putStr $ StdOutputs.str (BS8.pack (show (targetOutputs target))) stdouts
   case exitCode of
-    ExitFailure {} -> E.throwIO $ CommandFailed cmd exitCode
-    _ -> return stdouts
-  where
-    cmd = targetCmds target
+    ExitFailure {} -> E.throwIO $ TargetCommandFailed target exitCode stdouts
+    _ -> return ()
+  BS8.putStr $ StdOutputs.str (BS8.pack (show (targetOutputs target))) stdouts
+  return stdouts
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
