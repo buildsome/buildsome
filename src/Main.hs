@@ -489,8 +489,8 @@ getSlaveForTarget parentPrinter buildsome reason parents (targetRep, target)
             parCell <- newIORef =<< getParId
             let release = PoolAlloc.release pool =<< readIORef parCell
             (`finally` release) $ restoreMask $ do
-              success <- findApplyExecutionLog printer parCell buildsome target reason parents
-              unless success $ buildTarget printer parCell buildsome target reason parents
+              success <- findApplyExecutionLog printer parCell buildsome target reason newParents
+              unless success $ buildTarget printer parCell buildsome target reason newParents
         )
     where
       pool = bsParallelismPool buildsome
