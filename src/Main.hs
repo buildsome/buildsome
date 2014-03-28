@@ -712,7 +712,9 @@ parseMakefile origMakefilePath finalMakefilePath = do
     ["Parsed makefile: ", show origMakefilePath, " (took ", show parseTime, "sec)"]
   return makefile
 
-handleOpt :: Opt -> IO ([FilePath] -> IO [FilePath], Requested, FilePath, Makefile)
+type InOrigCwd = [FilePath] -> IO [FilePath]
+
+handleOpt :: Opt -> IO (InOrigCwd, Requested, FilePath, Makefile)
 handleOpt opt = do
   origMakefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
   (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
@@ -727,6 +729,26 @@ handleOpt opt = do
   makefile <- parseMakefile origMakefilePath finalMakefilePath
   return (inOrigCwd, requested, finalMakefilePath, makefile)
 
+handleRequested :: Buildsome -> Printer -> InOrigCwd -> Requested -> IO ()
+handleRequested buildsome printer inOrigCwd (RequestedTargets requestedTargets reason) = do
+  requestedTargetPaths <- inOrigCwd requestedTargets
+  Printer.putStrLn printer $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
+  (buildTime, ()) <- timeIt $ want printer buildsome reason requestedTargetPaths
+  Printer.putStrLn printer $ "Build Successful: " ++ show buildTime ++ " seconds total."
+
+handleRequested buildsome printer _ RequestedClean = do
+  outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
+  leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
+  Clean.Result _totalSize totalSpace count <-
+    mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
+  writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
+  writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
+  Printer.putStrLn printer $ concat
+    [ "Clean Successful: Cleaned "
+    , show count, " files freeing an estimated "
+    , showBytes (fromIntegral totalSpace)
+    ]
+
 main :: IO ()
 main = do
   opt <- getOpt
@@ -739,22 +761,4 @@ main = do
     Db.with (buildDbFilename finalMakefilePath) $ \db ->
     withBuildsome finalMakefilePath fsHook db makefile opt $ \buildsome -> do
       deleteRemovedOutputs buildsome
-
-      case requested of
-        RequestedTargets requestedTargets reason -> do
-          requestedTargetPaths <- inOrigCwd requestedTargets
-          Printer.putStrLn printer $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
-          (buildTime, ()) <- timeIt $ want printer buildsome reason requestedTargetPaths
-          Printer.putStrLn printer $ "Build Successful: " ++ show buildTime ++ " seconds total."
-        RequestedClean -> do
-          outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
-          leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
-          Clean.Result _totalSize totalSpace count <-
-            mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
-          writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
-          writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
-          Printer.putStrLn printer $ concat
-            [ "Clean Successful: Cleaned "
-            , show count, " files freeing an estimated "
-            , showBytes (fromIntegral totalSpace)
-            ]
+      handleRequested buildsome printer inOrigCwd requested
