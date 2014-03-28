@@ -58,6 +58,7 @@ import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Slave as Slave
 import qualified Lib.Timeout as Timeout
+import qualified MagicFiles
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
 
@@ -81,9 +82,6 @@ data Buildsome = Buildsome
   , bsFreshPrinterIds :: Fresh Printer.Id
   }
 
-allowedUnspecifiedOutput :: FilePath -> Bool
-allowedUnspecifiedOutput = (".pyc" `BS8.isSuffixOf`)
-
 recordInput ::
   IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
   AccessType -> Reason -> FilePath -> IO ()
@@ -97,15 +95,6 @@ recordInput inputsRef accessType reason path = do
     merge _ (oldAccessType, oldReason, oldMStat) =
      -- Keep the highest access type, and the oldest reason/mstat
      (max accessType oldAccessType, oldReason, oldMStat)
-
-specialFile :: FilePath -> Bool
-specialFile path = any (`BS8.isPrefixOf` path) ["/dev", "/proc", "/sys"]
-
-inputIgnored :: FilePath -> Bool
-inputIgnored = specialFile
-
-outputIgnored :: FilePath -> Bool
-outputIgnored = specialFile
 
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = go 0
@@ -280,7 +269,7 @@ instance Show IllegalUnspecifiedOutputs where
 verifyTargetOutputs :: Printer -> Buildsome -> Set FilePath -> Target -> IO ()
 verifyTargetOutputs printer buildsome outputs target = do
 
-  let (unspecifiedOutputs, illegalOutputs) = partition allowedUnspecifiedOutput allUnspecified
+  let (unspecifiedOutputs, illegalOutputs) = partition MagicFiles.allowedUnspecifiedOutput allUnspecified
 
   -- Legal unspecified need to be kept/deleted according to policy:
   handleLegalUnspecifiedOutputs printer buildsome target =<<
@@ -491,13 +480,13 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       addPauseTime time
       return res
     handleInputCommon accessType actDesc path useInput
-      | inputIgnored path = return ()
+      | MagicFiles.inputIgnored path = return ()
       | otherwise = do
         actualOutputs <- readIORef outputsRef
         -- There's no problem for a target to read its own outputs freely:
         unless (path `S.member` actualOutputs) $ do
           () <- useInput
-          unless (path `elem` targetOutputs target || allowedUnspecifiedOutput path) $
+          unless (path `elem` targetOutputs target || MagicFiles.allowedUnspecifiedOutput path) $
             recordInput inputsRef accessType actDesc path
     handleInput accessType actDesc path =
       handleInputCommon accessType actDesc path $ return ()
@@ -506,7 +495,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
         measurePauseTime . waitForSlaves btePrinter parCell bteBuildsome =<<
         makeSlavesForAccessType accessType bte { bteReason = actDesc } Implicit path
     handleOutput _actDesc path
-      | outputIgnored path = return ()
+      | MagicFiles.outputIgnored path = return ()
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
   unless (BS8.null cmd) $ Printer.bsPutStrLn btePrinter cmd
   (time, stdOutputs) <-

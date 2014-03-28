@@ -64,6 +64,7 @@ executable buildsome
                ,     Lib.StringPattern
                ,     Lib.TimeIt
                ,     Lib.Timeout
+               ,     MagicFiles
                ,     Opts
                ,     Paths_buildsome
 
