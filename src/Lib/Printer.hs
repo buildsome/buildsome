@@ -68,7 +68,8 @@ printWrapWith ::
 printWrapWith putLn printer str body = do
   putLn printer before
   res <-
-    wrappedBody `onException` \e -> putLn printer $ after $ "EXCEPTION: " <> fromString (show e)
+    wrappedBody `onException` \e ->
+    putLn printer $ after $ "EXCEPTION: " <> fromString ((concat . take 1 . lines . show) e)
   putLn printer $ after "OK"
   return res
   where
