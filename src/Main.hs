@@ -80,8 +80,7 @@ type ParCell = IORef ParId
 
 data Buildsome = Buildsome
   { bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
-  , bsDeleteUnspecifiedOutput :: DeleteUnspecifiedOutputs
-  , bsOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
+  , bsOpts :: Opt
   , bsBuildMaps :: BuildMaps
   , bsParallelismPool :: PoolAlloc ParId
   , bsDb :: Db
@@ -169,7 +168,7 @@ cancelAllSlaves bs = go 0
           go count
 
 withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
-withBuildsome makefilePath fsHook db makefile opt body = do
+withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
   slaveMapByRepPath <- newIORef M.empty
   pool <- PoolAlloc.new [1..parallelism]
   freshPrinterIds <- Fresh.new 1
@@ -179,8 +178,7 @@ withBuildsome makefilePath fsHook db makefile opt body = do
       Buildsome
       { bsSlaveByRepPath = slaveMapByRepPath
       , bsBuildMaps = BuildMaps.make makefile
-      , bsDeleteUnspecifiedOutput = deleteUnspecifiedOutput
-      , bsOverwriteUnregisteredOutputs = overwriteUnregisteredOutputs
+      , bsOpts = opt
       , bsParallelismPool = pool
       , bsDb = db
       , bsMakefile = makefile
@@ -198,12 +196,9 @@ withBuildsome makefilePath fsHook db makefile opt body = do
     `finally` maybeUpdateGitIgnore buildsome
   where
     maybeUpdateGitIgnore buildsome
-      | writeGitIgnore = updateGitIgnore buildsome makefilePath
+      | optGitIgnore = updateGitIgnore buildsome makefilePath
       | otherwise = return ()
-    parallelism = fromMaybe 1 mParallelism
-    Opt _targets _mMakefile mParallelism
-        writeGitIgnore deleteUnspecifiedOutput
-        overwriteUnregisteredOutputs = opt
+    parallelism = fromMaybe 1 optParallelism
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
@@ -310,7 +305,7 @@ handleLegalUnspecifiedOutputs printer buildsome target paths = do
   action
   where
     (actionDesc, action) =
-      case bsDeleteUnspecifiedOutput buildsome of
+      case optDeleteUnspecifiedOutputs (bsOpts buildsome) of
       DeleteUnspecifiedOutputs -> ("deleting", mapM_ removeFileOrDirectoryOrNothing paths)
       DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs buildsome (S.fromList paths))
 
@@ -503,7 +498,7 @@ instance Show UnregisteredOutputFileExists where
 
 removeOldUnregisteredOutput :: Printer -> Buildsome -> FilePath -> IO ()
 removeOldUnregisteredOutput printer buildsome path =
-  case bsOverwriteUnregisteredOutputs buildsome of
+  case optOverwriteUnregisteredOutputs (bsOpts buildsome) of
   DontOverwriteUnregisteredOutputs -> E.throwIO $ UnregisteredOutputFileExists path
   OverwriteUnregisteredOutputs -> do
     Printer.putStrLn printer $ "Overwriting " ++ show path ++ " (due to --overwrite)"
