@@ -706,36 +706,40 @@ switchDirectory makefilePath = do
     (cwd, file) = FilePath.splitFileName makefilePath
 
 parseMakefile :: FilePath -> FilePath -> IO Makefile
-parseMakefile makefilePath path = do
-  (parseTime, makefile) <- timeIt $ Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative =<< Makefile.parse path
+parseMakefile origMakefilePath finalMakefilePath = do
+  (parseTime, makefile) <- timeIt $ Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative =<< Makefile.parse finalMakefilePath
   putStrLn $ concat
-    ["Parsed makefile: ", show makefilePath, " (took ", show parseTime, "sec)"]
+    ["Parsed makefile: ", show origMakefilePath, " (took ", show parseTime, "sec)"]
   return makefile
+
+handleOpt :: Opt -> IO ([FilePath] -> IO [FilePath], Requested, FilePath, Makefile)
+handleOpt opt = do
+  origMakefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
+  (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
+  let inOrigCwd =
+        case optMakefilePath opt of
+        -- If we found the makefile by scanning upwards, prepend
+        -- original cwd to avoid losing it:
+        Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
+        -- Otherwise: there's no useful original cwd:
+        Just _ -> return
+  requested <- getRequestedTargets $ optRequestedTargets opt
+  makefile <- parseMakefile origMakefilePath finalMakefilePath
+  return (inOrigCwd, requested, finalMakefilePath, makefile)
 
 main :: IO ()
 main = do
   opt <- getOpt
-  makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
-  (origCwd, file) <- switchDirectory makefilePath
-  makefile <- parseMakefile makefilePath file
+  (inOrigCwd, requested, finalMakefilePath, makefile) <- handleOpt opt
 
   installSigintHandler
   setBuffering
   printer <- Printer.new 0
   FSHook.with $ \fsHook ->
-    Db.with (buildDbFilename file) $ \db ->
-    withBuildsome file fsHook db makefile opt $ \buildsome -> do
+    Db.with (buildDbFilename finalMakefilePath) $ \db ->
+    withBuildsome finalMakefilePath fsHook db makefile opt $ \buildsome -> do
       deleteRemovedOutputs buildsome
-      let
-        inOrigCwd =
-          case optMakefilePath opt of
-          -- If we found the makefile by scanning upwards, prepend
-          -- original cwd to avoid losing it:
-          Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
-          -- Otherwise: there's no useful original cwd:
-          Just _ -> return
 
-      requested <- getRequestedTargets $ optRequestedTargets opt
       case requested of
         RequestedTargets requestedTargets reason -> do
           requestedTargetPaths <- inOrigCwd requestedTargets
