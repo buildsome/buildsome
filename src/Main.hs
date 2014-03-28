@@ -714,43 +714,43 @@ parseMakefile makefilePath path = do
 
 main :: IO ()
 main = do
+  opt <- getOpt
+  makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
+  (origCwd, file) <- switchDirectory makefilePath
+  makefile <- parseMakefile makefilePath file
+
   installSigintHandler
   setBuffering
-  FSHook.with $ \fsHook -> do
-    opt <- getOpt
-    makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
-    (origCwd, file) <- switchDirectory makefilePath
-    makefile <- parseMakefile makefilePath file
-    printer <- Printer.new 0
+  printer <- Printer.new 0
+  FSHook.with $ \fsHook ->
     Db.with (buildDbFilename file) $ \db ->
-      withBuildsome file fsHook db makefile opt $
-        \buildsome -> do
-        deleteRemovedOutputs buildsome
-        let
-          inOrigCwd =
-            case optMakefilePath opt of
-            -- If we found the makefile by scanning upwards, prepend
-            -- original cwd to avoid losing it:
-            Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
-            -- Otherwise: there's no useful original cwd:
-            Just _ -> return
+    withBuildsome file fsHook db makefile opt $ \buildsome -> do
+      deleteRemovedOutputs buildsome
+      let
+        inOrigCwd =
+          case optMakefilePath opt of
+          -- If we found the makefile by scanning upwards, prepend
+          -- original cwd to avoid losing it:
+          Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
+          -- Otherwise: there's no useful original cwd:
+          Just _ -> return
 
-        requested <- getRequestedTargets $ optRequestedTargets opt
-        case requested of
-          RequestedTargets requestedTargets reason -> do
-            requestedTargetPaths <- inOrigCwd requestedTargets
-            Printer.putStrLn printer $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
-            (buildTime, ()) <- timeIt $ want printer buildsome reason requestedTargetPaths
-            Printer.putStrLn printer $ "Build Successful: " ++ show buildTime ++ " seconds total."
-          RequestedClean -> do
-            outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
-            leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
-            Clean.Result _totalSize totalSpace count <-
-              mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
-            writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
-            writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
-            Printer.putStrLn printer $ concat
-              [ "Clean Successful: Cleaned "
-              , show count, " files freeing an estimated "
-              , showBytes (fromIntegral totalSpace)
-              ]
+      requested <- getRequestedTargets $ optRequestedTargets opt
+      case requested of
+        RequestedTargets requestedTargets reason -> do
+          requestedTargetPaths <- inOrigCwd requestedTargets
+          Printer.putStrLn printer $ "Building: " ++ intercalate ", " (map show requestedTargetPaths)
+          (buildTime, ()) <- timeIt $ want printer buildsome reason requestedTargetPaths
+          Printer.putStrLn printer $ "Build Successful: " ++ show buildTime ++ " seconds total."
+        RequestedClean -> do
+          outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
+          leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
+          Clean.Result _totalSize totalSpace count <-
+            mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
+          writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
+          writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
+          Printer.putStrLn printer $ concat
+            [ "Clean Successful: Cleaned "
+            , show count, " files freeing an estimated "
+            , showBytes (fromIntegral totalSpace)
+            ]
