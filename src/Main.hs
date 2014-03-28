@@ -30,7 +30,7 @@ import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
-import Lib.PoolAlloc (PoolAlloc)
+import Lib.Parallelism (Parallelism)
 import Lib.Printer (Printer)
 import Lib.ShowBytes (showBytes)
 import Lib.Sigint (installSigintHandler)
@@ -53,7 +53,7 @@ import qualified Lib.FSHook as FSHook
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Fresh as Fresh
 import qualified Lib.Makefile as Makefile
-import qualified Lib.PoolAlloc as PoolAlloc
+import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Slave as Slave
@@ -66,9 +66,6 @@ data Explicitness = Explicit | Implicit
 
 type Parents = [(TargetRep, Reason)]
 
-type ParId = Int
-type ParCell = IORef ParId
-
 data Buildsome = Buildsome
   { -- static:
     bsOpts :: Opt
@@ -80,23 +77,9 @@ data Buildsome = Buildsome
   , bsDb :: Db
   , bsFsHook :: FSHook
   , bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
-  , bsParallelismPool :: PoolAlloc ParId
+  , bsParallelism :: Parallelism
   , bsFreshPrinterIds :: Fresh Printer.Id
   }
-
--- | Release the currently held item, run given action, then regain
--- new item instead
-localReleasePool :: PoolAlloc a -> IORef a -> IO b -> IO b
-localReleasePool pool ref = E.bracket_ release alloc
-  where
-    markError = writeIORef ref $ error "Attempt to read released resource"
-    release = do
-      PoolAlloc.release pool =<< readIORef ref
-      markError
-    alloc = writeIORef ref =<< PoolAlloc.alloc pool
-
-withReleasedParallelism :: ParCell -> Buildsome -> IO a -> IO a
-withReleasedParallelism parCell bs = localReleasePool (bsParallelismPool bs) parCell
 
 allowedUnspecifiedOutput :: FilePath -> Bool
 allowedUnspecifiedOutput = (".pyc" `BS8.isSuffixOf`)
@@ -151,7 +134,7 @@ cancelAllSlaves bs = go 0
 withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
   slaveMapByRepPath <- newIORef M.empty
-  pool <- PoolAlloc.new [1..parallelism]
+  pool <- Parallelism.new $ fromMaybe 1 optParallelism
   freshPrinterIds <- Fresh.new 1
   buildId <- BuildId.new
   let
@@ -160,7 +143,7 @@ withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
       { bsSlaveByRepPath = slaveMapByRepPath
       , bsBuildMaps = BuildMaps.make makefile
       , bsOpts = opt
-      , bsParallelismPool = pool
+      , bsParallelism = pool
       , bsDb = db
       , bsMakefile = makefile
       , bsRootPath = FilePath.takeDirectory makefilePath
@@ -179,7 +162,6 @@ withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
     maybeUpdateGitIgnore buildsome
       | optGitIgnore = updateGitIgnore buildsome makefilePath
       | otherwise = return ()
-    parallelism = fromMaybe 1 optParallelism
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
@@ -342,14 +324,14 @@ applyExecutionLog bte@BuildTargetEnv{..} target outputs stdOutputs selfTime =
     verifyTargetOutputs btePrinter bteBuildsome outputs target
     Printer.putStrLn btePrinter $ "Build (originally) took " ++ show selfTime ++ " seconds"
 
-waitForSlaves :: Printer -> ParCell -> Buildsome -> [Slave] -> IO ()
+waitForSlaves :: Printer -> Parallelism.Cell -> Buildsome -> [Slave] -> IO ()
 waitForSlaves _ _ _ [] = return ()
 waitForSlaves printer parCell buildsome slaves =
-  withReleasedParallelism parCell buildsome $
+  Parallelism.withReleased parCell (bsParallelism buildsome) $
   mapM_ (Slave.wait printer) slaves
 
 tryApplyExecutionLog ::
-  BuildTargetEnv -> ParCell -> Target -> Db.ExecutionLog ->
+  BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog ->
   IO (Either (String, FilePath) ())
 tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
   waitForInputs
@@ -395,7 +377,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} 
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: BuildTargetEnv -> ParCell -> Target -> IO Bool
+findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO Bool
 findApplyExecutionLog bte@BuildTargetEnv{..} parCell target = do
   mExecutionLog <- readIRef $ Db.executionLog target $ bsDb bteBuildsome
   case mExecutionLog of
@@ -442,23 +424,22 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
       Nothing ->
         ( M.insert targetRep newSlaveMVar oldSlaveMap
-        , mkSlave newSlaveMVar $ \printer getParId -> do
-            parCell <- newIORef =<< getParId
-            let release = PoolAlloc.release pool =<< readIORef parCell
-                newBte = bte { bteParents = newParents, btePrinter = printer }
-            (`finally` release) $ restoreMask $ do
-              success <- findApplyExecutionLog newBte parCell target
-              unless success $ buildTarget newBte parCell target
+        , mkSlave newSlaveMVar $ \printer getParId ->
+          E.bracket (Parallelism.newCell =<< getParId) (Parallelism.release par) $
+          \parCell -> restoreMask $ do
+            let newBte = bte { bteParents = newParents, btePrinter = printer }
+            success <- findApplyExecutionLog newBte parCell target
+            unless success $ buildTarget newBte parCell target
         )
     where
-      pool = bsParallelismPool bteBuildsome
+      par = bsParallelism bteBuildsome
       annotate = annotateException $ "build failure of " ++ show (targetOutputs target) ++ ":\n"
       newParents = (targetRep, bteReason) : bteParents
       panicHandler e@E.SomeException {} = panic $ "FAILED during making of slave: " ++ show e
       mkSlave mvar action = do
         slave <-
           E.handle panicHandler $ do
-            getParId <- PoolAlloc.startAlloc pool
+            getParId <- Parallelism.startAlloc $ bsParallelism bteBuildsome
             depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
             depPrinter <- Printer.newFrom btePrinter depPrinterId
             Slave.new depPrinterId (targetOutputs target) $ annotate $ action depPrinter getParId
@@ -497,7 +478,7 @@ data RunCmdResults = RunCmdResults
   , rcrOutputs :: Set FilePath
   }
 
-runCmd :: BuildTargetEnv -> ParCell -> Target -> IO RunCmdResults
+runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
   rootPath <- FilePath.canonicalizePath $ bsRootPath bteBuildsome
   pauseTime <- newIORef 0
@@ -567,7 +548,7 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
     inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
-buildTarget :: BuildTargetEnv -> ParCell -> Target -> IO ()
+buildTarget :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO ()
 buildTarget bte@BuildTargetEnv{..} parCell target =
   targetPrintWrap bte target "BUILDING" $ do
     -- TODO: Register each created subdirectory as an output?

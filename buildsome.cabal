@@ -51,6 +51,7 @@ executable buildsome
                ,     Lib.Makefile.InstantiatePattern
                ,     Lib.Makefile.Parser
                ,     Lib.Makefile.Types
+               ,     Lib.Parallelism
                ,     Lib.Parsec
                ,     Lib.PoolAlloc
                ,     Lib.Printer
