@@ -217,16 +217,25 @@ updateGitIgnore buildsome makefilePath = do
     map (("/" <>) . FilePath.makeRelative dir) $
     extraIgnored ++ S.toList (outputs <> leaked)
 
-mkSlavesForPaths :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO [Slave]
-mkSlavesForPaths printer buildsome explicitness reason parents paths =
-  concat <$> mapM (makeSlaves printer buildsome explicitness reason parents) paths
+data BuildTargetEnv = BuildTargetEnv
+  { bteBuildsome :: Buildsome
+  , btePrinter :: Printer
+  , bteReason :: Reason
+  , bteParents :: Parents
+  }
 
-need :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> [FilePath] -> IO ()
-need printer buildsome explicitness reason parents paths =
-  mapM_ (slaveWait printer) =<< mkSlavesForPaths printer buildsome explicitness reason parents paths
+mkSlavesForPaths :: BuildTargetEnv -> Explicitness -> [FilePath] -> IO [Slave]
+mkSlavesForPaths bte explicitness = fmap concat . mapM (makeSlaves bte explicitness)
 
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO ()
-want printer buildsome reason = need printer buildsome Explicit reason []
+want printer buildsome reason paths =
+  mapM_ (slaveWait printer) =<<
+  mkSlavesForPaths BuildTargetEnv
+    { bteBuildsome = buildsome
+    , btePrinter = printer
+    , bteReason = reason
+    , bteParents = []
+    } Explicit paths
 
 assertExists :: E.Exception e => FilePath -> e -> IO ()
 assertExists path err = do
@@ -246,51 +255,46 @@ instance Show TargetNotCreated where
     , " explicitly demanded but was not created by its target rule"
     ]
 
-makeDirectSlave :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO (Maybe Slave)
-makeDirectSlave printer buildsome explicitness reason parents path =
-  case BuildMaps.find (bsBuildMaps buildsome) path of
+makeDirectSlave :: BuildTargetEnv -> Explicitness -> FilePath -> IO (Maybe Slave)
+makeDirectSlave bte@BuildTargetEnv{..} explicitness path =
+  case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing -> do
-    when (explicitness == Explicit) $ assertExists path $ MissingRule path reason
+    when (explicitness == Explicit) $ assertExists path $ MissingRule path bteReason
     return Nothing
   Just tgt -> do
-    slave <- getSlaveForTarget printer buildsome reason parents tgt
+    slave <- getSlaveForTarget bte tgt
     Just <$> case explicitness of
       Implicit -> return slave
       Explicit -> verifyFileGetsCreated slave
   where
     verifyFileGetsCreated slave
-      | path `elem` makefilePhonies (bsMakefile buildsome) = return slave
+      | path `elem` makefilePhonies (bsMakefile bteBuildsome) = return slave
       | otherwise = do
       wrappedExecution <-
         wrapAsync (slaveExecution slave) $ \() ->
         assertExists path $ TargetNotCreated path
       return slave { slaveExecution = wrappedExecution }
 
-makeChildSlaves :: Printer -> Buildsome -> Reason -> Parents -> FilePath -> IO [Slave]
-makeChildSlaves printer buildsome reason parents path
+makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
+makeChildSlaves bte@BuildTargetEnv{..} path
   | not (null childPatterns) =
     fail "UNSUPPORTED: Read directory on directory with patterns"
   | otherwise =
-    traverse (getSlaveForTarget printer buildsome reason parents)
+    traverse (getSlaveForTarget bte)
     childTargets
   where
     DirectoryBuildMap childTargets childPatterns =
-      BuildMaps.findDirectory (bsBuildMaps buildsome) path
+      BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
 
 makeSlavesForAccessType ::
-  AccessType -> Printer -> Buildsome -> Explicitness -> Reason ->
-  Parents -> FilePath -> IO [Slave]
-makeSlavesForAccessType accessType printer buildsome explicitness reason parents path =
-  case accessType of
-  AccessTypeFull ->
-    makeSlaves printer buildsome explicitness reason parents path
-  AccessTypeModeOnly ->
-    maybeToList <$> makeDirectSlave printer buildsome explicitness reason parents path
+  AccessType -> BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
+makeSlavesForAccessType AccessTypeFull = makeSlaves
+makeSlavesForAccessType AccessTypeModeOnly = (fmap . fmap . fmap . fmap) maybeToList makeDirectSlave
 
-makeSlaves :: Printer -> Buildsome -> Explicitness -> Reason -> Parents -> FilePath -> IO [Slave]
-makeSlaves printer buildsome explicitness reason parents path = do
-  mSlave <- makeDirectSlave printer buildsome explicitness reason parents path
-  childs <- makeChildSlaves printer buildsome (reason <> "(Container directory)") parents path
+makeSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
+makeSlaves bte@BuildTargetEnv{..} explicitness path = do
+  mSlave <- makeDirectSlave bte explicitness path
+  childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
   return $ maybeToList mSlave ++ childs
 
 -- e.g: .pyc files
@@ -371,21 +375,21 @@ targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
 
-targetPrintWrap :: Printer -> Target -> ByteString -> Reason -> IO a -> IO a
-targetPrintWrap printer target str reason body =
-  Printer.printWrap printer
+targetPrintWrap :: BuildTargetEnv -> Target -> ByteString -> IO a -> IO a
+targetPrintWrap BuildTargetEnv{..} target str body =
+  Printer.printWrap btePrinter
     (show (targetOutputs target)) $ do
-    Printer.bsPutStrLn printer $ BS8.concat [str, " (", reason, ")"]
+    Printer.bsPutStrLn btePrinter $ BS8.concat [str, " (", bteReason, ")"]
     body
 
 -- Already verified that the execution log is a match
 applyExecutionLog ::
-  Printer -> Buildsome -> Target -> Reason -> Set FilePath -> StdOutputs -> DiffTime -> IO ()
-applyExecutionLog printer buildsome target reason outputs stdOutputs selfTime =
-  targetPrintWrap printer target "REPLAY" reason $ do
+  BuildTargetEnv -> Target -> Set FilePath -> StdOutputs -> DiffTime -> IO ()
+applyExecutionLog bte@BuildTargetEnv{..} target outputs stdOutputs selfTime =
+  targetPrintWrap bte target "REPLAY" $ do
     printStdouts (show (targetOutputs target)) stdOutputs
-    verifyTargetOutputs printer buildsome outputs target
-    Printer.putStrLn printer $ "Build (originally) took " ++ show selfTime ++ " seconds"
+    verifyTargetOutputs btePrinter bteBuildsome outputs target
+    Printer.putStrLn btePrinter $ "Build (originally) took " ++ show selfTime ++ " seconds"
 
 waitForSlaves :: Printer -> ParCell -> Buildsome -> [Slave] -> IO ()
 waitForSlaves _ _ _ [] = return ()
@@ -394,10 +398,9 @@ waitForSlaves printer parCell buildsome slaves =
   mapM_ (slaveWait printer) slaves
 
 tryApplyExecutionLog ::
-  Printer -> ParCell -> Buildsome ->
-  Target -> Reason -> Parents -> Db.ExecutionLog ->
+  BuildTargetEnv -> ParCell -> Target -> Db.ExecutionLog ->
   IO (Either (String, FilePath) ())
-tryApplyExecutionLog printer parCell buildsome target reason parents Db.ExecutionLog {..} = do
+tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
   waitForInputs
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, oldInputAccess) ->
@@ -410,10 +413,10 @@ tryApplyExecutionLog printer parCell buildsome target reason parents Db.Executio
     mapM_ (compareToNewDesc "output" (getFileDesc db)) $ M.toList elOutputsDescs
 
     liftIO $
-      applyExecutionLog printer buildsome target reason
-      (M.keysSet elOutputsDescs) elStdoutputs elSelfTime
+      applyExecutionLog bte target (M.keysSet elOutputsDescs)
+      elStdoutputs elSelfTime
   where
-    db = bsDb buildsome
+    db = bsDb bteBuildsome
     compareToNewDesc str getNewDesc (filePath, oldDesc) = do
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
@@ -428,27 +431,30 @@ tryApplyExecutionLog printer parCell buildsome target reason parents Db.Executio
         fmap concat $ forM (M.toList elInputsDescs) $ \(inputPath, (depReason, inputAccess)) ->
         if inputPath `S.member` hinted
         then return []
-        else makeSlavesForAccessType (inputAccessToType inputAccess) printer buildsome Implicit depReason parents inputPath
+        else
+          makeSlavesForAccessType (inputAccessToType inputAccess)
+          bte { bteReason = depReason } Implicit inputPath
 
       let hintReason = "Hint from " <> (BS8.pack . show . targetOutputs) target
-      hintedSlaves <- concat <$> mapM (makeSlaves printer buildsome Explicit hintReason parents) (targetAllInputs target)
+      hintedSlaves <-
+        mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
 
       let allSlaves = speculativeSlaves ++ hintedSlaves
-      waitForSlaves printer parCell buildsome allSlaves
+      waitForSlaves btePrinter parCell bteBuildsome allSlaves
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: Printer -> ParCell -> Buildsome -> Target -> Reason -> Parents -> IO Bool
-findApplyExecutionLog printer parCell buildsome target reason parents = do
-  mExecutionLog <- readIRef $ Db.executionLog target $ bsDb buildsome
+findApplyExecutionLog :: BuildTargetEnv -> ParCell -> Target -> IO Bool
+findApplyExecutionLog bte@BuildTargetEnv{..} parCell target = do
+  mExecutionLog <- readIRef $ Db.executionLog target $ bsDb bteBuildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return False
     Just executionLog -> do
-      res <- tryApplyExecutionLog printer parCell buildsome target reason parents executionLog
+      res <- tryApplyExecutionLog bte parCell target executionLog
       case res of
         Left (str, filePath) -> do
-          Printer.putStrLn printer $ concat
+          Printer.putStrLn btePrinter $ concat
             ["Execution log of ", show (targetOutputs target), " did not match because ", str, ": ", show filePath, " changed"]
           return False
         Right () -> return True
@@ -472,13 +478,13 @@ panic msg = do
   E.throwIO $ PanicError msg
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: Printer -> Buildsome -> Reason -> Parents -> (TargetRep, Target) -> IO Slave
-getSlaveForTarget parentPrinter buildsome reason parents (targetRep, target)
-  | any ((== targetRep) . fst) parents = E.throwIO $ TargetDependencyLoop newParents
+getSlaveForTarget :: BuildTargetEnv -> (TargetRep, Target) -> IO Slave
+getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
+  | any ((== targetRep) . fst) bteParents = E.throwIO $ TargetDependencyLoop newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
     E.mask $ \restoreMask -> join $
-      atomicModifyIORef (bsSlaveByRepPath buildsome) $
+      atomicModifyIORef (bsSlaveByRepPath bteBuildsome) $
       \oldSlaveMap ->
       -- TODO: Use a faster method to lookup&insert at the same time
       case M.lookup targetRep oldSlaveMap of
@@ -488,23 +494,24 @@ getSlaveForTarget parentPrinter buildsome reason parents (targetRep, target)
         , mkSlave newSlaveMVar $ \printer getParId -> do
             parCell <- newIORef =<< getParId
             let release = PoolAlloc.release pool =<< readIORef parCell
+                newBte = bte { bteParents = newParents, btePrinter = printer }
             (`finally` release) $ restoreMask $ do
-              success <- findApplyExecutionLog printer parCell buildsome target reason newParents
-              unless success $ buildTarget printer parCell buildsome target reason newParents
+              success <- findApplyExecutionLog newBte parCell target
+              unless success $ buildTarget newBte parCell target
         )
     where
-      pool = bsParallelismPool buildsome
+      pool = bsParallelismPool bteBuildsome
       annotate = annotateException $ "build failure of " ++ show (targetOutputs target) ++ ":\n"
-      newParents = (targetRep, reason) : parents
+      newParents = (targetRep, bteReason) : bteParents
       panicHandler e@E.SomeException {} = panic $ "FAILED during making of slave: " ++ show e
       mkSlave mvar action = do
         (printerId, execution) <-
           E.handle panicHandler $ do
             getParId <- PoolAlloc.startAlloc pool
-            printerId <- Fresh.next $ bsFreshPrinterIds buildsome
-            printer <- Printer.newFrom parentPrinter printerId
-            execution <- async $ annotate $ action printer getParId
-            return (printerId, execution)
+            depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
+            depPrinter <- Printer.newFrom btePrinter depPrinterId
+            execution <- async $ annotate $ action depPrinter getParId
+            return (depPrinterId, execution)
         let slave = Slave execution printerId (targetOutputs target)
         putMVar mvar slave >> return slave
 
@@ -533,37 +540,37 @@ removeOldOutput printer buildsome registeredOutputs path = do
       | path `S.member` registeredOutputs -> removeFileOrDirectory path
       | otherwise -> removeOldUnregisteredOutput printer buildsome path
 
-buildTarget :: Printer -> ParCell -> Buildsome -> Target -> Reason -> Parents -> IO ()
-buildTarget printer parCell buildsome target reason parents =
-  targetPrintWrap printer target "BUILDING" reason $ do
+buildTarget :: BuildTargetEnv -> ParCell -> Target -> IO ()
+buildTarget bte@BuildTargetEnv{..} parCell target =
+  targetPrintWrap bte target "BUILDING" $ do
     -- TODO: Register each created subdirectory as an output?
     mapM_ (createDirectories . FilePath.takeDirectory) $ targetOutputs target
 
-    registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
-    mapM_ (removeOldOutput printer buildsome registeredOutputs) $ targetOutputs target
+    registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
+    mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
 
     slaves <-
-      mkSlavesForPaths printer buildsome Explicit
-      ("Hint from " <> (BS8.pack . show . targetOutputs) target) parents
-      (targetAllInputs target)
-    waitForSlaves printer parCell buildsome slaves
+      mkSlavesForPaths bte
+        { bteReason = "Hint from " <> (BS8.pack . show . targetOutputs) target
+        } Explicit $ targetAllInputs target
+    waitForSlaves btePrinter parCell bteBuildsome slaves
     inputsRef <- newIORef M.empty
     outputsRef <- newIORef S.empty
 
     (selfTime, stdOutputs) <-
-      Printer.printWrap printer ("runCmd" ++ show (targetOutputs target))
-      (runCmd printer parCell buildsome target parents inputsRef outputsRef)
+      Printer.printWrap btePrinter ("runCmd" ++ show (targetOutputs target))
+      (runCmd bte parCell target inputsRef outputsRef)
       `finally` do
         outputs <- readIORef outputsRef
-        registerOutputs buildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
+        registerOutputs bteBuildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
 
     outputs <- readIORef outputsRef
-    verifyTargetOutputs printer buildsome outputs target
+    verifyTargetOutputs btePrinter bteBuildsome outputs target
 
     inputs <- readIORef inputsRef
-    saveExecutionLog buildsome target inputs outputs stdOutputs selfTime
+    saveExecutionLog bteBuildsome target inputs outputs stdOutputs selfTime
 
-    Printer.putStrLn printer $ "Build (now) took " ++ show selfTime ++ " seconds"
+    Printer.putStrLn btePrinter $ "Build (now) took " ++ show selfTime ++ " seconds"
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
@@ -606,12 +613,12 @@ shellCmdVerify target inheritEnvs newEnvs = do
     cmd = targetCmds target
 
 runCmd ::
-  Printer -> ParCell -> Buildsome -> Target -> Parents ->
-  -- TODO: Clean this arg list up
+  BuildTargetEnv -> ParCell -> Target ->
   IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
-  IORef (Set FilePath) -> IO (DiffTime, StdOutputs)
-runCmd printer parCell buildsome target parents inputsRef outputsRef = do
-  rootPath <- FilePath.canonicalizePath $ bsRootPath buildsome
+  IORef (Set FilePath) ->
+  IO (DiffTime, StdOutputs)
+runCmd bte@BuildTargetEnv{..} parCell target inputsRef outputsRef = do
+  rootPath <- FilePath.canonicalizePath $ bsRootPath bteBuildsome
   pauseTime <- newIORef 0
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
@@ -631,15 +638,15 @@ runCmd printer parCell buildsome target parents inputsRef outputsRef = do
     handleInput accessType actDesc path =
       handleInputCommon accessType actDesc path $ return ()
     handleDelayedInput accessType actDesc path =
-      handleInputCommon accessType actDesc path $ do
-        slaves <- makeSlavesForAccessType accessType printer buildsome Implicit actDesc parents path
-        measurePauseTime $ waitForSlaves printer parCell buildsome slaves
+      handleInputCommon accessType actDesc path $
+        measurePauseTime . waitForSlaves btePrinter parCell bteBuildsome =<<
+        makeSlavesForAccessType accessType bte { bteReason = actDesc } Implicit path
     handleOutput _actDesc path
       | outputIgnored path = return ()
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
-  unless (BS8.null cmd) $ Printer.bsPutStrLn printer cmd
+  unless (BS8.null cmd) $ Printer.bsPutStrLn btePrinter cmd
   (time, stdOutputs) <-
-    FSHook.runCommand (bsFsHook buildsome) rootPath
+    FSHook.runCommand (bsFsHook bteBuildsome) rootPath
     (timeIt . shellCmdVerify target ["HOME", "PATH"])
     (BS8.pack (show (targetOutputs target)))
     Handlers {..}
