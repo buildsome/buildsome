@@ -79,16 +79,18 @@ type ParId = Int
 type ParCell = IORef ParId
 
 data Buildsome = Buildsome
-  { bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
-  , bsOpts :: Opt
-  , bsBuildMaps :: BuildMaps
-  , bsParallelismPool :: PoolAlloc ParId
-  , bsDb :: Db
+  { -- static:
+    bsOpts :: Opt
   , bsMakefile :: Makefile
-  , bsRootPath :: FilePath
-  , bsFsHook :: FSHook
-  , bsFreshPrinterIds :: Fresh Printer.Id
   , bsBuildId :: BuildId
+  , bsRootPath :: FilePath
+  , bsBuildMaps :: BuildMaps
+    -- dynamic:
+  , bsDb :: Db
+  , bsFsHook :: FSHook
+  , bsSlaveByRepPath :: IORef (Map TargetRep (MVar Slave))
+  , bsParallelismPool :: PoolAlloc ParId
+  , bsFreshPrinterIds :: Fresh Printer.Id
   }
 
 slaveWait :: Printer -> Slave -> IO ()
