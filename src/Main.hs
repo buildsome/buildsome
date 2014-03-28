@@ -694,6 +694,17 @@ setBuffering = do
   IO.hSetBuffering IO.stdout IO.LineBuffering
   IO.hSetBuffering IO.stderr IO.LineBuffering
 
+switchDirectory :: FilePath -> IO (FilePath, FilePath)
+switchDirectory makefilePath = do
+  origCwd <- Posix.getWorkingDirectory
+  unless (BS8.null cwd) $ do
+    Posix.changeWorkingDirectory cwd
+    fullCwd <- FilePath.canonicalizePath $ origCwd </> cwd
+    BS8.putStrLn $ "make: Entering directory `" <> fullCwd <> "'"
+  return (origCwd, file)
+  where
+    (cwd, file) = FilePath.splitFileName makefilePath
+
 main :: IO ()
 main = do
   installSigintHandler
@@ -701,12 +712,7 @@ main = do
   FSHook.with $ \fsHook -> do
     opt <- getOpt
     makefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
-    let (cwd, file) = FilePath.splitFileName makefilePath
-    origCwd <- Posix.getWorkingDirectory
-    unless (BS8.null cwd) $ do
-      Posix.changeWorkingDirectory cwd
-      fullCwd <- FilePath.canonicalizePath $ origCwd </> cwd
-      BS8.putStrLn $ "make: Entering directory `" <> fullCwd <> "'"
+    (origCwd, file) <- switchDirectory makefilePath
     (parseTime, makefile) <-
       timeIt $ do
         origMakefile <- Makefile.parse file
