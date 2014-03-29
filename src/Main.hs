@@ -789,14 +789,14 @@ handleRequested buildsome printer inOrigCwd (RequestedTargets requestedTargets r
     [ Color.success "Build Successful", ": "
     , Color.timing (show buildTime <> " seconds"), " total." ]
 
-handleRequested buildsome printer _ RequestedClean = do
+handleRequested buildsome _ _ RequestedClean = do
   outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
   leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
   Clean.Result _totalSize totalSpace count <-
     mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
   writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
   writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
-  printStrLn printer $ mconcat
+  ColorText.putStrLn $ mconcat
     [ Color.success "Clean Successful", ": Cleaned "
     , show count, " files freeing an estimated "
     , showBytes (fromIntegral totalSpace)
