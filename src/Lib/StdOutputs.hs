@@ -8,6 +8,7 @@ import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Monoid
 import GHC.Generics (Generic)
+import Lib.ByteString (chopTrailingNewline)
 import qualified Data.ByteString.Char8 as BS8
 
 data StdOutputs = StdOutputs
@@ -16,21 +17,15 @@ data StdOutputs = StdOutputs
   } deriving (Generic, Show)
 instance Binary StdOutputs
 
-guaranteeTrailingNewline :: ByteString -> ByteString
-guaranteeTrailingNewline bs
-  | "\n" `BS8.isSuffixOf` bs = bs
-  | otherwise = bs <> "\n"
-
--- Always ends with a newline
-str :: ByteString -> StdOutputs -> ByteString
+str :: ByteString -> StdOutputs -> Maybe ByteString
 str strLabel (StdOutputs stdout stderr)
-  | BS8.null stdout && BS8.null stderr = ""
-  | otherwise = mconcat
-  [ strLabel, "\n"
+  | BS8.null stdout && BS8.null stderr = Nothing
+  | otherwise = Just $ mconcat
+  [ strLabel
   , showOutput "STDOUT" stdout
   , showOutput "STDERR" stderr
   ]
   where
     showOutput name bs
       | BS8.null bs = ""
-      | otherwise = mconcat [name, ":\n", guaranteeTrailingNewline bs]
+      | otherwise = mconcat ["\n", name, ":\n", chopTrailingNewline bs]
