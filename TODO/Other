@@ -1,5 +1,8 @@
 * Better prints:
 
+  * Reason to be ColorText
+  * Replace ByteString human strings with Text? (e.g: Inside ColorText)
+
   * Print the need of each dependency exactly once (hints and then delayed inputs)
 
     * Can't print when "waitForSlaves" because that's after the thread
