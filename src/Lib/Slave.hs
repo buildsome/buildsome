@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Lib.Slave
   ( Slave, new
   , str
@@ -8,6 +9,8 @@ module Lib.Slave
 
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async (Async)
+import Data.Monoid
+import Data.String (IsString(..))
 import Lib.Async (verifyCancelled)
 import Lib.FilePath (FilePath)
 import Lib.Printer (Printer)
@@ -26,14 +29,16 @@ new :: Printer.Id -> [FilePath] -> IO () -> IO Slave
 new printerId outputPaths action =
   Slave printerId outputPaths <$> Async.async action
 
-str :: Slave -> String
-str slave = Printer.idStr (slavePrinterId slave) ++ ": " ++ show (slaveOutputPaths slave)
+str :: (Monoid str, IsString str) => Slave -> str
+str slave =
+  Printer.idStr (slavePrinterId slave) <> ": " <>
+  fromString (show (slaveOutputPaths slave))
 
 wait :: Printer -> Slave -> IO ()
 wait _printer slave =
   -- Keep this around so we can enable logging about slave waits
   -- easily:
-  -- Printer.printWrap _printer ("Waiting for " ++ slaveStr slave) $
+  -- Printer.printWrap _printer ("Waiting for " <> str slave) $
   Async.wait $ slaveExecution slave
 
 cancel :: Slave -> IO (Either E.SomeException ())

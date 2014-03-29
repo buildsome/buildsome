@@ -67,7 +67,7 @@ data ExecutionLog = ExecutionLog
   { elBuildId :: BuildId
   , elInputsDescs :: Map FilePath (Reason, InputAccess)
   , elOutputsDescs :: Map FilePath FileDesc
-  , elStdoutputs :: StdOutputs
+  , elStdoutputs :: StdOutputs ByteString
   , elSelfTime :: DiffTime
   } deriving (Generic, Show)
 instance Binary ExecutionLog

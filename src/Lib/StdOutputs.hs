@@ -5,21 +5,19 @@ module Lib.StdOutputs
   ) where
 
 import Data.Binary (Binary)
-import Data.ByteString (ByteString)
 import Data.Monoid
+import Data.String (IsString)
 import GHC.Generics (Generic)
-import Lib.ByteString (chopTrailingNewline)
-import qualified Data.ByteString.Char8 as BS8
 
-data StdOutputs = StdOutputs
-  { _stdOut :: ByteString
-  , _stdErr :: ByteString
+data StdOutputs a = StdOutputs
+  { _stdOut :: a
+  , _stdErr :: a
   } deriving (Generic, Show)
-instance Binary StdOutputs
+instance Binary a => Binary (StdOutputs a)
 
-str :: ByteString -> StdOutputs -> Maybe ByteString
+str :: (Eq a, Monoid a, IsString a) => a -> StdOutputs a -> Maybe a
 str strLabel (StdOutputs stdout stderr)
-  | BS8.null stdout && BS8.null stderr = Nothing
+  | mempty == stdout && mempty == stderr = Nothing
   | otherwise = Just $ mconcat
   [ strLabel
   , showOutput "STDOUT" stdout
@@ -27,5 +25,5 @@ str strLabel (StdOutputs stdout stderr)
   ]
   where
     showOutput name bs
-      | BS8.null bs = ""
-      | otherwise = mconcat ["\n", name, ":\n", chopTrailingNewline bs]
+      | mempty == bs = ""
+      | otherwise = mconcat ["\n", name, ":\n", bs]

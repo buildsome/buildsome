@@ -38,6 +38,7 @@ executable buildsome
                ,     Lib.BuildId
                ,     Lib.BuildMaps
                ,     Lib.ByteString
+               ,     Lib.ColorText
                ,     Lib.Directory
                ,     Lib.Exception
                ,     Lib.Fresh

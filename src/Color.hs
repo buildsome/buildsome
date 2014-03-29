@@ -1,50 +1,41 @@
-{-# LANGUAGE RankNTypes, OverloadedStrings #-}
 module Color
   ( warning, error, target, path, timing, success, command, stdout, stderr
   ) where
 
-import Data.Monoid
-import Data.String (IsString(..))
+import Lib.ColorText (ColorText(..), withAttr)
 import Prelude hiding (error)
 import System.Console.ANSI (Color(..), ColorIntensity(..))
 import qualified System.Console.ANSI as Console
 
-type WrapText a = (Eq a, IsString a, Monoid a) => a -> a
-
-wrapSGR :: [Console.SGR] -> WrapText a
-wrapSGR sgrs x
-  | mempty == x = mempty
-  | otherwise = mconcat [fromString (Console.setSGRCode sgrs), x, fromString (Console.setSGRCode [])]
-
 fgColor :: ColorIntensity -> Color -> Console.SGR
 fgColor = Console.SetColor Console.Foreground
 
-bgColor :: ColorIntensity -> Color -> Console.SGR
-bgColor = Console.SetColor Console.Background
+-- bgColor :: ColorIntensity -> Color -> Console.SGR
+-- bgColor = Console.SetColor Console.Background
 
-warning :: WrapText a
-warning = wrapSGR [fgColor Vivid Yellow]
+warning :: ColorText -> ColorText
+warning = withAttr [fgColor Vivid Yellow]
 
-error :: WrapText a
-error = wrapSGR [fgColor Vivid Red]
+error :: ColorText -> ColorText
+error = withAttr [fgColor Vivid Red]
 
-target :: WrapText a
-target = wrapSGR [fgColor Vivid Cyan]
+target :: ColorText -> ColorText
+target = withAttr [fgColor Vivid Cyan]
 
-path :: WrapText a
-path = wrapSGR [fgColor Dull Cyan]
+path :: ColorText -> ColorText
+path = withAttr [fgColor Dull Cyan]
 
-timing :: WrapText a
-timing = wrapSGR [fgColor Vivid Blue]
+timing :: ColorText -> ColorText
+timing = withAttr [fgColor Vivid Blue]
 
-success :: WrapText a
-success = wrapSGR [fgColor Vivid Green]
+success :: ColorText -> ColorText
+success = withAttr [fgColor Vivid Green]
 
-command :: WrapText a
-command = wrapSGR [fgColor Dull White]
+command :: ColorText -> ColorText
+command = withAttr [fgColor Dull White]
 
-stdout :: WrapText a
-stdout = wrapSGR [bgColor Dull Green]
+stdout :: ColorText -> ColorText
+stdout = withAttr [fgColor Dull Green]
 
-stderr :: WrapText a
-stderr = wrapSGR [bgColor Dull Red]
+stderr :: ColorText -> ColorText
+stderr = withAttr [fgColor Dull Red]
