@@ -15,7 +15,7 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Monoid ((<>))
 import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
-import Lib.FilePath ((</>), splitFileName, takeDirectory, takeFileName, FilePath)
+import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile.Types
 import Lib.Parsec (parseFromFile, showErr, showPos)
 import Prelude hiding (FilePath)
@@ -25,6 +25,7 @@ import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Lib.FilePath as FilePath
 import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
@@ -113,8 +114,8 @@ metaVarId outputPaths inputPaths ooInputPaths mStem =
 metaVarModifier :: Monad m => ParserG u m (FilePath -> FilePath)
 metaVarModifier =
   P.choice
-  [ takeDirectory <$ P.char 'D'
-  , takeFileName  <$ P.char 'F'
+  [ FilePath.takeDirectory <$ P.char 'D'
+  , FilePath.takeFileName  <$ P.char 'F'
   ]
 
 metaVariable ::
@@ -204,7 +205,7 @@ runInclude rawIncludedPath = do
     computeIncludePath =
       case unprefixed "ROOT/" rawIncludedPath of
       Nothing -> do
-        curPath <- takeDirectory . BS8.pack . P.sourceName <$> P.getPosition
+        curPath <- FilePath.takeDirectory . BS8.pack . P.sourceName <$> P.getPosition
         return $ curPath </> rawIncludedPath
       Just pathSuffix -> do
         state <- P.getState
@@ -268,7 +269,7 @@ mkFilePattern path
     error $ "Directory component may not be a pattern: " ++ show path
   | otherwise = FilePattern dir <$> StringPattern.fromString '%' file
   where
-    (dir, file) = splitFileName path
+    (dir, file) = FilePath.splitFileName path
 
 targetPattern :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser Pattern
 targetPattern pos outputPaths inputPaths orderOnlyInputs = do
@@ -404,7 +405,7 @@ makefile =
 
 parse :: FilePath -> IO Makefile
 parse makefileName = do
-  res <- join $ parseFromFile makefile (State [] (takeDirectory makefileName) M.empty) makefileName
+  res <- join $ parseFromFile makefile (State [] (FilePath.takeDirectory makefileName) M.empty) makefileName
   case res of
     Right x -> return x
     Left err -> do
