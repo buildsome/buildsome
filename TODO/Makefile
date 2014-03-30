@@ -1,5 +1,3 @@
-* local {} sections that push/pop vars state
-
 * Warnings about unused inputs too?
 
 * Dump include stack when reporting errors
