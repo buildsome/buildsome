@@ -13,6 +13,7 @@ import Data.List (partition)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Monoid ((<>))
+import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
 import Lib.FilePath (FilePath, (</>))
@@ -142,22 +143,24 @@ interpolateVariables :: (forall u m. Monad m => ParserG u m ByteString) -> [Char
 interpolateVariables escapeParse stopChars = do
   varsEnv <- stateVars <$> P.getState
   let
-    interpolate :: Monad m => ParserG u m ByteString
-    interpolate = interpolateString escapeParse stopChars (variable <|> preserveMetavar)
-    variable :: Monad m => ParserG u m ByteString
-    variable = do
+    interpolate :: Monad m => Set ByteString -> ParserG u m ByteString
+    interpolate visitedVarNames = interpolateString escapeParse stopChars (variable visitedVarNames <|> preserveMetavar)
+    variable :: Monad m => Set ByteString -> ParserG u m ByteString
+    variable visitedVarNames = do
       -- '$' already parsed
       varName <- P.choice
         [ P.char '{' *> ident <* P.char '}'
         , BS8.singleton <$> P.satisfy isIdentChar
         ]
       pos <- P.getPosition
+      when (varName `S.member` visitedVarNames) $
+        error $ showPos pos ++ ": Recursive reference of variable to itself: " ++ show varName
       case M.lookup varName varsEnv of
         Nothing -> error $ showPos pos ++ ": No such variable: " ++ show varName
         Just val ->
           either (fail . show) return $
-          P.runParser (P.setPosition pos *> interpolate <* P.eof) () "" val
-  interpolate
+          P.runParser (P.setPosition pos *> interpolate (S.insert varName visitedVarNames) <* P.eof) () "" val
+  interpolate S.empty
 
 -- Inside a single line
 interpolateString :: Monad m => ParserG u m ByteString -> [Char] -> ParserG u m ByteString -> ParserG u m ByteString
