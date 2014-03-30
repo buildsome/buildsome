@@ -203,7 +203,7 @@ runInclude rawIncludedPath = do
         State ((pos, input) : includeStack) rootDir vars
   where
     computeIncludePath =
-      case unprefixed "ROOT/" rawIncludedPath of
+      case unprefixed "/" rawIncludedPath of
       Nothing -> do
         curPath <- FilePath.takeDirectory . BS8.pack . P.sourceName <$> P.getPosition
         return $ curPath </> rawIncludedPath

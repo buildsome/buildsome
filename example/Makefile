@@ -5,7 +5,7 @@ all: out/a out/subdir.list needsm other
 INCLUDE_DIR=inc
 
 include "${INCLUDE_DIR}/other.Makefile"
-include ROOT/inc/empty
+include /inc/empty
 
 .=.
 
