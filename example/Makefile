@@ -23,15 +23,17 @@ $./out/%.o: $./%.c
 
 OBJS=out/a.o out/b.o
 
+local {
+LDFLAGS=-g -Wall -lm
+needsm: needsm.o
+	${LINK}
+local }
+
 out/a: ${OBJS} | $./a.h
 	${LINK}
 
 needsm.o: needsm.c
 	${COMPILE}
-
-LDFLAGS=-g -Wall -lm
-needsm: needsm.o
-	${LINK}
 
 out/auto.h:
 	python generate.py

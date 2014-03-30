@@ -31,17 +31,24 @@ import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
+type VarName = ByteString
+type VarValue = ByteString
+type IncludeStack = [(Pos.SourcePos, ByteString)]
 data State = State
-  { stateIncludeStack :: [(Pos.SourcePos, ByteString)]
+  { stateIncludeStack :: IncludeStack
+  , stateLocalsStack :: [Vars]
   , stateRootDir :: FilePath
   , stateVars :: Vars
   }
-type Vars = Map ByteString ByteString
+type Vars = Map VarName VarValue
 type Parser = P.ParsecT ByteString State IO
 type ParserG = P.ParsecT ByteString
 
 atStateVars :: (Vars -> Vars) -> State -> State
-atStateVars f (State i r v) = State i r (f v)
+atStateVars f (State i l r v) = State i l r (f v)
+
+atStateIncludeStack :: (IncludeStack -> IncludeStack) -> State -> State
+atStateIncludeStack f (State i l r v) = State (f i) l r v
 
 horizSpace :: Monad m => ParserG u m Char
 horizSpace = P.satisfy (`elem` " \t")
@@ -201,9 +208,9 @@ runInclude rawIncludedPath = do
   case eFileContent of
     Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e
     Right fileContent ->
-      void $ P.updateParserState $ \(P.State input pos (State includeStack rootDir vars)) ->
+      void $ P.updateParserState $ \(P.State input pos state) ->
         P.State fileContent (Pos.initialPos (BS8.unpack includedPath)) $
-        State ((pos, input) : includeStack) rootDir vars
+        atStateIncludeStack ((pos, input) :) state
   where
     computeIncludePath =
       case unprefixed "/" rawIncludedPath of
@@ -217,14 +224,14 @@ runInclude rawIncludedPath = do
 returnToIncluder :: Parser ()
 returnToIncluder =
   P.eof *> do
-    State posStack rootDir vars <- P.getState
-    case posStack of
+    State includeStack localsStack rootDir vars <- P.getState
+    case includeStack of
       [] -> fail "Don't steal eof"
       ((pos, input) : rest) -> do
         void $ P.setParserState P.State
           { P.statePos = pos
           , P.stateInput = input
-          , P.stateUser = State rest rootDir vars
+          , P.stateUser = State rest localsStack rootDir vars
           }
         -- "include" did not eat the end of line (if one existed) so lets
         -- read it here
@@ -372,9 +379,11 @@ properEof :: Parser ()
 properEof = do
   P.eof
   state <- P.getState
-  case stateIncludeStack state of
+  unless (null (stateIncludeStack state)) $
+    fail "EOF but includers still pending"
+  case stateLocalsStack state of
     [] -> return ()
-    _ -> fail "EOF but includers still pending"
+    stack -> fail $ "EOF: unterminated locals: " ++ show stack
 
 varAssignment :: Parser ()
 varAssignment = do
@@ -389,6 +398,20 @@ echoStatement = do
   str <- interpolateVariables unescapedSequence "#\n" <* skipLineSuffix
   liftIO $ BS8.putStrLn $ "ECHO: " <> str
 
+localsOpen :: Parser ()
+localsOpen = void $ P.updateState $ \state -> state { stateLocalsStack = stateVars state : stateLocalsStack state }
+
+localsClose :: Parser ()
+localsClose = do
+  state <- P.getState
+  case stateLocalsStack state of
+    [] -> fail "Close of locals without open"
+    (oldVars:rest) ->
+      P.putState $ state { stateLocalsStack = rest, stateVars = oldVars }
+
+localDirective :: Parser ()
+localDirective = P.try (P.string "local" *> horizSpaces1) *> ((P.char '{' *> localsOpen) <|> (P.char '}' *> localsClose))
+
 makefile :: Parser Makefile
 makefile =
   mkMakefile . concat <$>
@@ -397,7 +420,8 @@ makefile =
     ( P.choice
       [ [] <$ properEof
       , [] <$ echoStatement
-      , (: []) <$> target
+      , ((: []) <$> target) <|>
+        (   []  <$  localDirective)
       , [] <$ varAssignment
       ]
       `P.sepBy` (newline *> noiseLines)
@@ -408,7 +432,13 @@ makefile =
 
 parse :: FilePath -> IO Makefile
 parse makefileName = do
-  res <- join $ parseFromFile makefile (State [] (FilePath.takeDirectory makefileName) M.empty) makefileName
+  res <-
+    join $ parseFromFile makefile State
+    { stateIncludeStack = []
+    , stateLocalsStack = []
+    , stateRootDir = FilePath.takeDirectory makefileName
+    , stateVars = M.empty
+    } makefileName
   case res of
     Right x -> return x
     Left err -> do
