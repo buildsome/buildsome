@@ -144,13 +144,14 @@ withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
   pool <- Parallelism.new $ fromMaybe 1 optParallelism
   freshPrinterIds <- Fresh.new 1
   buildId <- BuildId.new
+  rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
   let
     buildsome =
       Buildsome
       { bsOpts = opt
       , bsMakefile = makefile
       , bsBuildId = buildId
-      , bsRootPath = FilePath.takeDirectory makefilePath
+      , bsRootPath = rootPath
       , bsBuildMaps = BuildMaps.make makefile
       , bsDb = db
       , bsFsHook = fsHook
@@ -544,7 +545,6 @@ data RunCmdResults = RunCmdResults
 
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
-  rootPath <- FilePath.canonicalizePath $ bsRootPath bteBuildsome
   pauseTime <- newIORef 0
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef S.empty
@@ -574,7 +574,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
   printCmd btePrinter target
   (time, stdOutputs) <-
-    FSHook.runCommand (bsFsHook bteBuildsome) rootPath
+    FSHook.runCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
     (timeIt . shellCmdVerify target ["HOME", "PATH"])
     (ColorText.render (targetShow (targetOutputs target)))
     Handlers {..}
