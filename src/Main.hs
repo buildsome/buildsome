@@ -41,7 +41,7 @@ import Lib.Sigint (installSigintHandler)
 import Lib.Slave (Slave)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeIt (timeIt)
-import Opts (getOpt, Opt(..), DeleteUnspecifiedOutputs(..), OverwriteUnregisteredOutputs(..))
+import Opts (Opts(..), Opt(..))
 import Prelude hiding (FilePath, show)
 import System.Exit (ExitCode(..))
 import System.Process (CmdSpec(..))
@@ -65,7 +65,9 @@ import qualified Lib.Process as Process
 import qualified Lib.Slave as Slave
 import qualified Lib.StdOutputs as StdOutputs
 import qualified Lib.Timeout as Timeout
+import qualified Lib.Version as Version
 import qualified MagicFiles
+import qualified Opts
 import qualified Prelude
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
@@ -280,8 +282,8 @@ handleLegalUnspecifiedOutputs _printer buildsome target paths = do
   where
     (actionDesc, action) =
       case optDeleteUnspecifiedOutputs (bsOpts buildsome) of
-      DeleteUnspecifiedOutputs -> ("deleting", mapM_ removeFileOrDirectoryOrNothing paths)
-      DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs buildsome (S.fromList paths))
+      Opts.DeleteUnspecifiedOutputs -> ("deleting", mapM_ removeFileOrDirectoryOrNothing paths)
+      Opts.DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs buildsome (S.fromList paths))
 
 data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs Target [FilePath] deriving (Typeable)
 instance E.Exception IllegalUnspecifiedOutputs
@@ -521,8 +523,8 @@ instance Show UnregisteredOutputFileExists where
 removeOldUnregisteredOutput :: Printer -> Buildsome -> FilePath -> IO ()
 removeOldUnregisteredOutput printer buildsome path =
   case optOverwriteUnregisteredOutputs (bsOpts buildsome) of
-  DontOverwriteUnregisteredOutputs -> E.throwIO $ UnregisteredOutputFileExists path
-  OverwriteUnregisteredOutputs -> do
+  Opts.DontOverwriteUnregisteredOutputs -> E.throwIO $ UnregisteredOutputFileExists path
+  Opts.OverwriteUnregisteredOutputs -> do
     printStrLn printer $ ColorText.render $
       "Overwriting " <> targetShow path <> " (due to --overwrite)"
     removeFileOrDirectory path
@@ -764,8 +766,12 @@ parseMakefile origMakefilePath finalMakefilePath = do
 
 type InOrigCwd = [FilePath] -> IO [FilePath]
 
-handleOpt :: Opt -> IO (InOrigCwd, Requested, FilePath, Makefile)
-handleOpt opt = do
+handleOpts :: Opts -> IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
+handleOpts GetVersion = do
+  ver <- Version.get
+  BS8.putStrLn $ "buildsome " <> ver
+  return Nothing
+handleOpts (Opts opt) = do
   origMakefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
   (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
   let inOrigCwd =
@@ -777,7 +783,7 @@ handleOpt opt = do
         Just _ -> return
   requested <- getRequestedTargets $ optRequestedTargets opt
   makefile <- parseMakefile origMakefilePath finalMakefilePath
-  return (inOrigCwd, requested, finalMakefilePath, makefile)
+  return $ Just (opt, inOrigCwd, requested, finalMakefilePath, makefile)
 
 handleRequested :: Buildsome -> Printer -> InOrigCwd -> Requested -> IO ()
 handleRequested buildsome printer inOrigCwd (RequestedTargets requestedTargets reason) = do
@@ -804,14 +810,16 @@ handleRequested buildsome _ _ RequestedClean = do
 
 main :: IO ()
 main = do
-  opt <- getOpt
-  (inOrigCwd, requested, finalMakefilePath, makefile) <- handleOpt opt
-
-  installSigintHandler
-  setBuffering
-  printer <- Printer.new 0
-  FSHook.with $ \fsHook ->
-    Db.with (buildDbFilename finalMakefilePath) $ \db ->
-    withBuildsome finalMakefilePath fsHook db makefile opt $ \buildsome -> do
-      deleteRemovedOutputs buildsome
-      handleRequested buildsome printer inOrigCwd requested
+  opts <- Opts.get
+  mRes <- handleOpts opts
+  case mRes of
+    Nothing -> return ()
+    Just (opt, inOrigCwd, requested, finalMakefilePath, makefile) -> do
+      installSigintHandler
+      setBuffering
+      printer <- Printer.new 0
+      FSHook.with $ \fsHook ->
+        Db.with (buildDbFilename finalMakefilePath) $ \db ->
+        withBuildsome finalMakefilePath fsHook db makefile opt $ \buildsome -> do
+          deleteRemovedOutputs buildsome
+          handleRequested buildsome printer inOrigCwd requested

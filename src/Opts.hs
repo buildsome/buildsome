@@ -1,7 +1,7 @@
 module Opts
   ( DeleteUnspecifiedOutputs(..)
   , OverwriteUnregisteredOutputs(..)
-  , Opt(..), getOpt
+  , Opt(..), Opts(..), get
   ) where
 
 import Control.Monad (liftM)
@@ -30,6 +30,8 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                }
 
+data Opts = GetVersion | Opts Opt
+
 opt :: Read a => Mod OptionFields a -> Parser (Maybe a)
 opt = optional . option
 
@@ -49,27 +51,32 @@ desc = intercalate "\n"
 bytestr :: Monad m => String -> m ByteString
 bytestr = liftM BS8.pack . str
 
-getOpt :: IO Opt
-getOpt = execParser opts
+get :: IO Opts
+get = execParser opts
   where
-    parser = Opt <$> many (argument bytestr (metavar "targets"))
-                 <*> strOpt (short 'f' <>
-                             long "file" <>
-                             metavar "file" <>
-                             help "Use file as a makefile.")
-                 <*> opt (short 'j' <>
-                          long "parallelism" <>
-                          help "How many commands to execute in parallel" <>
-                          metavar "jobs")
-                 <*> switch (short 'g' <>
-                             long "gitignore" <>
-                             metavar "path" <>
-                             help "Write a .gitignore file in the same directory as the Makefile")
-                 <*> (deleteUnspecifiedOutputs <$>
-                      switch (short 'D' <>
-                              long "delete-unspecified" <>
-                              help "Delete unspecified outputs"))
-                 <*> (overwriteUnregisteredOutputs <$>
-                      switch (long "overwrite" <>
-                              help "Overwrite outputs not created by buildsome"))
+    parser =
+      (GetVersion <$ versionParser) <|>
+      (Opts <$> optsParser)
+    versionParser = switch (long "version" <> help "Get buildsome's version")
+    optsParser =
+      Opt <$> many (argument bytestr (metavar "targets"))
+          <*> strOpt (short 'f' <>
+                      long "file" <>
+                      metavar "file" <>
+                      help "Use file as a makefile.")
+          <*> opt (short 'j' <>
+                   long "parallelism" <>
+                   help "How many commands to execute in parallel" <>
+                   metavar "jobs")
+          <*> switch (short 'g' <>
+                      long "gitignore" <>
+                      metavar "path" <>
+                      help "Write a .gitignore file in the same directory as the Makefile")
+          <*> (deleteUnspecifiedOutputs <$>
+               switch (short 'D' <>
+                       long "delete-unspecified" <>
+                       help "Delete unspecified outputs"))
+          <*> (overwriteUnregisteredOutputs <$>
+               switch (long "overwrite" <>
+                       help "Overwrite outputs not created by buildsome"))
     opts = info (helper <*> parser) (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")
