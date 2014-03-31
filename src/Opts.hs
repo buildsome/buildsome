@@ -13,14 +13,8 @@ import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
 data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs
-deleteUnspecifiedOutputs :: Bool -> DeleteUnspecifiedOutputs
-deleteUnspecifiedOutputs False = DontDeleteUnspecifiedOutputs
-deleteUnspecifiedOutputs True = DeleteUnspecifiedOutputs
 
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
-overwriteUnregisteredOutputs :: Bool -> OverwriteUnregisteredOutputs
-overwriteUnregisteredOutputs False = DontOverwriteUnregisteredOutputs
-overwriteUnregisteredOutputs True = OverwriteUnregisteredOutputs
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
@@ -72,11 +66,11 @@ get = execParser opts
                       long "gitignore" <>
                       metavar "path" <>
                       help "Write a .gitignore file in the same directory as the Makefile")
-          <*> (deleteUnspecifiedOutputs <$>
-               switch (short 'D' <>
-                       long "delete-unspecified" <>
-                       help "Delete unspecified outputs"))
-          <*> (overwriteUnregisteredOutputs <$>
-               switch (long "overwrite" <>
-                       help "Overwrite outputs not created by buildsome"))
+          <*> (flag DontDeleteUnspecifiedOutputs DeleteUnspecifiedOutputs
+               (short 'D' <>
+                long "delete-unspecified" <>
+                help "Delete unspecified outputs"))
+          <*> (flag DontOverwriteUnregisteredOutputs OverwriteUnregisteredOutputs
+               (long "overwrite" <>
+                help "Overwrite outputs not created by buildsome"))
     opts = info (helper <*> parser) (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")
