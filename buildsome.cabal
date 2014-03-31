@@ -18,7 +18,7 @@ build-type:          Custom
 extra-source-files:  README
 cabal-version:       >=1.10
 
-data-files:          fs_override.so
+data-files:          cbits/fs_override.so
 extra-source-files:  cbits/*.[ch]
 
 executable buildsome
