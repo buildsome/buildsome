@@ -1,4 +1,4 @@
-module Clean (Result(..), output) where
+module Buildsome.Clean (Result(..), output) where
 
 import Data.Monoid
 import Lib.Directory (getMFileStatus, removeFileOrDirectory)

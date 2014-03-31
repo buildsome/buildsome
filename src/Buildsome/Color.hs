@@ -1,4 +1,4 @@
-module Color
+module Buildsome.Color
   ( warning, error, target, path, timing, success, command, stdout, stderr
   ) where
 

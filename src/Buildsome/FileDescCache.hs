@@ -1,15 +1,15 @@
-module FileDescCache
+module Buildsome.FileDescCache
   ( getFileDesc, fileDescOfMStat
   ) where
 
-import Db (Db)
+import Buildsome.Db (Db)
 import Lib.Directory (getMFileStatus)
 import Lib.FileDesc (FileDesc)
 import Lib.FilePath (FilePath)
 import Prelude hiding (FilePath)
-import qualified Db
-import qualified System.Posix.ByteString as Posix
+import qualified Buildsome.Db as Db
 import qualified Lib.FileDesc as FileDesc
+import qualified System.Posix.ByteString as Posix
 
 fileDescOfMStat :: Db -> FilePath -> Maybe Posix.FileStatus -> IO FileDesc
 fileDescOfMStat db path oldMStat = do

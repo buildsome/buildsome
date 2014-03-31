@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module MagicFiles
+module Buildsome.MagicFiles
   ( inputIgnored, outputIgnored
   , allowedUnspecifiedOutput
   ) where

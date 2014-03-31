@@ -1,6 +1,6 @@
 {-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
-module Db
+module Buildsome.Db
   ( Db, with
   , registeredOutputsRef, leakedOutputsRef
   , InputAccess(..)

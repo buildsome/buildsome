@@ -1,6 +1,9 @@
 {-# LANGUAGE DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Main (main) where
 
+import Buildsome.Db (Db, IRef(..), Reason)
+import Buildsome.FileDescCache (getFileDesc, fileDescOfMStat)
+import Buildsome.Opts (Opts(..), Opt(..))
 import Control.Applicative ((<$>))
 import Control.Concurrent.MVar
 import Control.Monad
@@ -17,8 +20,6 @@ import Data.String (IsString(..))
 import Data.Time (DiffTime)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
-import Db (Db, IRef(..), Reason)
-import FileDescCache (getFileDesc, fileDescOfMStat)
 import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.BuildId (BuildId)
@@ -41,18 +42,19 @@ import Lib.Sigint (installSigintHandler)
 import Lib.Slave (Slave)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeIt (timeIt)
-import Opts (Opts(..), Opt(..))
 import Prelude hiding (FilePath, show)
 import System.Exit (ExitCode(..))
 import System.Process (CmdSpec(..))
 import Text.Parsec (SourcePos)
-import qualified Clean
-import qualified Color
+import qualified Buildsome.Clean as Clean
+import qualified Buildsome.Color as Color
+import qualified Buildsome.Db as Db
+import qualified Buildsome.MagicFiles as MagicFiles
+import qualified Buildsome.Opts as Opts
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import qualified Db
 import qualified Lib.BuildId as BuildId
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.ColorText as ColorText
@@ -67,8 +69,6 @@ import qualified Lib.Slave as Slave
 import qualified Lib.StdOutputs as StdOutputs
 import qualified Lib.Timeout as Timeout
 import qualified Lib.Version as Version
-import qualified MagicFiles
-import qualified Opts
 import qualified Prelude
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix

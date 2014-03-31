@@ -23,13 +23,15 @@ extra-source-files:  cbits/*.[ch]
 
 executable buildsome
   hs-source-dirs:    src/
-  main-is:           Main.hs
+  main-is:           Buildsome/Main.hs
   ghc-options:       -threaded -Wall -O2
   ghc-prof-options:  -auto-all -caf-all -O2 -rtsopts
-  other-modules:     Clean
-               ,     Color
-               ,     Db
-               ,     FileDescCache
+  other-modules:     Buildsome.Clean
+               ,     Buildsome.Color
+               ,     Buildsome.Db
+               ,     Buildsome.FileDescCache
+               ,     Buildsome.MagicFiles
+               ,     Buildsome.Opts
                ,     Lib.AccessType
                ,     Lib.AnnotatedException
                ,     Lib.Argv0
@@ -42,12 +44,12 @@ executable buildsome
                ,     Lib.ColorText
                ,     Lib.Directory
                ,     Lib.Exception
-               ,     Lib.Fresh
                ,     Lib.FSHook
                ,     Lib.FSHook.Protocol
                ,     Lib.Fifo
                ,     Lib.FileDesc
                ,     Lib.FilePath
+               ,     Lib.Fresh
                ,     Lib.IORef
                ,     Lib.List
                ,     Lib.Makefile
@@ -68,8 +70,6 @@ executable buildsome
                ,     Lib.TimeIt
                ,     Lib.Timeout
                ,     Lib.Version
-               ,     MagicFiles
-               ,     Opts
                ,     Paths_buildsome
 
   build-depends:     base >=4.6 && <4.7

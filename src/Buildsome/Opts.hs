@@ -1,4 +1,4 @@
-module Opts
+module Buildsome.Opts
   ( DeleteUnspecifiedOutputs(..)
   , OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)
