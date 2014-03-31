@@ -232,4 +232,4 @@ getLdPreloadPath = do
         then return nearExecPath
         else E.throwIO CannotFindOverrideSharedObject
   where
-    fileName = "fs_override.so"
+    fileName = "cbits/fs_override.so"
