@@ -48,10 +48,8 @@ bytestr = liftM BS8.pack . str
 get :: IO Opts
 get = execParser opts
   where
-    parser =
-      (GetVersion <$ versionParser) <|>
-      (Opts <$> optsParser)
-    versionParser = switch (long "version" <> help "Get buildsome's version")
+    parser = versionParser <|> (Opts <$> optsParser)
+    versionParser = flag' GetVersion (long "version" <> help "Get buildsome's version")
     optsParser =
       Opt <$> many (argument bytestr (metavar "targets"))
           <*> strOpt (short 'f' <>
