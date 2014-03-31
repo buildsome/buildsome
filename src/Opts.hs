@@ -1,6 +1,7 @@
 module Opts
   ( DeleteUnspecifiedOutputs(..)
   , OverwriteUnregisteredOutputs(..)
+  , UpdateGitIgnore(..)
   , Opt(..), Opts(..), get
   ) where
 
@@ -13,13 +14,13 @@ import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
 data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs
-
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
+data UpdateGitIgnore = UpdateGitIgnore | DontUpdateGitIgnore
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
                , optParallelism :: Maybe Int
-               , optGitIgnore :: Bool
+               , optUpdateGitIgnore :: UpdateGitIgnore
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                }
@@ -60,10 +61,18 @@ get = execParser opts
                    long "parallelism" <>
                    help "How many commands to execute in parallel" <>
                    metavar "jobs")
-          <*> switch (short 'g' <>
-                      long "gitignore" <>
-                      metavar "path" <>
-                      help "Write a .gitignore file in the same directory as the Makefile")
+          <*> ( flag' UpdateGitIgnore
+                (short 'g' <>
+                 long "gitignore" <>
+                 help "Update (or create) .gitignore file in the same directory as the Makefile (default)")
+                <|>
+                flag' DontUpdateGitIgnore
+                (short 'G' <>
+                 long "no-gitignore" <>
+                 help "Do not touch the .gitignore file in the same directory as the Makefile")
+                <|>
+                pure UpdateGitIgnore
+              )
           <*> (flag DontDeleteUnspecifiedOutputs DeleteUnspecifiedOutputs
                (short 'D' <>
                 long "delete-unspecified" <>

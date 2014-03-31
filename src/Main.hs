@@ -170,9 +170,10 @@ withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
     -- the registered output lists:
     `finally` maybeUpdateGitIgnore buildsome
   where
-    maybeUpdateGitIgnore buildsome
-      | optGitIgnore = updateGitIgnore buildsome makefilePath
-      | otherwise = return ()
+    maybeUpdateGitIgnore buildsome =
+      case optUpdateGitIgnore of
+      Opts.UpdateGitIgnore -> updateGitIgnore buildsome makefilePath
+      Opts.DontUpdateGitIgnore -> return ()
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
