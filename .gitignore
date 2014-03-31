@@ -1,3 +1,2 @@
-dist/
-buildsome
-fs_override.so
+/dist/
+/cbits/fs_override.so
