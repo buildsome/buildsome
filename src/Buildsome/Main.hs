@@ -486,7 +486,6 @@ instance Show TargetDependencyLoop where
 
 data PanicError = PanicError String deriving (Typeable)
 instance E.Exception PanicError
-
 instance Show PanicError where
   show (PanicError msg) =
     renderStr $ Color.error $ fromString $ "PANIC: " ++ msg
@@ -681,9 +680,9 @@ data TargetCommandFailed = TargetCommandFailed Target ExitCode (StdOutputs ByteS
 instance E.Exception TargetCommandFailed
 instance Show TargetCommandFailed where
   show (TargetCommandFailed target exitCode stdOutputs) =
-    renderStr $ Color.error $ fromMaybe "" $ outputsStr
-    (mconcat [fromBytestring8 (showMultiline cmd), " failed: ", show exitCode])
-    stdOutputs
+    renderStr $ Color.error $ mconcat
+    [ fromBytestring8 (showMultiline cmd), " failed: ", show exitCode
+    , fromMaybe "" $ outputsStr "Outputs:" stdOutputs ]
     where
       cmd = targetCmds target
 
