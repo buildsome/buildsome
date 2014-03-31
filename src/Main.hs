@@ -45,6 +45,7 @@ import Opts (Opts(..), Opt(..))
 import Prelude hiding (FilePath, show)
 import System.Exit (ExitCode(..))
 import System.Process (CmdSpec(..))
+import Text.Parsec (SourcePos)
 import qualified Clean
 import qualified Color
 import qualified Control.Exception as E
@@ -267,17 +268,18 @@ makeSlaves bte@BuildTargetEnv{..} explicitness path = do
   childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
   return $ maybeToList mSlave ++ childs
 
+printPosMessage :: SourcePos -> ColorText -> IO ()
+printPosMessage pos msg =
+  ColorText.putStrLn $ mconcat [fromString (showPos pos), ": ", msg]
+
 -- e.g: .pyc files
-handleLegalUnspecifiedOutputs :: Printer -> Buildsome -> Target -> [FilePath] -> IO ()
-handleLegalUnspecifiedOutputs _printer buildsome target paths = do
+handleLegalUnspecifiedOutputs :: Buildsome -> Target -> [FilePath] -> IO ()
+handleLegalUnspecifiedOutputs buildsome target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
   -- creating job
-  unless (null paths) $ ColorText.putStrLn $ mconcat
-    [ fromString (showPos (targetPos target))
-    , ": "
-    , Color.warning $ mconcat
-      [ "WARNING: Leaked unspecified outputs: ", show paths, ", ", actionDesc ]
-    ]
+  unless (null paths) $ printPosMessage (targetPos target) $
+    Color.warning $ mconcat
+    [ "WARNING: Leaked unspecified outputs: ", show paths, ", ", actionDesc ]
   action
   where
     (actionDesc, action) =
@@ -294,12 +296,26 @@ instance Show IllegalUnspecifiedOutputs where
     , " wrote to unspecified output files: ", show illegalOutputs ]
 
 -- Verify output of whole of slave/execution log
-verifyTargetOutputs :: Printer -> Buildsome -> Set FilePath -> Target -> IO ()
-verifyTargetOutputs printer buildsome outputs target = do
-  let (unspecifiedOutputs, illegalOutputs) = partition MagicFiles.allowedUnspecifiedOutput allUnspecified
+verifyTargetSpec :: Buildsome -> Set FilePath -> Set FilePath -> Target -> IO ()
+verifyTargetSpec buildsome inputs outputs target = do
+  verifyTargetInputs buildsome inputs target
+  verifyTargetOutputs buildsome outputs target
 
+phoniesSet :: Buildsome -> Set FilePath
+phoniesSet = S.fromList . makefilePhonies . bsMakefile
+
+verifyTargetInputs :: Buildsome -> Set FilePath -> Target -> IO ()
+verifyTargetInputs buildsome inputs target
+  | all (`S.member` phoniesSet buildsome)
+    (targetOutputs target) = return () -- Phony target doesn't need real inputs
+  | otherwise =
+    warnOverSpecified "inputs" (S.fromList (targetAllInputs target))
+    (inputs `S.union` phoniesSet buildsome) (targetPos target)
+
+verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
+verifyTargetOutputs buildsome outputs target = do
   -- Legal unspecified need to be kept/deleted according to policy:
-  handleLegalUnspecifiedOutputs printer buildsome target =<<
+  handleLegalUnspecifiedOutputs buildsome target =<<
     filterM Posix.fileExist unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
@@ -309,22 +325,25 @@ verifyTargetOutputs printer buildsome outputs target = do
   -- Illegal unspecified that do exist are a problem:
   existingIllegalOutputs <- filterM Posix.fileExist illegalOutputs
   unless (null existingIllegalOutputs) $ do
-    printStrLn printer $ ColorText.render $ Color.error $
+    printPosMessage (targetPos target) $ Color.error $
       "Illegal output files created: " <> show existingIllegalOutputs
     mapM_ removeFileOrDirectory existingIllegalOutputs
     E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
-  unless (S.null unusedOutputs) $
-    ColorText.putStrLn $ mconcat
-    [ fromString (showPos (targetPos target)), ": "
-    , Color.warning $ mconcat
-      [ "WARNING: Over-specified outputs: "
-      , targetShow (S.toList unusedOutputs) ]
-    ]
+  warnOverSpecified "outputs" specified (outputs `S.union` phoniesSet buildsome) (targetPos target)
   where
-    phonies = S.fromList $ makefilePhonies $ bsMakefile buildsome
-    unusedOutputs = (specified `S.difference` outputs) `S.difference` phonies
+    (unspecifiedOutputs, illegalOutputs) =
+      partition MagicFiles.allowedUnspecifiedOutput allUnspecified
     allUnspecified = S.toList $ outputs `S.difference` specified
     specified = S.fromList $ targetOutputs target
+
+warnOverSpecified ::
+  ColorText -> Set FilePath -> Set FilePath -> SourcePos -> IO ()
+warnOverSpecified str specified used pos =
+  unless (S.null unused) $
+  printPosMessage pos $ Color.warning $ mconcat
+  [ "WARNING: Over-specified ", str, ": ", targetShow (S.toList unused) ]
+  where
+    unused = specified `S.difference` used
 
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
@@ -362,19 +381,21 @@ colorStdOutputs (StdOutputs out err) =
 outputsStr :: ColorText -> StdOutputs ByteString -> Maybe ColorText
 outputsStr label = StdOutputs.str label . colorStdOutputs
 
-printTargetOutputs :: Target -> StdOutputs ByteString -> IO ()
-printTargetOutputs target stdOutputs =
+printTargetStdOutputs :: Target -> StdOutputs ByteString -> IO ()
+printTargetStdOutputs target stdOutputs =
   maybe (return ()) ColorText.putStrLn $
   outputsStr (targetShow (targetOutputs target)) stdOutputs
 
 -- Already verified that the execution log is a match
 applyExecutionLog ::
-  BuildTargetEnv -> Target -> Set FilePath -> StdOutputs ByteString -> DiffTime -> IO ()
-applyExecutionLog bte@BuildTargetEnv{..} target outputs stdOutputs selfTime =
+  BuildTargetEnv -> Target ->
+  Set FilePath -> Set FilePath ->
+  StdOutputs ByteString -> DiffTime -> IO ()
+applyExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
   targetPrintWrap bte target "REPLAY" $ do
     printCmd btePrinter target
-    printTargetOutputs target stdOutputs
-    verifyTargetOutputs btePrinter bteBuildsome outputs target
+    printTargetStdOutputs target stdOutputs
+    verifyTargetSpec bteBuildsome inputs outputs target
     printStrLn btePrinter $ ColorText.render $
       "Build (originally) took " <> Color.timing (show selfTime <> " seconds")
 
@@ -400,7 +421,8 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} 
     mapM_ (compareToNewDesc "output" (getFileDesc db)) $ M.toList elOutputsDescs
 
     liftIO $
-      applyExecutionLog bte target (M.keysSet elOutputsDescs)
+      applyExecutionLog bte target
+      (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
   where
     db = bsDb bteBuildsome
@@ -629,7 +651,7 @@ buildTarget bte@BuildTargetEnv{..} parCell target =
 
     rcr@RunCmdResults{..} <- runCmd bte parCell target
 
-    verifyTargetOutputs btePrinter bteBuildsome rcrOutputs target
+    verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) rcrOutputs target
     saveExecutionLog bteBuildsome target rcr
 
     printStrLn btePrinter $
@@ -672,7 +694,7 @@ shellCmdVerify target inheritEnvs newEnvs = do
   case exitCode of
     ExitFailure {} -> E.throwIO $ TargetCommandFailed target exitCode stdOutputs
     _ -> return ()
-  printTargetOutputs target stdOutputs
+  printTargetStdOutputs target stdOutputs
   return stdOutputs
 
 buildDbFilename :: FilePath -> FilePath
