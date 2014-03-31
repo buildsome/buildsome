@@ -1,3 +1,4 @@
 * ls of directory containing target is a loop
 * cannot ls pattern dirs yet
 * do not handle symlinks correctly yet
+* use LD_PRELOAD and not fuse, wide range of APIs in libc may access file system
