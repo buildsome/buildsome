@@ -51,6 +51,7 @@ data Func
   | SymLink FilePath FilePath
   | Link FilePath FilePath
   | Chown FilePath Word32 Word32
+  | Exec FilePath
   deriving (Show)
 
 {-# INLINE showFunc #-}
@@ -72,6 +73,7 @@ showFunc (RmDir path) = unwords ["rmdir:", show path]
 showFunc (SymLink target linkpath) = unwords ["symlink:", show target, show linkpath]
 showFunc (Link src dest) = unwords ["link:", show src, show dest]
 showFunc (Chown path uid gid) = unwords ["chown:", show path, show uid, show gid]
+showFunc (Exec path) = unwords ["exec:", show path]
 
 {-# ANN module "HLint: ignore Use ++" #-}
 {-# ANN module "HLint: ignore Use camelCase" #-}
@@ -119,6 +121,7 @@ funcs =
   , (0x1000E, ("symlink", SymLink <$> getPath <*> getPath))
   , (0x1000F, ("link", Link <$> getPath <*> getPath))
   , (0x10010, ("chown", Chown <$> getPath <*> getWord32le <*> getWord32le))
+  , (0x10011, ("exec", Exec <$> getPath))
   ]
 
 {-# INLINE parseMsgLazy #-}

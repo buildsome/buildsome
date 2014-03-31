@@ -152,6 +152,7 @@ enum func {
     func_symlink   = 0x1000E,
     func_link      = 0x1000F,
     func_chown     = 0x10010,
+    func_exec      = 0x10011,
 };
 
 /* func_open.flags */
@@ -176,6 +177,7 @@ struct func_rmdir     {char path[MAX_PATH];};
 struct func_symlink   {char target[MAX_PATH]; char linkpath[MAX_PATH];};
 struct func_link      {char oldpath[MAX_PATH]; char newpath[MAX_PATH];};
 struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
+struct func_exec      {char path[MAX_PATH];};
 
 #define DEFINE_WRAPPER(ret_type, name, params)  \
     typedef ret_type name##_func params;        \
@@ -521,6 +523,90 @@ DEFINE_WRAPPER(int, chdir, (const char *path))
 {
     update_cwd();
     return SILENT_CALL_REAL(int, chdir, path);
+}
+
+static unsigned count_non_null_char_ptrs(va_list args)
+{
+    va_list args_copy;
+    va_copy(args_copy, args);
+    unsigned arg_count;
+    for(arg_count = 0; va_arg(args_copy, const char *); arg_count++) {
+        /* No need to do anything here... */
+    }
+    va_end(args_copy);
+    return arg_count;
+}
+
+static char **malloc_argv_from(char *arg, va_list args)
+{
+    unsigned arg_count = count_non_null_char_ptrs(args) + /*for first arg*/ 1;
+    char **argv = malloc(arg_count * sizeof(const char *));
+    argv[0] = arg;
+    unsigned i;
+    for(i = 1; i < arg_count; i++) {
+        argv[i] = va_arg(args, char *);
+    }
+    return argv;
+}
+
+int execlp(const char *file, const char *arg, ...)
+{
+    LOG("TODO: implement execlp's crazy logic (or use FUSE!) (file=%s, arg=%s)",
+        file, arg);
+    ASSERT(0);
+}
+
+int execvp(const char *file, char *const argv[])
+{
+    LOG("TODO: implement execvp's crazy logic (or use FUSE!) (file=%s, argv=%p)",
+        file, argv);
+    ASSERT(0);
+}
+
+int execvpe(const char *file, char *const argv[], char *const envp[])
+{
+    LOG("TODO: implement execvpe's crazy logic (or use FUSE!) (file=%s, argv=%p, envp=%p)",
+        file, argv, envp);
+    ASSERT(0);
+}
+
+/* The following exec* functions that do not have "v" in their name
+ * aren't hooks, but translators to the va_list interface which is
+ * hooked. If we let this translation happen within libc we won't be
+ * able to hook the intra-libc calls. */
+
+int execl(const char *path, const char *arg, ...)
+{
+    va_list args;
+    va_start(args, arg);
+    /* Need to cast away the constness, because execl*'s prototypes
+     * are buggy -- taking ptr to const char whereas execv* take ptr
+     * to const array of ptr to NON-CONST char */
+    char **argv = malloc_argv_from((char *)arg, args);
+    va_end(args);
+    int rc = execv(path, argv);
+    free(argv);
+    return rc;
+}
+
+int execle(const char *path, const char *arg, ...)
+{
+    va_list args;
+    va_start(args, arg);
+    char **argv = malloc_argv_from((char *)arg, args);
+    ASSERT(NULL == va_arg(args, const char *));
+    char *const *envp = va_arg(args, char * const *);
+    va_end(args);
+    int rc = execve(path, argv, envp);
+    free(argv);
+    return rc;
+}
+
+DEFINE_WRAPPER(int, execv, (const char *path, char *const argv[]))
+{
+    DEFINE_MSG(msg, exec);
+    PATH_COPY(msg.args.path, path);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, execv, path, argv);
 }
 
 /* TODO: Track utime? */

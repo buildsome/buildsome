@@ -145,6 +145,7 @@ handleJobMsg _tidStr conn job msg =
     Protocol.LStat path -> reportInput AccessTypeFull path
     Protocol.OpenDir path -> reportInput AccessTypeFull path
     Protocol.ReadLink path -> reportInput AccessTypeModeOnly path
+    Protocol.Exec path -> reportInput AccessTypeFull path
   where
     handlers = jobHandlers job
     actDesc = BS8.pack (Protocol.showFunc msg) <> " done by " <> jobLabel job
