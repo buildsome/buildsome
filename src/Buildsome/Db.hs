@@ -1,4 +1,3 @@
-{-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Buildsome.Db
   ( Db, with
@@ -16,8 +15,7 @@ import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map (Map)
 import Data.Set (Set)
-import Data.Time (DiffTime)
-import Foreign.C.Types (CTime(..))
+import Data.Time.Clock (DiffTime)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.BuildId (BuildId)
@@ -26,6 +24,7 @@ import Lib.FileDesc (FileDesc, FileModeDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
+import Lib.TimeInstances ()
 import Prelude hiding (FilePath)
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
@@ -43,10 +42,6 @@ data Db = Db
   , dbLeakedOutputs :: IORef (Set FilePath)
   }
 
-instance Binary CTime where
-  put (CTime x) = put x
-  get = CTime <$> get
-
 data FileDescCache = FileDescCache
   { fdcModificationTime :: Posix.EpochTime
   , fdcFileDesc :: FileDesc
@@ -58,10 +53,6 @@ type Reason = ByteString
 data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
   deriving (Generic, Show)
 instance Binary InputAccess
-
-instance Binary DiffTime where
-  put = put . toRational
-  get = fromRational <$> get
 
 data ExecutionLog = ExecutionLog
   { elBuildId :: BuildId
