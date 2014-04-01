@@ -165,6 +165,7 @@ withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
   body buildsome
     -- We must not leak running slaves as we're not allowed to
     -- access fsHook, db, etc after leaving here:
+    `E.onException` putStrLn "Shutting down"
     `finally` cancelAllSlaves buildsome
     -- Must update gitIgnore after all the slaves finished updating
     -- the registered output lists:
