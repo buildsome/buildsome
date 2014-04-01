@@ -175,6 +175,7 @@ handleJobConnection tidStr conn job = do
 
   connFinishedMVar <- newEmptyMVar
   (`E.finally` putMVar connFinishedMVar ()) $
+    (`E.catch` \e -> putStrLn $ "BUG: Job connection failed: " ++ show (e :: E.SomeException)) $
     withRegistered (jobActiveConnections job) connId (tid, connFinishedMVar) $ do
       sendGo conn
       recvLoop_ maxMsgSize
