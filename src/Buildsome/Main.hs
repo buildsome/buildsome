@@ -4,7 +4,7 @@ module Main (main) where
 import Buildsome.Db (Db, IRef(..), Reason)
 import Buildsome.FileDescCache (getFileDesc, fileDescOfMStat)
 import Buildsome.Opts (Opts(..), Opt(..))
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), Applicative(..))
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
@@ -32,7 +32,7 @@ import Lib.FSHook (FSHook, Handlers(..))
 import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
-import Lib.IORef (atomicModifyIORef'_)
+import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target)
 import Lib.Parallelism (Parallelism)
 import Lib.Parsec (showPos)
@@ -246,7 +246,7 @@ makeDirectSlave bte@BuildTargetEnv{..} explicitness path =
     verifyFileGetsCreated slave
       | path `elem` makefilePhonies (bsMakefile bteBuildsome) = return slave
       | otherwise =
-        Slave.wrap (>>= \() -> assertExists path $ TargetNotCreated path) slave
+        Slave.wrap (<* assertExists path (TargetNotCreated path)) slave
 
 makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
 makeChildSlaves bte@BuildTargetEnv{..} path
@@ -401,17 +401,18 @@ applyExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfTi
     printStrLn btePrinter $ ColorText.render $
       "Build (originally) took " <> Color.timing (show selfTime <> " seconds")
 
-waitForSlaves :: Printer -> Parallelism.Cell -> Buildsome -> [Slave] -> IO ()
-waitForSlaves _ _ _ [] = return ()
+waitForSlaves :: Printer -> Parallelism.Cell -> Buildsome -> [Slave] -> IO Slave.Stats
+waitForSlaves _ _ _ [] = return mempty
 waitForSlaves printer parCell buildsome slaves =
   Parallelism.withReleased parCell (bsParallelism buildsome) $
-  mapM_ (Slave.wait printer) slaves
+  mconcat <$> mapM (Slave.wait printer) slaves
 
 tryApplyExecutionLog ::
-  BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog ->
-  IO (Either (ByteString, FilePath) ())
-tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
-  waitForInputs
+  BuildTargetEnv -> Parallelism.Cell ->
+  TargetRep -> Target -> Db.ExecutionLog ->
+  IO (Either (ByteString, FilePath) Slave.Stats)
+tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.ExecutionLog {..} = do
+  nestedSlaveStats <- waitForInputs
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, oldInputAccess) ->
       case snd oldInputAccess of
@@ -427,6 +428,8 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} 
       applyExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
+    let selfStats = Slave.Stats $ M.singleton targetRep elSelfTime
+    return $ mappend selfStats nestedSlaveStats
   where
     db = bsDb bteBuildsome
     compareToNewDesc str getNewDesc (filePath, oldDesc) = do
@@ -459,14 +462,14 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} 
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO Bool
-findApplyExecutionLog bte@BuildTargetEnv{..} parCell target = do
+findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO (Maybe Slave.Stats)
+findApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target = do
   mExecutionLog <- readIRef $ Db.executionLog target $ bsDb bteBuildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
-      return False
+      return Nothing
     Just executionLog -> do
-      res <- tryApplyExecutionLog bte parCell target executionLog
+      res <- tryApplyExecutionLog bte parCell targetRep target executionLog
       case res of
         Left (str, filePath) -> do
           printStrLn btePrinter $ ColorText.render $ mconcat
@@ -474,8 +477,8 @@ findApplyExecutionLog bte@BuildTargetEnv{..} parCell target = do
             , " did not match because ", fromBytestring8 str, ": "
             , Color.path (show filePath), " changed"
             ]
-          return False
-        Right () -> return True
+          return Nothing
+        Right stats -> return (Just stats)
 
 showParents :: Parents -> ByteString
 showParents = ColorText.render . mconcat . map showParent
@@ -518,8 +521,10 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
           E.bracket (Parallelism.newCell =<< getParId) (Parallelism.release par) $
           \parCell -> restoreMask $ do
             let newBte = bte { bteParents = newParents, btePrinter = printer }
-            success <- findApplyExecutionLog newBte parCell target
-            unless success $ buildTarget newBte parCell target
+            mTime <- findApplyExecutionLog newBte parCell targetRep target
+            case mTime of
+              Nothing -> buildTarget newBte parCell targetRep target
+              Just time -> return time
         )
     where
       par = bsParallelism bteBuildsome
@@ -570,6 +575,7 @@ data RunCmdResults = RunCmdResults
   , rcrStdOutputs :: StdOutputs ByteString
   , rcrInputs :: Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)
   , rcrOutputs :: Set FilePath
+  , rcrSlaveStats :: Slave.Stats
   }
 
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
@@ -577,8 +583,10 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
   pauseTime <- newIORef 0
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef S.empty
+  slaveStatsRef <- newIORef mempty
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
+    mappendSlaveStats stats = atomicModifyIORef_ slaveStatsRef (mappend stats)
     measurePauseTime act = do
       (time, res) <- timeIt act
       addPauseTime time
@@ -595,7 +603,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       handleInputCommon accessType actDesc path $ return ()
     handleDelayedInput accessType actDesc path =
       handleInputCommon accessType actDesc path $
-        measurePauseTime . waitForSlaves btePrinter parCell bteBuildsome =<<
+        measurePauseTime . (>>= mappendSlaveStats) . waitForSlaves btePrinter parCell bteBuildsome =<<
         makeSlavesForAccessType accessType bte { bteReason = actDesc } Implicit path
     handleOutput _actDesc path
       | MagicFiles.outputIgnored path = return ()
@@ -612,11 +620,13 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
   subtractedTime <- (time-) <$> readIORef pauseTime
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
+  slaveStats <- readIORef slaveStatsRef
   return RunCmdResults
     { rcrStdOutputs = stdOutputs
     , rcrSelfTime = realToFrac subtractedTime
     , rcrInputs = inputs
     , rcrOutputs = outputs
+    , rcrSlaveStats = slaveStats
     }
   where
     targetOutputsSet = S.fromList $ targetOutputs target
@@ -641,8 +651,8 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
     inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
-buildTarget :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO ()
-buildTarget bte@BuildTargetEnv{..} parCell target =
+buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
+buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
   targetPrintWrap bte target "BUILDING" $ do
     -- TODO: Register each created subdirectory as an output?
     mapM_ (createDirectories . FilePath.takeDirectory) $ targetOutputs target
@@ -654,7 +664,7 @@ buildTarget bte@BuildTargetEnv{..} parCell target =
       mkSlavesForPaths bte
         { bteReason = ColorText.render $ "Hint from " <> targetShow (targetOutputs target)
         } Explicit $ targetAllInputs target
-    waitForSlaves btePrinter parCell bteBuildsome slaves
+    hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
 
     rcr@RunCmdResults{..} <- runCmd bte parCell target
 
@@ -663,6 +673,8 @@ buildTarget bte@BuildTargetEnv{..} parCell target =
 
     printStrLn btePrinter $
       "Build (now) took " <> Color.timing (show rcrSelfTime <> " seconds")
+    let selfStats = Slave.Stats (M.singleton targetRep rcrSelfTime)
+    return $ mconcat [selfStats, hintedStats, rcrSlaveStats]
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
