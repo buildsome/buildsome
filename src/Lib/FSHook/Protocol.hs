@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Lib.FSHook.Protocol
   ( parseMsg
   , OpenMode(..), showOpenMode
@@ -9,13 +10,16 @@ import Control.Applicative
 import Control.Monad
 import Data.Binary.Get
 import Data.Bits
+import Data.ByteString (ByteString)
 import Data.IntMap (IntMap, (!))
 import Data.Word
 import Lib.ByteString (truncateAt)
-import Lib.FilePath (FilePath)
+import Lib.Directory (catchDoesNotExist)
+import Lib.FilePath (FilePath, (</>))
 import Numeric (showOct)
 import Prelude hiding (FilePath)
-import qualified Data.ByteString as BS
+import System.Posix.Files.ByteString (fileAccess)
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntMap as M
 
@@ -52,6 +56,7 @@ data Func
   | Link FilePath FilePath
   | Chown FilePath Word32 Word32
   | Exec FilePath
+  | ExecP (Maybe FilePath) [FilePath]{-prior searched paths (that did not exist)-}
   deriving (Show)
 
 {-# INLINE showFunc #-}
@@ -74,15 +79,26 @@ showFunc (SymLink target linkpath) = unwords ["symlink:", show target, show link
 showFunc (Link src dest) = unwords ["link:", show src, show dest]
 showFunc (Chown path uid gid) = unwords ["chown:", show path, show uid, show gid]
 showFunc (Exec path) = unwords ["exec:", show path]
+showFunc (ExecP (Just path) attempted) = unwords ["execP:", show path, "searched:", show attempted]
+showFunc (ExecP Nothing attempted) = unwords ["failedExecP:searched:", show attempted]
 
-{-# ANN module "HLint: ignore Use ++" #-}
-{-# ANN module "HLint: ignore Use camelCase" #-}
+{-# ANN module ("HLint: ignore Use ++"::String) #-}
+{-# ANN module ("HLint: ignore Use camelCase"::String) #-}
 
 mAX_PATH :: Int
 mAX_PATH = 256
+mAX_PATH_ENV_VAR_LENGTH :: Int
+mAX_PATH_ENV_VAR_LENGTH = 10*1024
+mAX_PATH_CONF_STR :: Int
+mAX_PATH_CONF_STR = 10*1024
+mAX_EXEC_FILE :: Int
+mAX_EXEC_FILE = mAX_PATH
+
+getNullTerminated :: Int -> Get FilePath
+getNullTerminated len = truncateAt 0 <$> getByteString len
 
 getPath :: Get FilePath
-getPath = truncateAt 0 <$> getByteString mAX_PATH
+getPath = getNullTerminated mAX_PATH
 
 fLAG_WRITE :: Word32
 fLAG_WRITE = 1
@@ -93,7 +109,8 @@ fLAG_CREATE = 2
 parseOpen :: Get Func
 parseOpen = mkOpen <$> getPath <*> getWord32le <*> getWord32le
   where
-    mkOpen path flags mode = Open path (openMode flags) (creationMode flags mode)
+    mkOpen path flags mode =
+      Open path (openMode flags) (creationMode flags mode)
     openMode flags
       | 0 /= flags .&. fLAG_WRITE = OpenWriteMode
       | otherwise = OpenReadMode
@@ -101,31 +118,47 @@ parseOpen = mkOpen <$> getPath <*> getWord32le <*> getWord32le
       | 0 /= flags .&. fLAG_CREATE = Create mode
       | otherwise = NoCreate
 
-funcs :: IntMap (String, Get Func)
+execP :: FilePath -> FilePath -> FilePath -> FilePath -> IO Func
+execP file cwd envPath confStrPath
+  | "/" `BS8.isInfixOf` file = return $ ExecP (Just file) []
+  | otherwise = search [] allPaths
+  where
+    split = BS8.split ':'
+    allPaths =
+      map ((</> file) . (cwd </>)) $ split envPath ++ split confStrPath
+    search attempted [] = return $ ExecP Nothing attempted
+    search attempted (path:paths) = do
+      canExec <- fileAccess path False False True `catchDoesNotExist` return False
+      if canExec
+        then return $ ExecP (Just path) attempted
+        else search (path:attempted) paths
+
+funcs :: IntMap (String, Get (IO Func))
 funcs =
   M.fromList
-  [ (0x10000, ("open", parseOpen))
-  , (0x10001, ("creat", Creat <$> getPath <*> getWord32le))
-  , (0x10002, ("stat", Stat <$> getPath))
-  , (0x10003, ("lstat", LStat <$> getPath))
-  , (0x10004, ("opendir", OpenDir <$> getPath))
-  , (0x10005, ("access", Access <$> getPath <*> getWord32le))
-  , (0x10006, ("truncate", Truncate <$> getPath <*> getWord64le))
-  , (0x10007, ("unlink", Unlink <$> getPath))
-  , (0x10008, ("rename", Rename <$> getPath <*> getPath))
-  , (0x10009, ("chmod", Chmod <$> getPath <*> getWord32le))
-  , (0x1000A, ("readlink", ReadLink <$> getPath))
-  , (0x1000B, ("mknod", MkNod <$> getPath <*> getWord32le <*> getWord64le))
-  , (0x1000C, ("mkdir", MkDir <$> getPath <*> getWord32le))
-  , (0x1000D, ("rmdir", RmDir <$> getPath))
-  , (0x1000E, ("symlink", SymLink <$> getPath <*> getPath))
-  , (0x1000F, ("link", Link <$> getPath <*> getPath))
-  , (0x10010, ("chown", Chown <$> getPath <*> getWord32le <*> getWord32le))
-  , (0x10011, ("exec", Exec <$> getPath))
+  [ (0x10000, ("open"    , return <$> parseOpen))
+  , (0x10001, ("creat"   , return <$> (Creat <$> getPath <*> getWord32le)))
+  , (0x10002, ("stat"    , return <$> (Stat <$> getPath)))
+  , (0x10003, ("lstat"   , return <$> (LStat <$> getPath)))
+  , (0x10004, ("opendir" , return <$> (OpenDir <$> getPath)))
+  , (0x10005, ("access"  , return <$> (Access <$> getPath <*> getWord32le)))
+  , (0x10006, ("truncate", return <$> (Truncate <$> getPath <*> getWord64le)))
+  , (0x10007, ("unlink"  , return <$> (Unlink <$> getPath)))
+  , (0x10008, ("rename"  , return <$> (Rename <$> getPath <*> getPath)))
+  , (0x10009, ("chmod"   , return <$> (Chmod <$> getPath <*> getWord32le)))
+  , (0x1000A, ("readlink", return <$> (ReadLink <$> getPath)))
+  , (0x1000B, ("mknod"   , return <$> (MkNod <$> getPath <*> getWord32le <*> getWord64le)))
+  , (0x1000C, ("mkdir"   , return <$> (MkDir <$> getPath <*> getWord32le)))
+  , (0x1000D, ("rmdir"   , return <$> (RmDir <$> getPath)))
+  , (0x1000E, ("symlink" , return <$> (SymLink <$> getPath <*> getPath)))
+  , (0x1000F, ("link"    , return <$> (Link <$> getPath <*> getPath)))
+  , (0x10010, ("chown"   , return <$> (Chown <$> getPath <*> getWord32le <*> getWord32le)))
+  , (0x10011, ("exec"    , return <$> (Exec <$> getPath)))
+  , (0x10012, ("execp"   , execP <$> getNullTerminated mAX_EXEC_FILE <*> getPath <*> getNullTerminated mAX_PATH_ENV_VAR_LENGTH <*> getNullTerminated mAX_PATH_CONF_STR))
   ]
 
 {-# INLINE parseMsgLazy #-}
-parseMsgLazy :: BSL.ByteString -> Func
+parseMsgLazy :: BSL.ByteString -> IO Func
 parseMsgLazy = runGet $ do
   funcId <- getWord32le
   let (_name, getter) = funcs ! fromIntegral funcId
@@ -135,9 +168,9 @@ parseMsgLazy = runGet $ do
   return func
 
 {-# INLINE strictToLazy #-}
-strictToLazy :: BS.ByteString -> BSL.ByteString
+strictToLazy :: ByteString -> BSL.ByteString
 strictToLazy x = BSL.fromChunks [x]
 
 {-# INLINE parseMsg #-}
-parseMsg :: BS.ByteString -> Func
+parseMsg :: ByteString -> IO Func
 parseMsg = parseMsgLazy . strictToLazy

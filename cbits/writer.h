@@ -25,4 +25,9 @@ static inline void writer_append_data(struct writer *w, const char *buf, size_t 
     memcpy(dest, buf, len);
 }
 
+static inline void writer_append_str(struct writer *w, const char *str)
+{
+    writer_append_data(w, str, strlen(str)+1);
+}
+
 #endif

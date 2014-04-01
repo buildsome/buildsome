@@ -87,7 +87,7 @@ serve fsHook conn = do
         [pidStr, tidStr, jobId] = BS8.split ':' pidJobId
 
 maxMsgSize :: Int
-maxMsgSize = 8192
+maxMsgSize = 65536
 
 with :: (FSHook -> IO a) -> IO a
 with body = do
@@ -132,26 +132,32 @@ handleJobMsg _tidStr conn job msg =
     Protocol.RmDir path -> reportOutput path
 
     -- I/O
-    Protocol.SymLink target linkPath -> reportOutput linkPath >> reportInput AccessTypeFull target
+    Protocol.SymLink target linkPath -> reportOutput linkPath >> reportSingleInput AccessTypeFull target
     Protocol.Link src dest -> forwardExceptions $
       error $ unwords ["Hard links not supported:", show src, "->", show dest]
       -- TODO: Record the fact it's a link
-      --reportOutput dest >> reportInput src
+      --reportOutput dest >> reportSingleInput src
 
     -- inputs
-    Protocol.Open path Protocol.OpenReadMode _creationMode -> reportInput AccessTypeFull path
-    Protocol.Access path _mode -> reportInput AccessTypeModeOnly path
-    Protocol.Stat path -> reportInput AccessTypeFull path
-    Protocol.LStat path -> reportInput AccessTypeFull path
-    Protocol.OpenDir path -> reportInput AccessTypeFull path
-    Protocol.ReadLink path -> reportInput AccessTypeModeOnly path
-    Protocol.Exec path -> reportInput AccessTypeFull path
+    Protocol.Open path Protocol.OpenReadMode _creationMode -> reportSingleInput AccessTypeFull path
+    Protocol.Access path _mode -> reportSingleInput AccessTypeModeOnly path
+    Protocol.Stat path -> reportSingleInput AccessTypeFull path
+    Protocol.LStat path -> reportSingleInput AccessTypeFull path
+    Protocol.OpenDir path -> reportSingleInput AccessTypeFull path
+    Protocol.ReadLink path -> reportSingleInput AccessTypeModeOnly path
+    Protocol.Exec path -> reportSingleInput AccessTypeFull path
+    Protocol.ExecP mPath attempted -> do
+      forwardExceptions $ forM_
+        ( [(AccessTypeFull, path) | Just path <- [mPath]] ++
+          [(AccessTypeModeOnly, path) | path <- attempted] ) $
+        \(accessType, path) -> handleDelayedInput handlers accessType actDesc path
+      sendGo conn
   where
     handlers = jobHandlers job
     actDesc = BS8.pack (Protocol.showFunc msg) <> " done by " <> jobLabel job
     forwardExceptions =
       handleSync $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
-    reportInput accessType path
+    reportSingleInput accessType path
       | "/" `BS8.isPrefixOf` path =
         forwardExceptions $ handleInput handlers accessType actDesc path
       | otherwise = do
@@ -180,7 +186,7 @@ handleJobConnection tidStr conn job = do
     withRegistered (jobActiveConnections job) connId (tid, connFinishedMVar) $ do
       sendGo conn
       recvLoop_ maxMsgSize
-        (handleJobMsg tidStr conn job . Protocol.parseMsg) conn
+        (handleJobMsg tidStr conn job <=< Protocol.parseMsg) conn
 
 mkEnvVars :: FSHook -> FilePath -> JobId -> Process.Env
 mkEnvVars fsHook rootFilter jobId =

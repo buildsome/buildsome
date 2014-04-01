@@ -153,11 +153,17 @@ enum func {
     func_link      = 0x1000F,
     func_chown     = 0x10010,
     func_exec      = 0x10011,
+    func_execp     = 0x10012,
 };
 
 /* func_open.flags */
 #define FLAG_WRITE 1
 #define FLAG_CREATE 2           /* func_open.mode is meaningful iff this flag */
+
+/* NOTE: This must be kept in sync with Protocol.hs */
+#define MAX_PATH_ENV_VAR_LENGTH (10*1024)
+#define MAX_PATH_CONF_STR       (10*1024)
+#define MAX_EXEC_FILE           (MAX_PATH)
 
 /* NOTE: This must be kept in sync with Protocol.hs */
 struct func_open      {char path[MAX_PATH]; uint32_t flags; uint32_t mode;};
@@ -178,6 +184,7 @@ struct func_symlink   {char target[MAX_PATH]; char linkpath[MAX_PATH];};
 struct func_link      {char oldpath[MAX_PATH]; char newpath[MAX_PATH];};
 struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
 struct func_exec      {char path[MAX_PATH];};
+struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_var_PATH[MAX_PATH_ENV_VAR_LENGTH]; char conf_str_CS_PATH[MAX_PATH_CONF_STR];};
 
 #define DEFINE_WRAPPER(ret_type, name, params)  \
     typedef ret_type name##_func params;        \
@@ -235,8 +242,7 @@ static void await_go_for_path(const char *path)
             writer_append_data(&w, process_state.cwd,           \
                                process_state.cwd_length);       \
         }                                                       \
-        writer_append_data(&w, src, strlen(src));               \
-        *writer_append(&w, 1) = 0;                              \
+        writer_append_str(&w, src);                             \
         struct writer dest_writer = { dest, sizeof dest };      \
         canonize_abs_path(&dest_writer, temp_path);             \
         try_chop_common_root(dest);                             \
@@ -551,23 +557,65 @@ static char **malloc_argv_from(char *arg, va_list args)
 
 int execlp(const char *file, const char *arg, ...)
 {
-    LOG("TODO: implement execlp's crazy logic (or use FUSE!) (file=%s, arg=%s)",
-        file, arg);
-    ASSERT(0);
+    va_list args;
+    va_start(args, arg);
+    /* Need to cast away the constness, because execl*'s prototypes
+     * are buggy -- taking ptr to const char whereas execv* take ptr
+     * to const array of ptr to NON-CONST char */
+    char **argv = malloc_argv_from((char *)arg, args);
+    va_end(args);
+    int rc = execvp(file, argv);
+    free(argv);
+    return rc;
 }
 
 int execvp(const char *file, char *const argv[])
 {
-    LOG("TODO: implement execvp's crazy logic (or use FUSE!) (file=%s, argv=%p)",
-        file, argv);
-    ASSERT(0);
+    return execvpe(file, argv, environ);
 }
 
-int execvpe(const char *file, char *const argv[], char *const envp[])
+int execv(const char *path, char *const argv[])
 {
-    LOG("TODO: implement execvpe's crazy logic (or use FUSE!) (file=%s, argv=%p, envp=%p)",
-        file, argv, envp);
-    ASSERT(0);
+    return execve(path, argv, environ);
+}
+
+DEFINE_WRAPPER(int, execvpe, (const char *file, char *const argv[], char *const envp[]))
+{
+    DEFINE_MSG(msg, execp);
+
+    // char env_var_PATH[MAX_PATH_ENV_VAR_LENGTH];
+    // char conf_str_CS_PATH[MAX_PATH_CONF_STR];
+
+    {
+        struct writer w = { PS(msg.args.file) };
+        writer_append_str(&w, file);
+    }
+
+    {
+        struct writer w = { PS(msg.args.cwd) };
+        writer_append_data(&w, process_state.cwd, process_state.cwd_length);
+        *writer_append(&w, 1) = 0;
+    }
+
+    {
+        struct writer w = { PS(msg.args.env_var_PATH) };
+        const char *PATH = getenv("PATH");
+        writer_append_str(&w, PATH);
+    }
+
+    {
+        errno = 0;
+        size_t size = confstr(_CS_PATH, msg.args.conf_str_CS_PATH, sizeof msg.args.conf_str_CS_PATH);
+        if(0 == size && 0 != errno) {
+            LOG("confstr failed: %s", strerror(errno));
+            ASSERT(0);
+        }
+        ASSERT(size <= sizeof msg.args.conf_str_CS_PATH); /* Value truncated */
+    }
+
+    send_connection(PS(msg));
+    await_go();
+    return SILENT_CALL_REAL(int, execvpe, file, argv, envp);
 }
 
 /* The following exec* functions that do not have "v" in their name
@@ -602,11 +650,11 @@ int execle(const char *path, const char *arg, ...)
     return rc;
 }
 
-DEFINE_WRAPPER(int, execv, (const char *path, char *const argv[]))
+DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *const envp[]))
 {
     DEFINE_MSG(msg, exec);
-    PATH_COPY(msg.args.path, path);
-    return AWAIT_CALL_REAL(msg.args.path, msg, int, execv, path, argv);
+    PATH_COPY(msg.args.path, filename);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, execve, filename, argv, envp);
 }
 
 /* TODO: Track utime? */
