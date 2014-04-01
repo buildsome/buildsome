@@ -1,3 +1,6 @@
+* Handlers for FSHook need to take multiple inputs simultaneously
+  (e.g: exec search paths) for parallelism
+
 * Oops: LD_PRELOAD should hook exec as another input dependency
 
 * Chart the time taken by targets or subdirectories?
