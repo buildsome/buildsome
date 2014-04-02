@@ -1,6 +1,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Lib.ColorText
-  ( ColorText(..), normalize, simple, render, withAttr
+  ( ColorText(..), normalize, simple
+  , render, renderStr
+  , withAttr
   , intercalate, lines, putStrLn, singleton
   ) where
 
@@ -42,6 +44,9 @@ instance IsString ColorText where
 
 putStrLn :: ColorText -> IO ()
 putStrLn = BS8.putStrLn . render
+
+renderStr :: ColorText -> String
+renderStr = BS8.unpack . render
 
 render :: ColorText -> ByteString
 render (ColorText pairs) = mconcat (map renderPair pairs) <> fromString (Console.setSGRCode [])
