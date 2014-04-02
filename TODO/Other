@@ -5,8 +5,6 @@
 
 * Oops: LD_PRELOAD should hook exec as another input dependency
 
-* Chart the time taken by targets or subdirectories?
-
 * Check error parsing with netbeans (Entering directory + other errors)
 
 * Better prints:
