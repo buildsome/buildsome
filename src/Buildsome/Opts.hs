@@ -73,11 +73,11 @@ get = execParser opts
                 <|>
                 pure UpdateGitIgnore
               )
-          <*> (flag DontDeleteUnspecifiedOutputs DeleteUnspecifiedOutputs
-               (short 'D' <>
-                long "delete-unspecified" <>
-                help "Delete unspecified outputs"))
-          <*> (flag DontOverwriteUnregisteredOutputs OverwriteUnregisteredOutputs
-               (long "overwrite" <>
-                help "Overwrite outputs not created by buildsome"))
+          <*> flag DontDeleteUnspecifiedOutputs DeleteUnspecifiedOutputs
+              (short 'D' <>
+               long "delete-unspecified" <>
+               help "Delete unspecified outputs")
+          <*> flag DontOverwriteUnregisteredOutputs OverwriteUnregisteredOutputs
+              (long "overwrite" <>
+               help "Overwrite outputs not created by buildsome")
     opts = info (helper <*> parser) (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")
