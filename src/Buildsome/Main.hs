@@ -140,40 +140,42 @@ cancelAllSlaves bs = go 0
         -- created during cancellation
         go count
 
-withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
-withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
-  slaveMapByTargetRep <- newIORef M.empty
-  pool <- Parallelism.new $ fromMaybe 1 optParallelism
-  freshPrinterIds <- Fresh.new 1
-  buildId <- BuildId.new
-  rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
-  let
-    buildsome =
-      Buildsome
-      { bsOpts = opt
-      , bsMakefile = makefile
-      , bsBuildId = buildId
-      , bsRootPath = rootPath
-      , bsBuildMaps = BuildMaps.make makefile
-      , bsDb = db
-      , bsFsHook = fsHook
-      , bsSlaveByTargetRep = slaveMapByTargetRep
-      , bsParallelism = pool
-      , bsFreshPrinterIds = freshPrinterIds
-      }
-  body buildsome
-    -- We must not leak running slaves as we're not allowed to
-    -- access fsHook, db, etc after leaving here:
-    `E.onException` putStrLn "Shutting down"
-    `finally` cancelAllSlaves buildsome
-    -- Must update gitIgnore after all the slaves finished updating
-    -- the registered output lists:
-    `finally` maybeUpdateGitIgnore buildsome
-  where
-    maybeUpdateGitIgnore buildsome =
-      case optUpdateGitIgnore of
-      Opts.UpdateGitIgnore -> updateGitIgnore buildsome makefilePath
-      Opts.DontUpdateGitIgnore -> return ()
+withBuildsome :: FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
+withBuildsome makefilePath makefile opt@Opt{..} body =
+  FSHook.with $ \fsHook ->
+  Db.with (buildDbFilename makefilePath) $ \db -> do
+    slaveMapByTargetRep <- newIORef M.empty
+    pool <- Parallelism.new $ fromMaybe 1 optParallelism
+    freshPrinterIds <- Fresh.new 1
+    buildId <- BuildId.new
+    rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
+    let
+      buildsome =
+        Buildsome
+        { bsOpts = opt
+        , bsMakefile = makefile
+        , bsBuildId = buildId
+        , bsRootPath = rootPath
+        , bsBuildMaps = BuildMaps.make makefile
+        , bsDb = db
+        , bsFsHook = fsHook
+        , bsSlaveByTargetRep = slaveMapByTargetRep
+        , bsParallelism = pool
+        , bsFreshPrinterIds = freshPrinterIds
+        }
+    body buildsome
+      -- We must not leak running slaves as we're not allowed to
+      -- access fsHook, db, etc after leaving here:
+      `E.onException` putStrLn "Shutting down"
+      `finally` cancelAllSlaves buildsome
+      -- Must update gitIgnore after all the slaves finished updating
+      -- the registered output lists:
+      `finally` maybeUpdateGitIgnore buildsome
+    where
+      maybeUpdateGitIgnore buildsome =
+        case optUpdateGitIgnore of
+        Opts.UpdateGitIgnore -> updateGitIgnore buildsome makefilePath
+        Opts.DontUpdateGitIgnore -> return ()
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
@@ -878,8 +880,6 @@ main = do
       installSigintHandler
       setBuffering
       printer <- Printer.new 0
-      FSHook.with $ \fsHook ->
-        Db.with (buildDbFilename finalMakefilePath) $ \db ->
-        withBuildsome finalMakefilePath fsHook db makefile opt $ \buildsome -> do
-          deleteRemovedOutputs buildsome
-          handleRequested buildsome printer inOrigCwd requested
+      withBuildsome finalMakefilePath makefile opt $ \buildsome -> do
+        deleteRemovedOutputs buildsome
+        handleRequested buildsome printer inOrigCwd requested
