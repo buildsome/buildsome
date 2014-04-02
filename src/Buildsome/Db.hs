@@ -34,7 +34,7 @@ import qualified Database.Sophia as Sophia
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.3"
+schemaVersion = "schema.ver.4"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -50,7 +50,7 @@ instance Binary FileDescCache
 
 type Reason = ByteString
 
-data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc
+data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc | InputAccessIgnoredFile
   deriving (Generic, Show)
 instance Binary InputAccess
 

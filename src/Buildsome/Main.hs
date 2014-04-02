@@ -415,8 +415,9 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} 
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, oldInputAccess) ->
       case snd oldInputAccess of
-        Db.InputAccessFull oldDesc ->         compareToNewDesc "input"       (getFileDesc db) (filePath, oldDesc)
+        Db.InputAccessFull     oldDesc     -> compareToNewDesc "input"       (getFileDesc db) (filePath, oldDesc)
         Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc  (filePath, oldModeDesc)
+        Db.InputAccessIgnoredFile          -> return ()
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
@@ -431,8 +432,9 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} 
     compareToNewDesc str getNewDesc (filePath, oldDesc) = do
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
-    inputAccessToType Db.InputAccessModeOnly {} = AccessTypeModeOnly
-    inputAccessToType Db.InputAccessFull {} = AccessTypeFull
+    inputAccessToType Db.InputAccessModeOnly {} = Just AccessTypeModeOnly
+    inputAccessToType Db.InputAccessFull {} = Just AccessTypeFull
+    inputAccessToType Db.InputAccessIgnoredFile = Nothing
     waitForInputs = do
       -- TODO: This is good for parallelism, but bad if the set of
       -- inputs changed, as it may build stuff that's no longer
@@ -442,9 +444,11 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} 
         fmap concat $ forM (M.toList elInputsDescs) $ \(inputPath, (depReason, inputAccess)) ->
         if inputPath `S.member` hinted
         then return []
-        else
-          makeSlavesForAccessType (inputAccessToType inputAccess)
-          bte { bteReason = depReason } Implicit inputPath
+        else case inputAccessToType inputAccess of
+          Nothing -> return []
+          Just accessType ->
+            makeSlavesForAccessType accessType
+            bte { bteReason = depReason } Implicit inputPath
 
       let hintReason = ColorText.render $ "Hint from " <> (targetShow . targetOutputs) target
       hintedSlaves <-
@@ -584,10 +588,9 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       | otherwise = do
         actualOutputs <- readIORef outputsRef
         -- There's no problem for a target to read its own outputs freely:
-        unless (path `S.member` actualOutputs) $ do
+        unless (any (path `S.member`) [actualOutputs, targetOutputsSet]) $ do
           () <- useInput
-          unless (path `elem` targetOutputs target || MagicFiles.allowedUnspecifiedOutput path) $
-            recordInput inputsRef accessType actDesc path
+          recordInput inputsRef accessType actDesc path
     handleInput accessType actDesc path =
       handleInputCommon accessType actDesc path $ return ()
     handleDelayedInput accessType actDesc path =
@@ -605,7 +608,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     Handlers {..}
     `finally` do
       outputs <- readIORef outputsRef
-      registerOutputs bteBuildsome $ S.intersection outputs $ S.fromList $ targetOutputs target
+      registerOutputs bteBuildsome $ S.intersection outputs targetOutputsSet
   subtractedTime <- (time-) <$> readIORef pauseTime
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
@@ -615,6 +618,8 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     , rcrInputs = inputs
     , rcrOutputs = outputs
     }
+  where
+    targetOutputsSet = S.fromList $ targetOutputs target
 
 saveExecutionLog :: Buildsome -> Target -> RunCmdResults -> IO ()
 saveExecutionLog buildsome target RunCmdResults{..} = do
@@ -632,6 +637,7 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     }
   where
     db = bsDb buildsome
+    inputAccess path (_, reason, _) | MagicFiles.allowedUnspecifiedOutput path = return (reason, Db.InputAccessIgnoredFile)
     inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
     inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
