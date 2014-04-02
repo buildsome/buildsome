@@ -23,6 +23,7 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optUpdateGitIgnore :: UpdateGitIgnore
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
+               , optChartsPath :: Maybe FilePath
                }
 
 data Opts = GetVersion | Opts Opt
@@ -80,4 +81,7 @@ get = execParser opts
           <*> flag DontOverwriteUnregisteredOutputs OverwriteUnregisteredOutputs
               (long "overwrite" <>
                help "Overwrite outputs not created by buildsome")
+          <*> strOpt (long "charts" <>
+                      metavar "charts-file" <>
+                      help "File to write charts to")
     opts = info (helper <*> parser) (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")

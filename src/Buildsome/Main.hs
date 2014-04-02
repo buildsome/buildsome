@@ -57,6 +57,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import qualified Lib.BuildId as BuildId
 import qualified Lib.BuildMaps as BuildMaps
+import qualified Lib.Chart as Chart
 import qualified Lib.ColorText as ColorText
 import qualified Lib.FSHook as FSHook
 import qualified Lib.FilePath as FilePath
@@ -198,9 +199,9 @@ data BuildTargetEnv = BuildTargetEnv
 mkSlavesForPaths :: BuildTargetEnv -> Explicitness -> [FilePath] -> IO [Slave]
 mkSlavesForPaths bte explicitness = fmap concat . mapM (makeSlaves bte explicitness)
 
-want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO ()
+want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO Slave.Stats
 want printer buildsome reason paths =
-  mapM_ (Slave.wait printer) =<<
+  fmap mconcat . mapM (Slave.wait printer) =<<
   mkSlavesForPaths BuildTargetEnv
     { bteBuildsome = buildsome
     , btePrinter = printer
@@ -769,6 +770,7 @@ specifiedMakefile path = do
 data TargetsRequest = TargetsRequest
   { targetsRequestPaths :: [FilePath]
   , targetsRequestReason :: Reason
+  , targetsRequestChartPath :: Maybe FilePath
   }
 
 data Requested = RequestedClean | RequestedTargets TargetsRequest
@@ -779,17 +781,19 @@ instance Show BadCommandLine where
   show (BadCommandLine msg) =
     renderStr $ Color.error $ "Invalid command line options: " <> fromString msg
 
-getRequestedTargets :: [ByteString] -> IO Requested
-getRequestedTargets ["clean"] = return RequestedClean
-getRequestedTargets [] = return $ RequestedTargets TargetsRequest
+getRequestedTargets :: Maybe FilePath -> [ByteString] -> IO Requested
+getRequestedTargets (Just _) ["clean"] = E.throwIO $ BadCommandLine "Clean requested with charts"
+getRequestedTargets Nothing ["clean"] = return RequestedClean
+getRequestedTargets mChartPath [] = return $ RequestedTargets TargetsRequest
   { targetsRequestPaths = ["default"]
-  , targetsRequestReason = "implicit 'default' target" }
-getRequestedTargets ts
+  , targetsRequestReason = "implicit 'default' target"
+  , targetsRequestChartPath = mChartPath }
+getRequestedTargets mChartPath ts
   | "clean" `elem` ts = E.throwIO $ BadCommandLine "Clean must be requested exclusively"
   | otherwise = return $ RequestedTargets TargetsRequest
   { targetsRequestPaths = ts
   , targetsRequestReason = "explicit request from cmdline"
-  }
+  , targetsRequestChartPath = mChartPath }
 
 setBuffering :: IO ()
 setBuffering = do
@@ -824,6 +828,7 @@ handleOpts GetVersion = do
   return Nothing
 handleOpts (Opts opt) = do
   origMakefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
+  mChartsPath <- traverse FilePath.canonicalizePath $ optChartsPath opt
   (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
   let inOrigCwd =
         case optMakefilePath opt of
@@ -832,19 +837,25 @@ handleOpts (Opts opt) = do
         Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
         -- Otherwise: there's no useful original cwd:
         Just _ -> return
-  requested <- getRequestedTargets $ optRequestedTargets opt
+  requested <- getRequestedTargets mChartsPath $ optRequestedTargets opt
   makefile <- parseMakefile origMakefilePath finalMakefilePath
   return $ Just (opt, inOrigCwd, requested, finalMakefilePath, makefile)
 
+makeChart :: Slave.Stats -> FilePath -> IO ()
+makeChart slaveStats filePath = do
+  putStrLn $ "Writing chart to " ++ show filePath
+  Chart.make slaveStats filePath
+
 handleRequested :: Buildsome -> Printer -> InOrigCwd -> Requested -> IO ()
-handleRequested buildsome printer inOrigCwd (RequestedTargets (TargetsRequest requestedTargets reason)) = do
+handleRequested buildsome printer inOrigCwd (RequestedTargets (TargetsRequest requestedTargets reason mChartPath)) = do
   requestedTargetPaths <- inOrigCwd requestedTargets
   printStrLn printer $
     "Building: " <> ColorText.intercalate ", " (map targetShow requestedTargetPaths)
-  (buildTime, ()) <- timeIt $ want printer buildsome reason requestedTargetPaths
+  (buildTime, slaveStats) <- timeIt $ want printer buildsome reason requestedTargetPaths
   printStrLn printer $ mconcat
     [ Color.success "Build Successful", ": "
     , Color.timing (show buildTime <> " seconds"), " total." ]
+  maybe (return ()) (makeChart slaveStats) mChartPath
 
 handleRequested buildsome _ _ RequestedClean = do
   outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome

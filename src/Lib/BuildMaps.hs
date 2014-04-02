@@ -17,7 +17,7 @@ import Prelude hiding (FilePath)
 import qualified Data.Map.Strict as M
 import qualified Lib.Makefile as Makefile
 
-newtype TargetRep = TargetRep FilePath -- We use the minimum output path as the target key/representative
+newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimum output path as the target key/representative
   deriving (Eq, Ord, Show)
 computeTargetRep :: Target -> TargetRep
 computeTargetRep = TargetRep . minimum . targetOutputs
