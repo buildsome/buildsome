@@ -766,7 +766,12 @@ specifiedMakefile path = do
       | Posix.isDirectory stat -> return $ path </> "Makefile"
       | otherwise -> return path
 
-data Requested = RequestedClean | RequestedTargets [FilePath] Reason
+data TargetsRequest = TargetsRequest
+  { targetsRequestPaths :: [FilePath]
+  , targetsRequestReason :: Reason
+  }
+
+data Requested = RequestedClean | RequestedTargets TargetsRequest
 
 data BadCommandLine = BadCommandLine String deriving (Typeable)
 instance E.Exception BadCommandLine
@@ -776,10 +781,15 @@ instance Show BadCommandLine where
 
 getRequestedTargets :: [ByteString] -> IO Requested
 getRequestedTargets ["clean"] = return RequestedClean
-getRequestedTargets [] = return $ RequestedTargets ["default"] "implicit 'default' target"
+getRequestedTargets [] = return $ RequestedTargets TargetsRequest
+  { targetsRequestPaths = ["default"]
+  , targetsRequestReason = "implicit 'default' target" }
 getRequestedTargets ts
   | "clean" `elem` ts = E.throwIO $ BadCommandLine "Clean must be requested exclusively"
-  | otherwise = return $ RequestedTargets ts "explicit request from cmdline"
+  | otherwise = return $ RequestedTargets TargetsRequest
+  { targetsRequestPaths = ts
+  , targetsRequestReason = "explicit request from cmdline"
+  }
 
 setBuffering :: IO ()
 setBuffering = do
@@ -827,7 +837,7 @@ handleOpts (Opts opt) = do
   return $ Just (opt, inOrigCwd, requested, finalMakefilePath, makefile)
 
 handleRequested :: Buildsome -> Printer -> InOrigCwd -> Requested -> IO ()
-handleRequested buildsome printer inOrigCwd (RequestedTargets requestedTargets reason) = do
+handleRequested buildsome printer inOrigCwd (RequestedTargets (TargetsRequest requestedTargets reason)) = do
   requestedTargetPaths <- inOrigCwd requestedTargets
   printStrLn printer $
     "Building: " <> ColorText.intercalate ", " (map targetShow requestedTargetPaths)
