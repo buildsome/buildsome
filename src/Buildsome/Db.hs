@@ -76,7 +76,7 @@ getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
 getKey db key = fmap decode <$> Sophia.getValue (dbSophia db) key
 
 deleteKey :: Db -> ByteString -> IO ()
-deleteKey db key = Sophia.delValue (dbSophia db) key
+deleteKey db = Sophia.delValue (dbSophia db)
 
 with :: FilePath -> (Db -> IO a) -> IO a
 with rawDbPath body = do
@@ -117,4 +117,4 @@ executionLog target = mkIRefKey targetKey
     targetKey = MD5.hash $ targetCmds target -- TODO: Canonicalize commands (whitespace/etc)
 
 fileDescCache :: FilePath -> Db -> IRef FileDescCache
-fileDescCache path = mkIRefKey path
+fileDescCache = mkIRefKey

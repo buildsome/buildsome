@@ -146,7 +146,7 @@ preserveMetavar =
   where
     char4 a b c d = BS8.pack [a, b, c, d]
 
-interpolateVariables :: (forall u m. Monad m => ParserG u m ByteString) -> [Char] -> Parser ByteString
+interpolateVariables :: (forall u m. Monad m => ParserG u m ByteString) -> String -> Parser ByteString
 interpolateVariables escapeParse stopChars = do
   varsEnv <- stateVars <$> P.getState
   let
@@ -170,7 +170,7 @@ interpolateVariables escapeParse stopChars = do
   interpolate S.empty
 
 -- Inside a single line
-interpolateString :: Monad m => ParserG u m ByteString -> [Char] -> ParserG u m ByteString -> ParserG u m ByteString
+interpolateString :: Monad m => ParserG u m ByteString -> String -> ParserG u m ByteString -> ParserG u m ByteString
 interpolateString escapeParser stopChars dollarHandler =
   concatMany (literalString '\'' <|> doubleQuotes <|> interpolatedChar stopChars)
   where
@@ -178,7 +178,7 @@ interpolateString escapeParser stopChars dollarHandler =
     doubleQuotes = doubleQuoted <$> P.char '"' <*> concatMany (interpolatedChar "\"\n") <*> P.char '"'
     doubleQuoted begin chars end = BS8.singleton begin <> chars <> BS8.singleton end
     interpolatedChar stopChars' = P.choice
-      [ (P.char '$' *> dollarHandler)
+      [ P.char '$' *> dollarHandler
       , escapeParser
       , BS8.singleton <$> P.noneOf stopChars'
       ]
@@ -370,7 +370,7 @@ mkMakefile allTargets =
     getPhonyInputs t@(Target [".PHONY"] inputs [] cmd _) =
       case filter (`S.notMember` outputPathsSet) inputs of
       (danglingInput:_) -> badPhony t $ "refers to inexistent target " <> danglingInput
-      [] | not (BS8.null cmd) -> badPhony t $ "may not specify commands"
+      [] | not (BS8.null cmd) -> badPhony t "may not specify commands"
          | otherwise -> return inputs
     getPhonyInputs t = badPhony t "invalid"
     (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputs) targets

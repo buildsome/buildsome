@@ -134,13 +134,11 @@ cancelAllSlaves bs = go 0
          ("Slave MVar for " <> targetShow targetRep <> " not populated in 100 millis!")) $
         readMVar mvar
       let count = length slaves
-      if alreadyCancelled >= count
-        then return ()
-        else do
-          mapM_ timeoutVerifyCancelled slaves
-          -- Make sure to cancel any potential new slaves that were
-          -- created during cancellation
-          go count
+      unless (alreadyCancelled >= count) $ do
+        mapM_ timeoutVerifyCancelled slaves
+        -- Make sure to cancel any potential new slaves that were
+        -- created during cancellation
+        go count
 
 withBuildsome :: FilePath -> FSHook -> Db -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 withBuildsome makefilePath fsHook db makefile opt@Opt{..} body = do
@@ -639,7 +637,7 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     forM (S.toList rcrOutputs) $ \outPath -> do
       fileDesc <- getFileDesc db outPath
       return (outPath, fileDesc)
-  writeIRef (Db.executionLog target (bsDb buildsome)) $ Db.ExecutionLog
+  writeIRef (Db.executionLog target (bsDb buildsome)) Db.ExecutionLog
     { elBuildId = bsBuildId buildsome
     , elInputsDescs = inputsDescs
     , elOutputsDescs = M.fromList outputDescPairs
@@ -679,7 +677,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
-  atomicModifyIORef'_ (mkIORef (bsDb buildsome)) $ (newItems <>)
+  atomicModifyIORef'_ (mkIORef (bsDb buildsome)) (newItems <>)
 
 registerOutputs :: Buildsome -> Set FilePath -> IO ()
 registerOutputs = registerDbList Db.registeredOutputsRef

@@ -52,7 +52,7 @@ onTargetPaths f (Target outputs inputs orderOnlyInputs cmds pos) =
   <*> pure cmds
   <*> pure pos
 
-onFilePatternPaths :: Functor f => (FilePath -> f FilePath) -> (FilePattern -> f FilePattern)
+onFilePatternPaths :: Functor f => (FilePath -> f FilePath) -> FilePattern -> f FilePattern
 onFilePatternPaths f (FilePattern dir file) = (`FilePattern` file) <$> f dir
 
 onInputPatPaths :: Functor f => (FilePath -> f FilePath) -> InputPat -> f InputPat

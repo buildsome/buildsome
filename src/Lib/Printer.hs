@@ -55,7 +55,7 @@ new pid = Printer pid <$> newIORef 0
 
 {-# INLINE newFrom #-}
 newFrom :: Printer -> Id -> IO Printer
-newFrom (Printer _id indentRef) pid = do
+newFrom (Printer _id indentRef) pid =
   Printer pid <$> (newIORef =<< readIORef indentRef)
 
 {-# INLINE idStr #-}

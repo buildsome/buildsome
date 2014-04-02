@@ -24,8 +24,8 @@ seconds :: Integer -> DiffTime
 seconds = secondsToDiffTime
 
 warning :: DiffTime -> String -> IO a -> IO a
-warning timeout errMsg action = do
-  withAsync timeoutMsg $ \_ -> action
+warning timeout errMsg action =
+  withAsync timeoutMsg $ const action
   where
     timeoutMsg = do
       threadDelay $ floor $ 1000000.0 * timeout
