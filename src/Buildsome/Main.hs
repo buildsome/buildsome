@@ -49,13 +49,13 @@ instance Show MakefileScanFailed where
     , " in this directory or any of its parents"
     ]
 
-findMakefile :: IO FilePath
-findMakefile = do
+scanFile :: FilePath -> IO FilePath
+scanFile name = do
   cwd <- Posix.getWorkingDirectory
   let
     -- NOTE: Excludes root (which is probably fine)
     parents = takeWhile (/= "/") $ iterate FilePath.takeDirectory cwd
-    candidates = map (</> standardMakeFilename) parents
+    candidates = map (</> name) parents
   -- Use EitherT with Left short-circuiting when found, and Right
   -- falling through to the end of the loop:
   res <- runEitherT $ mapM_ check candidates
@@ -143,7 +143,10 @@ handleOpts GetVersion = do
   BS8.putStrLn $ "buildsome " <> ver
   return Nothing
 handleOpts (Opts opt) = do
-  origMakefilePath <- maybe findMakefile specifiedMakefile $ optMakefilePath opt
+  origMakefilePath <-
+    case optMakefilePath opt of
+    Nothing -> scanFile standardMakeFilename
+    Just path -> specifiedMakefile path
   mChartsPath <- traverse FilePath.canonicalizePath $ optChartsPath opt
   (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
   let inOrigCwd =
