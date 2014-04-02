@@ -5,7 +5,7 @@ module Lib.Slave
   , wait
   , cancel
   , wrap
-  , Stats(..)
+  , When(..), Stats(..)
   ) where
 
 import Control.Applicative ((<$>))
@@ -24,8 +24,11 @@ import qualified Control.Concurrent.Async as Async
 import qualified Control.Exception as E
 import qualified Lib.Printer as Printer
 
+-- TODO: Get this Stats business out of here and have "Slave a"?
+data When = FromCache | BuiltNow deriving Show
+
 newtype Stats = Stats
-  { statsSelfTime :: Map TargetRep DiffTime
+  { statsSelfTime :: Map TargetRep (When, DiffTime)
   } deriving (Show, Monoid)
 
 data Slave = Slave

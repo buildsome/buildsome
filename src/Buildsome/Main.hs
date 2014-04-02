@@ -428,7 +428,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.Executio
       applyExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    let selfStats = Slave.Stats $ M.singleton targetRep elSelfTime
+    let selfStats = Slave.Stats $ M.singleton targetRep (Slave.FromCache, elSelfTime)
     return $ mappend selfStats nestedSlaveStats
   where
     db = bsDb bteBuildsome
@@ -673,7 +673,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
 
     printStrLn btePrinter $
       "Build (now) took " <> Color.timing (show rcrSelfTime <> " seconds")
-    let selfStats = Slave.Stats (M.singleton targetRep rcrSelfTime)
+    let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
     return $ mconcat [selfStats, hintedStats, rcrSlaveStats]
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
