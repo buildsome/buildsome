@@ -63,6 +63,7 @@ executable buildsome
                ,     Lib.PoolAlloc
                ,     Lib.Printer
                ,     Lib.Process
+               ,     Lib.ScanFileUpwards
                ,     Lib.Show
                ,     Lib.ShowBytes
                ,     Lib.Sigint

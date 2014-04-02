@@ -5,8 +5,6 @@ import Buildsome (Buildsome)
 import Buildsome.Db (Reason)
 import Buildsome.Opts (Opts(..), Opt(..))
 import Control.Monad
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Either
 import Data.ByteString (ByteString)
 import Data.Monoid
 import Data.String (IsString(..))
@@ -16,6 +14,7 @@ import Lib.Directory (getMFileStatus)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile (Makefile)
 import Lib.Printer (Printer)
+import Lib.ScanFileUpwards (scanFileUpwards)
 import Lib.Show (show)
 import Lib.Sigint (installSigintHandler)
 import Lib.TimeIt (timeIt)
@@ -38,34 +37,6 @@ import qualified System.Posix.ByteString as Posix
 
 standardMakeFilename :: FilePath
 standardMakeFilename = "Makefile"
-
-data MakefileScanFailed = MakefileScanFailed deriving (Typeable)
-instance E.Exception MakefileScanFailed
-instance Show MakefileScanFailed where
-  show MakefileScanFailed =
-    ColorText.renderStr $ Color.error $ mconcat
-    [ "ERROR: Cannot find a file named "
-    , Color.path (show standardMakeFilename)
-    , " in this directory or any of its parents"
-    ]
-
-scanFile :: FilePath -> IO FilePath
-scanFile name = do
-  cwd <- Posix.getWorkingDirectory
-  let
-    -- NOTE: Excludes root (which is probably fine)
-    parents = takeWhile (/= "/") $ iterate FilePath.takeDirectory cwd
-    candidates = map (</> name) parents
-  -- Use EitherT with Left short-circuiting when found, and Right
-  -- falling through to the end of the loop:
-  res <- runEitherT $ mapM_ check candidates
-  case res of
-    Left found -> FilePath.makeRelativeToCurrentDirectory found
-    Right () -> E.throwIO MakefileScanFailed
-  where
-    check path = do
-      exists <- liftIO $ Posix.fileExist path
-      when exists $ left path
 
 data SpecifiedInexistentMakefilePath = SpecifiedInexistentMakefilePath FilePath deriving (Typeable)
 instance Show SpecifiedInexistentMakefilePath where
@@ -137,6 +108,16 @@ parseMakefile origMakefilePath finalMakefilePath = do
 
 type InOrigCwd = [FilePath] -> IO [FilePath]
 
+data MakefileScanFailed = MakefileScanFailed deriving (Typeable)
+instance E.Exception MakefileScanFailed
+instance Show MakefileScanFailed where
+  show MakefileScanFailed =
+    ColorText.renderStr $ Color.error $ mconcat
+    [ "ERROR: Cannot find a file named "
+    , Color.path (show standardMakeFilename)
+    , " in this directory or any of its parents"
+    ]
+
 handleOpts :: Opts -> IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
 handleOpts GetVersion = do
   ver <- Version.get
@@ -145,7 +126,9 @@ handleOpts GetVersion = do
 handleOpts (Opts opt) = do
   origMakefilePath <-
     case optMakefilePath opt of
-    Nothing -> scanFile standardMakeFilename
+    Nothing ->
+      maybe (E.throwIO MakefileScanFailed) return =<<
+      scanFileUpwards standardMakeFilename
     Just path -> specifiedMakefile path
   mChartsPath <- traverse FilePath.canonicalizePath $ optChartsPath opt
   (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
