@@ -1,3 +1,5 @@
+* Implicit input parent dirs for every input/output
+
 * Handlers for FSHook need to take multiple inputs simultaneously
   (e.g: exec search paths) for parallelism
 
