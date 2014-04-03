@@ -31,6 +31,7 @@ executable buildsome
                ,     Buildsome.Color
                ,     Buildsome.Db
                ,     Buildsome.FileDescCache
+               ,     Buildsome.Print
                ,     Buildsome.MagicFiles
                ,     Buildsome.Opts
                ,     Lib.AccessType

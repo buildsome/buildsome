@@ -7,6 +7,7 @@ module Buildsome
 import Buildsome.Db (Db, IRef(..), Reason)
 import Buildsome.FileDescCache (getFileDesc, fileDescOfMStat)
 import Buildsome.Opts (Opt(..))
+import Buildsome.Print (targetShow)
 import Control.Applicative ((<$>), Applicative(..))
 import Control.Concurrent.MVar
 import Control.Monad
@@ -27,7 +28,6 @@ import Lib.AccessType (AccessType(..))
 import Lib.AnnotatedException (annotateException)
 import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
-import Lib.ByteString (chopTrailingNewline)
 import Lib.ColorText (ColorText, renderStr)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories)
 import Lib.Exception (finally)
@@ -36,9 +36,8 @@ import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
-import Lib.Makefile (Makefile(..), TargetType(..), Target)
+import Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
 import Lib.Parallelism (Parallelism)
-import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
@@ -54,6 +53,7 @@ import qualified Buildsome.Color as Color
 import qualified Buildsome.Db as Db
 import qualified Buildsome.MagicFiles as MagicFiles
 import qualified Buildsome.Opts as Opts
+import qualified Buildsome.Print as Print
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
@@ -68,7 +68,6 @@ import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Slave as Slave
-import qualified Lib.StdOutputs as StdOutputs
 import qualified Lib.Timeout as Timeout
 import qualified Prelude
 import qualified System.IO as IO
@@ -107,9 +106,6 @@ recordInput inputsRef accessType reason path = do
     merge _ (oldAccessType, oldReason, oldMStat) =
      -- Keep the highest access type, and the oldest reason/mstat
      (max accessType oldAccessType, oldReason, oldMStat)
-
-targetShow :: Show a => a -> ColorText
-targetShow = Color.target . show
 
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = go 0
@@ -235,18 +231,13 @@ makeSlaves bte@BuildTargetEnv{..} explicitness path = do
   childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
   return $ maybeToList mSlave ++ childs
 
-printPosMessage :: SourcePos -> ColorText -> IO ()
-printPosMessage pos msg =
-  ColorText.putStrLn $ mconcat [fromString (showPos pos), ": ", msg]
-
 -- e.g: .pyc files
 handleLegalUnspecifiedOutputs :: Buildsome -> Target -> [FilePath] -> IO ()
 handleLegalUnspecifiedOutputs buildsome target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
   -- creating job
-  unless (null paths) $ printPosMessage (targetPos target) $
-    Color.warning $ mconcat
-    [ "WARNING: Leaked unspecified outputs: ", show paths, ", ", actionDesc ]
+  unless (null paths) $ Print.warn (targetPos target) $
+    mconcat ["Leaked unspecified outputs: ", show paths, ", ", actionDesc]
   action
   where
     (actionDesc, action) =
@@ -292,7 +283,7 @@ verifyTargetOutputs buildsome outputs target = do
   -- Illegal unspecified that do exist are a problem:
   existingIllegalOutputs <- filterM Posix.fileExist illegalOutputs
   unless (null existingIllegalOutputs) $ do
-    printPosMessage (targetPos target) $ Color.error $
+    Print.posMessage (targetPos target) $ Color.error $
       "Illegal output files created: " <> show existingIllegalOutputs
     mapM_ removeFileOrDirectory existingIllegalOutputs
     E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
@@ -307,61 +298,20 @@ warnOverSpecified ::
   ColorText -> Set FilePath -> Set FilePath -> SourcePos -> IO ()
 warnOverSpecified str specified used pos =
   unless (S.null unused) $
-  printPosMessage pos $ Color.warning $ mconcat
-  [ "WARNING: Over-specified ", str, ": ", targetShow (S.toList unused) ]
+  Print.warn pos $ mconcat
+    ["Over-specified ", str, ": ", targetShow (S.toList unused)]
   where
     unused = specified `S.difference` used
-
-targetAllInputs :: Target -> [FilePath]
-targetAllInputs target =
-  targetInputs target ++ targetOrderOnlyInputs target
-
-targetPrintWrap :: BuildTargetEnv -> Target -> ColorText -> IO a -> IO a
-targetPrintWrap BuildTargetEnv{..} target str body =
-  Printer.printWrap btePrinter (targetShow (targetOutputs target)) $ do
-    printStrLn btePrinter $ mconcat [str, " (", fromBytestring8 bteReason, ")"]
-    body
-
-showMultiline :: ByteString -> ByteString
-showMultiline xs
-  | '\n' `BS8.notElem` x = x
-  | otherwise = multilineDelimiter <> x <> multilineDelimiter
-  where
-    x = chopTrailingNewline xs
-    multilineDelimiter = "\"\"\""
-
-printCmd :: Printer -> Target -> IO ()
-printCmd printer target =
-  unless (BS8.null cmd) $ printStrLn printer $ showMultiline $
-  ColorText.render $ Color.command $ fromBytestring8 cmd
-  where
-    cmd = targetCmds target
-
-colorStdOutputs :: StdOutputs ByteString -> StdOutputs ColorText
-colorStdOutputs (StdOutputs out err) =
-  StdOutputs
-  (colorize Color.stdout out)
-  (colorize Color.stderr err)
-  where
-    colorize f = f . fromBytestring8 . chopTrailingNewline
-
-outputsStr :: ColorText -> StdOutputs ByteString -> Maybe ColorText
-outputsStr label = StdOutputs.str label . colorStdOutputs
-
-printTargetStdOutputs :: Target -> StdOutputs ByteString -> IO ()
-printTargetStdOutputs target stdOutputs =
-  maybe (return ()) ColorText.putStrLn $
-  outputsStr (targetShow (targetOutputs target)) stdOutputs
 
 -- Already verified that the execution log is a match
 applyExecutionLog ::
   BuildTargetEnv -> Target ->
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
-applyExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
-  targetPrintWrap bte target "REPLAY" $ do
-    printCmd btePrinter target
-    printTargetStdOutputs target stdOutputs
+applyExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
+  Print.targetWrap btePrinter bteReason target "REPLAY" $ do
+    Print.cmd btePrinter target
+    Print.targetStdOutputs target stdOutputs
     verifyTargetSpec bteBuildsome inputs outputs target
     printStrLn btePrinter $ ColorText.render $
       "Build (originally) took " <> Color.timing (show selfTime <> " seconds")
@@ -573,7 +523,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     handleOutput _actDesc path
       | MagicFiles.outputIgnored path = return ()
       | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
-  printCmd btePrinter target
+  Print.cmd btePrinter target
   (time, stdOutputs) <-
     FSHook.runCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
     (timeIt . shellCmdVerify target ["HOME", "PATH"])
@@ -618,7 +568,7 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
 
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
-  targetPrintWrap bte target "BUILDING" $ do
+  Print.targetWrap btePrinter bteReason target "BUILDING" $ do
     -- TODO: Register each created subdirectory as an output?
     mapM_ (createDirectories . FilePath.takeDirectory) $ targetOutputs target
 
@@ -665,8 +615,8 @@ instance E.Exception TargetCommandFailed
 instance Show TargetCommandFailed where
   show (TargetCommandFailed target exitCode stdOutputs) =
     renderStr $ Color.error $ mconcat
-    [ fromBytestring8 (showMultiline cmd), " failed: ", show exitCode
-    , fromMaybe "" $ outputsStr "Outputs:" stdOutputs ]
+    [ fromBytestring8 (Print.delimitMultiline cmd), " failed: ", show exitCode
+    , fromMaybe "" $ Print.outputsStr "Outputs:" stdOutputs ]
     where
       cmd = targetCmds target
 
@@ -678,7 +628,7 @@ shellCmdVerify target inheritEnvs newEnvs = do
   case exitCode of
     ExitFailure {} -> E.throwIO $ TargetCommandFailed target exitCode stdOutputs
     _ -> return ()
-  printTargetStdOutputs target stdOutputs
+  Print.targetStdOutputs target stdOutputs
   return stdOutputs
 
 buildDbFilename :: FilePath -> FilePath

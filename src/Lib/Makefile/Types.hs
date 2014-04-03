@@ -1,5 +1,5 @@
 module Lib.Makefile.Types
-  ( TargetType(..)
+  ( TargetType(..), targetAllInputs
   , FilePattern(..), onFilePatternPaths
   , InputPat(..), onInputPatPaths
   , Target, onTargetPaths
@@ -40,6 +40,10 @@ data Makefile = Makefile
   , makefilePatterns :: [Pattern]
   , makefilePhonies :: [FilePath]
   } deriving (Show)
+
+targetAllInputs :: Target -> [FilePath]
+targetAllInputs target =
+  targetInputs target ++ targetOrderOnlyInputs target
 
 -- Filepath lens boilerplate:
 
