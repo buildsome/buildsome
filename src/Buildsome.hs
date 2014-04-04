@@ -489,7 +489,7 @@ data RunCmdResults = RunCmdResults
   { rcrSelfTime :: DiffTime -- excluding pause times
   , rcrStdOutputs :: StdOutputs ByteString
   , rcrInputs :: Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)
-  , rcrOutputs :: Set FilePath
+  , rcrOutputs :: Map FilePath Reason
   , rcrSlaveStats :: Slave.Stats
   }
 
@@ -497,7 +497,7 @@ runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
   pauseTime <- newIORef 0
   inputsRef <- newIORef M.empty
-  outputsRef <- newIORef S.empty
+  outputsRef <- newIORef M.empty
   slaveStatsRef <- newIORef mempty
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
@@ -511,7 +511,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       | otherwise = do
         actualOutputs <- readIORef outputsRef
         -- There's no problem for a target to read its own outputs freely:
-        unless (any (path `S.member`) [actualOutputs, targetOutputsSet]) $ do
+        unless (path `M.member` actualOutputs || path `S.member` targetOutputsSet) $ do
           () <- useInput
           recordInput inputsRef accessType actDesc path
     handleInput accessType actDesc path =
@@ -520,10 +520,10 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       handleInputCommon accessType actDesc path $
         measurePauseTime . (>>= mappendSlaveStats) . waitForSlaves btePrinter parCell bteBuildsome =<<
         makeSlavesForAccessType accessType bte { bteReason = actDesc } Implicit path
-    handleOutput _actDesc path
+    handleOutput actDesc path
       | MagicFiles.outputIgnored path = return ()
       | otherwise = E.mask_ $ do
-        atomicModifyIORef'_ outputsRef $ S.insert path
+        atomicModifyIORef'_ outputsRef $ M.insert path actDesc
         when (path `S.member` targetOutputsSet) $
           registerOutputs bteBuildsome $ S.singleton path
   Print.cmd btePrinter target
@@ -550,7 +550,7 @@ saveExecutionLog :: Buildsome -> Target -> RunCmdResults -> IO ()
 saveExecutionLog buildsome target RunCmdResults{..} = do
   inputsDescs <- M.traverseWithKey inputAccess rcrInputs
   outputDescPairs <-
-    forM (S.toList rcrOutputs) $ \outPath -> do
+    forM (M.keys rcrOutputs) $ \outPath -> do
       fileDesc <- getFileDesc db outPath
       return (outPath, fileDesc)
   writeIRef (Db.executionLog target (bsDb buildsome)) Db.ExecutionLog
@@ -583,7 +583,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
 
     rcr@RunCmdResults{..} <- runCmd bte parCell target
 
-    verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) rcrOutputs target
+    verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.keysSet rcrOutputs) target
     saveExecutionLog bteBuildsome target rcr
 
     printStrLn btePrinter $
