@@ -1,4 +1,4 @@
-module Lib.AccessType
+module Lib.FSHook.AccessType
   ( AccessType(..)
   ) where
 

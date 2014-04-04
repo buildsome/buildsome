@@ -34,7 +34,6 @@ executable buildsome
                ,     Buildsome.Print
                ,     Buildsome.MagicFiles
                ,     Buildsome.Opts
-               ,     Lib.AccessType
                ,     Lib.AnnotatedException
                ,     Lib.Argv0
                ,     Lib.Async
@@ -48,6 +47,7 @@ executable buildsome
                ,     Lib.Directory
                ,     Lib.Exception
                ,     Lib.FSHook
+               ,     Lib.FSHook.AccessType
                ,     Lib.FSHook.Protocol
                ,     Lib.Fifo
                ,     Lib.FileDesc
