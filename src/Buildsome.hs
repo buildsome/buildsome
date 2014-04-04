@@ -522,16 +522,16 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
         makeSlavesForAccessType accessType bte { bteReason = actDesc } Implicit path
     handleOutput _actDesc path
       | MagicFiles.outputIgnored path = return ()
-      | otherwise = atomicModifyIORef'_ outputsRef $ S.insert path
+      | otherwise = E.mask_ $ do
+        atomicModifyIORef'_ outputsRef $ S.insert path
+        when (path `S.member` targetOutputsSet) $
+          registerOutputs bteBuildsome $ S.singleton path
   Print.cmd btePrinter target
   (time, stdOutputs) <-
     FSHook.runCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
     (timeIt . shellCmdVerify target ["HOME", "PATH"])
     (ColorText.render (targetShow (targetOutputs target)))
     Handlers {..}
-    `finally` do
-      outputs <- readIORef outputsRef
-      registerOutputs bteBuildsome $ S.intersection outputs targetOutputsSet
   subtractedTime <- (time-) <$> readIORef pauseTime
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
