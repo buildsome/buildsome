@@ -1,21 +1,33 @@
-* Don't delete unspecified outputs
+* Consider all outputs as potential inputs on the same file
 
-* OOPS: Big bug: If a command tries to create something that already exists:
+  * Can later optimize and specify that some outputs do not reveal
+    information about inputs
 
-  A) It can get information about whether it existed which is not recorded as input
+  * These inputs are fine if they are specified target outputs,
+    because then they are brought to a known deleted state before
+    command is executed
 
-  B) It will be considered created by it, and then deleted by buildsome (potentially doing rm -rf / !)
+  * They are also fine if the file did not exist -- but then:
 
-  Need to consider failed output creation commands as having inputs (direct name input + parent dir input), not outputs
+    * No other job must have this file as input (including implicit
+      input when used as an output).
 
-* Implicit input direct parent dir for every input/output. Each parent
-  dir, if is an output, will also refer to its own parent, so this
-  should cover the whole path correctly.
+    * The file must be deleted after the command too
 
-* Handlers for FSHook need to take multiple inputs simultaneously
-  (e.g: exec search paths) for parallelism
+  * They are also fine if the input is treated as input, and the
+    output is actually a no-op (e.g: mkdir on dir that already exists)
 
-* Oops: LD_PRELOAD should hook exec as another input dependency
+    * This means we must try to generate slaves for every output that
+      is also an input (or disallow these unspecified outputs)
+
+  * "/tmp" is not delayed so can't check if the file was inexistent, but can assume so, and verify:
+
+    * It is eventually deleted
+    * No other job accesses the same file
+
+    * Not good to run this logic only on filtered output paths!
+
+* FSHook to re-export AccessType
 
 * Check error parsing with netbeans (Entering directory + other errors)
 
@@ -66,10 +78,6 @@
         paths at the end
 
   * Wrong FS input model:
-    * mode-only-inputs, (rely on mode only)
-      content-only-inputs (rely on content + dirchildren but not on the stat),
-      full-inputs (rely on stat + content + dirchildren)
-
     * When file is symlink, everything except lstat/readlink need to
       have an input dependency on the link content AND the file behind
       it
