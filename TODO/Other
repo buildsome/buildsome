@@ -1,4 +1,16 @@
-* Implicit input parent dirs for every input/output
+* Don't delete unspecified outputs
+
+* OOPS: Big bug: If a command tries to create something that already exists:
+
+  A) It can get information about whether it existed which is not recorded as input
+
+  B) It will be considered created by it, and then deleted by buildsome (potentially doing rm -rf / !)
+
+  Need to consider failed output creation commands as having inputs (direct name input + parent dir input), not outputs
+
+* Implicit input direct parent dir for every input/output. Each parent
+  dir, if is an output, will also refer to its own parent, so this
+  should cover the whole path correctly.
 
 * Handlers for FSHook need to take multiple inputs simultaneously
   (e.g: exec search paths) for parallelism
