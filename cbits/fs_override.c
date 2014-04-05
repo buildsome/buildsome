@@ -22,7 +22,7 @@
 #define MAX_FRAME_SIZE 8192
 
 #define ENVVARS_PREFIX "BUILDSOME_"
-#define PROTOCOL_HELLO "PROTOCOL2: HELLO, I AM: "
+#define PROTOCOL_HELLO "PROTOCOL1: HELLO, I AM: "
 
 static int gettid(void)
 {
