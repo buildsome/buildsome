@@ -23,7 +23,7 @@ extra-source-files:  cbits/*.[ch]
 
 executable buildsome
   hs-source-dirs:    src/
-  main-is:           Buildsome/Main.hs
+  main-is:           Main.hs
   ghc-options:       -threaded -Wall -O2
   ghc-prof-options:  -auto-all -caf-all -O2 -rtsopts
   other-modules:     Buildsome
