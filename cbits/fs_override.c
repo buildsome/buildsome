@@ -49,7 +49,7 @@ static int connect_master(void)
     int connect_rc = connect(fd, &addr, sizeof addr);
     ASSERT(0 == connect_rc);
 
-    #define HELLO "HELLO, I AM: "
+    #define HELLO "PROTOCOL1: HELLO, I AM: "
     char hello[strlen(HELLO) + strlen(env_job_id) + 16];
     hello[sizeof hello-1] = 0;
     int len = snprintf(hello, sizeof hello-1, HELLO "%d:%d:%s", getpid(), gettid(), env_job_id);
@@ -135,29 +135,30 @@ static void send_connection(const char *buf, size_t size)
 
 /* NOTE: This must be kept in sync with Protocol.hs */
 enum func {
-    func_open      = 0x10000,
-    func_creat     = 0x10001,
-    func_stat      = 0x10002,
-    func_lstat     = 0x10003,
-    func_opendir   = 0x10004,
-    func_access    = 0x10005,
-    func_truncate  = 0x10006,
-    func_unlink    = 0x10007,
-    func_rename    = 0x10008,
-    func_chmod     = 0x10009,
-    func_readlink  = 0x1000A,
-    func_mknod     = 0x1000B,
-    func_mkdir     = 0x1000C,
-    func_rmdir     = 0x1000D,
-    func_symlink   = 0x1000E,
-    func_link      = 0x1000F,
-    func_chown     = 0x10010,
-    func_exec      = 0x10011,
-    func_execp     = 0x10012,
+    func_openr     = 0x10000,
+    func_openw     = 0x10001,
+    func_creat     = 0x10002,
+    func_stat      = 0x10003,
+    func_lstat     = 0x10004,
+    func_opendir   = 0x10005,
+    func_access    = 0x10006,
+    func_truncate  = 0x10007,
+    func_unlink    = 0x10008,
+    func_rename    = 0x10009,
+    func_chmod     = 0x1000A,
+    func_readlink  = 0x1000B,
+    func_mknod     = 0x1000C,
+    func_mkdir     = 0x1000D,
+    func_rmdir     = 0x1000E,
+    func_symlink   = 0x1000F,
+    func_link      = 0x10010,
+    func_chown     = 0x10011,
+    func_exec      = 0x10012,
+    func_execp     = 0x10013,
 };
 
 /* func_open.flags */
-#define FLAG_WRITE 1
+#define FLAG_ALSO_READ 1
 #define FLAG_CREATE 2           /* func_open.mode is meaningful iff this flag */
 
 /* NOTE: This must be kept in sync with Protocol.hs */
@@ -166,7 +167,8 @@ enum func {
 #define MAX_EXEC_FILE           (MAX_PATH)
 
 /* NOTE: This must be kept in sync with Protocol.hs */
-struct func_open      {char path[MAX_PATH]; uint32_t flags; uint32_t mode;};
+struct func_openr     {char path[MAX_PATH];};
+struct func_openw     {char path[MAX_PATH]; uint32_t flags; uint32_t mode;};
 struct func_creat     {char path[MAX_PATH]; uint32_t mode;};
 struct func_stat      {char path[MAX_PATH];};
 struct func_lstat     {char path[MAX_PATH];};
@@ -263,43 +265,43 @@ static bool try_chop_common_root(char *path)
     return true;
 }
 
-static void notify_open(const char *path, bool is_write, bool is_create, mode_t mode)
+static void notify_openr_await(const char *path)
 {
-    DEFINE_MSG(msg, open);
+    DEFINE_MSG(msg, openr);
     PATH_COPY(msg.args.path, path);
-    if(is_write) {
-        msg.args.flags |= FLAG_WRITE;
-        if(is_create) {
-            msg.args.flags |= FLAG_CREATE;
-        }
-    } else {
-        ASSERT(!is_create);
-    }
+    send_connection(PS(msg));
+    await_go_for_path(msg.args.path);
+}
+
+static void notify_openw(const char *path, bool is_also_read, bool is_create, mode_t mode)
+{
+    DEFINE_MSG(msg, openw);
+    PATH_COPY(msg.args.path, path);
+    if(is_also_read) msg.args.flags |= FLAG_ALSO_READ;
+    if(is_create)    msg.args.flags |= FLAG_CREATE;
     msg.args.mode = mode;
     send_connection(PS(msg));
-    if(!is_write) {
-        await_go_for_path(msg.args.path);
-    }
 }
 
 static mode_t open_common(const char *path, int flags, va_list args)
 {
-    bool is_write = false;
+    bool is_also_read = false;
     bool is_create = flags & CREATION_FLAGS;
     mode_t mode = is_create ? va_arg(args, mode_t) : 0;
 
     switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {
-    case O_RDWR:
-    case O_WRONLY:
-        is_write = true;
-        break;
     case O_RDONLY:
+        notify_openr_await(path);
+        break;
+    case O_RDWR:
+        is_also_read = true;
+    case O_WRONLY:
+        notify_openw(path, is_also_read, is_create, mode);
         break;
     default:
         LOG("invalid open mode?!");
         ASSERT(0);
     }
-    notify_open(path, is_write, is_create, mode);
     return mode;
 }
 
@@ -336,23 +338,28 @@ DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
     return SILENT_CALL_REAL(int, open64, path, flags, mode);
 }
 
-static void fopen_common(const char *path, const char *mode)
+static void fopen_common(const char *path, const char *modestr)
 {
-    bool is_write = false, is_create = false;
-    switch(mode[0]) {
+    mode_t mode = 0666;
+    switch(modestr[0]) {
     case 'r':
-        if(mode[1] == '+') is_write = true;
+        if(modestr[1] == '+') {
+            notify_openw(path, /*is_also_read*/true, /*create*/false, 0);
+        } else {
+            notify_openr_await(path);
+        }
         break;
     case 'w':
+        notify_openw(path, /*is_also_read*/modestr[1] == '+',
+                     /*create*/true, mode);
+        break;
     case 'a':
-        is_create = true;
-        is_write = true;
+        notify_openw(path, true, /*create*/true, mode);
         break;
     default:
         LOG("Invalid fopen mode?!");
         ASSERT(0);
     }
-    notify_open(path, is_write, is_create, 0666);
 }
 
 /* Ditto open */

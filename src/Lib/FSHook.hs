@@ -134,8 +134,9 @@ handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Func -> IO ()
 handleJobMsg _tidStr conn job msg =
   case msg of
     -- outputs
-    Protocol.Open path Protocol.OpenWriteMode _ -> reportOutput path
-    Protocol.Open path _ (Protocol.Create _) -> reportOutput path
+    Protocol.OpenW path _openWMode _creationMode -> reportOutput path
+                 -- TODO ^ need to make sure ReadWriteMode only ever
+                 -- opens files created by same job or inexistent
     Protocol.Creat path _ -> reportOutput path
     Protocol.Rename a b -> reportOutput a >> reportOutput b
     Protocol.Unlink path -> reportOutput path
@@ -154,7 +155,7 @@ handleJobMsg _tidStr conn job msg =
       --reportOutput dest >> reportSingleInput src
 
     -- inputs
-    Protocol.Open path Protocol.OpenReadMode _creationMode -> reportSingleInput AccessTypeFull path
+    Protocol.OpenR path -> reportSingleInput AccessTypeFull path
     Protocol.Access path _mode -> reportSingleInput AccessTypeModeOnly path
     Protocol.Stat path -> reportSingleInput AccessTypeFull path
     Protocol.LStat path -> reportSingleInput AccessTypeFull path
