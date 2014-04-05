@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.FSHook.Protocol
-  ( parseMsg
+  ( parseMsg, helloMsg
   , OpenMode(..), showOpenMode
   , CreationMode(..), showCreationMode
   , Func(..), showFunc
@@ -174,3 +174,7 @@ strictToLazy x = BSL.fromChunks [x]
 {-# INLINE parseMsg #-}
 parseMsg :: ByteString -> IO Func
 parseMsg = parseMsgLazy . strictToLazy
+
+{-# INLINE helloMsg #-}
+helloMsg :: ByteString
+helloMsg = "HELLO, I AM: "

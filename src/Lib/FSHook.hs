@@ -27,6 +27,7 @@ import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
 import Network.Socket (Socket)
 import Paths_buildsome (getDataFileName)
 import Prelude hiding (FilePath)
+import System.IO (hPutStrLn, stderr)
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
@@ -73,8 +74,11 @@ instance E.Exception ProtocolError
 serve :: FSHook -> Socket -> IO ()
 serve fsHook conn = do
   helloLine <- SockBS.recv conn 1024
-  case unprefixed (BS8.pack "HELLO, I AM: ") helloLine of
-    Nothing -> E.throwIO $ ProtocolError $ "Bad hello message from connection: " ++ show helloLine
+  case unprefixed Protocol.helloMsg helloLine of
+    Nothing ->
+      E.throwIO $ ProtocolError $ concat
+      [ "Bad hello message from connection: ", show helloLine, " expected: "
+      , show Protocol.helloMsg, " (check your fs_override.so installation)" ]
     Just pidJobId -> do
       runningJobs <- readIORef (fsHookRunningJobs fsHook)
       case M.lookup jobId runningJobs of
@@ -88,6 +92,15 @@ serve fsHook conn = do
 
 maxMsgSize :: Int
 maxMsgSize = 65536
+
+-- Except thread killed
+printRethrowExceptions :: String -> IO a -> IO a
+printRethrowExceptions msg =
+  E.handle $ \e -> do
+    case E.fromException e of
+      Just E.ThreadKilled -> return ()
+      _ -> hPutStrLn stderr $ msg ++ show e
+    E.throwIO e
 
 with :: (FSHook -> IO a) -> IO a
 with body = do
@@ -105,9 +118,11 @@ with body = do
         , fsHookServerAddress = serverFilename
         }
     AsyncContext.new $ \ctx -> do
-      _ <- AsyncContext.spawn ctx $ forever $ do
-        (conn, _srcAddr) <- Sock.accept listener
-        AsyncContext.spawn ctx $ serve fsHook conn
+      _ <-
+        AsyncContext.spawn ctx $ printRethrowExceptions "BUG: Listener loop threw exception: " $ forever $
+        do
+          (conn, _srcAddr) <- Sock.accept listener
+          AsyncContext.spawn ctx $ printRethrowExceptions "BUG: Job connection failed: " $ serve fsHook conn
       body fsHook
 
 {-# INLINE sendGo #-}
@@ -182,7 +197,6 @@ handleJobConnection tidStr conn job = do
 
   connFinishedMVar <- newEmptyMVar
   (`E.finally` putMVar connFinishedMVar ()) $
-    (`E.catch` \e -> putStrLn $ "BUG: Job connection failed: " ++ show (e :: E.SomeException)) $
     withRegistered (jobActiveConnections job) connId (tid, connFinishedMVar) $ do
       sendGo conn
       recvLoop_ maxMsgSize
