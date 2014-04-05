@@ -22,7 +22,7 @@
 #define MAX_FRAME_SIZE 8192
 
 #define ENVVARS_PREFIX "BUILDSOME_"
-#define PROTOCOL_HELLO "PROTOCOL1: HELLO, I AM: "
+#define PROTOCOL_HELLO "PROTOCOL2: HELLO, I AM: "
 
 static int gettid(void)
 {
@@ -199,12 +199,6 @@ struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_va
         real(__VA_ARGS__);                              \
     })
 
-#define SEND_CALL_REAL(msg, ...)                \
-    ({                                          \
-        send_connection(PS(msg));               \
-        SILENT_CALL_REAL(__VA_ARGS__);          \
-    })
-
 #define AWAIT_CALL_REAL(input_path, msg, ...)   \
     ({                                          \
         send_connection(PS(msg));               \
@@ -281,6 +275,7 @@ static void notify_openw(const char *path, bool is_also_read, bool is_create, mo
     if(is_create)    msg.args.flags |= FLAG_CREATE;
     msg.args.mode = mode;
     send_connection(PS(msg));
+    await_go_for_path(msg.args.path);
 }
 
 static mode_t open_common(const char *path, int flags, va_list args)
@@ -384,7 +379,7 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
     DEFINE_MSG(msg, creat);
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
-    return SEND_CALL_REAL(msg, int, creat, path, mode);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, creat, path, mode);
 }
 
 /* Depends on the full path */
@@ -425,7 +420,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
     DEFINE_MSG(msg, truncate);
     PATH_COPY(msg.args.path, path);
-    return SEND_CALL_REAL(msg, int, truncate, path, length);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, truncate, path, length);
 }
 
 /* Outputs the full path */
@@ -433,7 +428,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
 {
     DEFINE_MSG(msg, unlink);
     PATH_COPY(msg.args.path, path);
-    return SEND_CALL_REAL(msg, int, unlink, path);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, unlink, path);
 }
 
 /* Outputs both full paths */
@@ -442,7 +437,11 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
     DEFINE_MSG(msg, rename);
     PATH_COPY(msg.args.oldpath, oldpath);
     PATH_COPY(msg.args.newpath, newpath);
-    return SEND_CALL_REAL(msg, int, rename, oldpath, newpath);
+    send_connection(PS(msg));
+    if(msg.args.oldpath[0] != '/' || msg.args.newpath[0] != '/') {
+        await_go();
+    }
+    return SILENT_CALL_REAL(int, rename, oldpath, newpath);
 }
 
 /* Outputs the full path */
@@ -451,7 +450,7 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
     DEFINE_MSG(msg, chmod);
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
-    return SEND_CALL_REAL(msg, int, chmod, path, mode);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, chmod, path, mode);
 }
 
 /* Depends on the full direct path */
@@ -469,7 +468,7 @@ DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
     msg.args.dev = dev;
-    return SEND_CALL_REAL(msg, int, mknod, path, mode, dev);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, mknod, path, mode, dev);
 }
 
 /* Outputs the full path */
@@ -478,7 +477,7 @@ DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
     DEFINE_MSG(msg, mkdir);
     PATH_COPY(msg.args.path, path);
     msg.args.mode = mode;
-    return SEND_CALL_REAL(msg, int, mkdir, path, mode);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, mkdir, path, mode);
 }
 
 /* Outputs the full path */
@@ -486,7 +485,7 @@ DEFINE_WRAPPER(int, rmdir, (const char *path))
 {
     DEFINE_MSG(msg, rmdir);
     PATH_COPY(msg.args.path, path);
-    return SEND_CALL_REAL(msg, int, rmdir, path);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, rmdir, path);
 }
 
 /* Outputs the full linkpath, input the target (to make the symlink,
@@ -519,7 +518,7 @@ DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
     PATH_COPY(msg.args.path, path);
     msg.args.owner = owner;
     msg.args.group = group;
-    return SEND_CALL_REAL(msg, int, chown, path, owner, group);
+    return AWAIT_CALL_REAL(msg.args.path, msg, int, chown, path, owner, group);
 }
 
 int fchdir(int fd)

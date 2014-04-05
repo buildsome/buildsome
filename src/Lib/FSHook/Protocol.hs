@@ -180,4 +180,4 @@ parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloMsg #-}
 helloMsg :: ByteString
-helloMsg = "PROTOCOL1: HELLO, I AM: "
+helloMsg = "PROTOCOL2: HELLO, I AM: "

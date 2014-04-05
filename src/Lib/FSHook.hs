@@ -140,7 +140,7 @@ handleJobMsg _tidStr conn job msg =
                  -- TODO ^ need to make sure ReadWriteMode only ever
                  -- opens files created by same job or inexistent
     Protocol.Creat path _ -> reportOutput path
-    Protocol.Rename a b -> reportOutput a >> reportOutput b
+    Protocol.Rename a b -> reportOutputs [a, b]
     Protocol.Unlink path -> reportOutput path
     Protocol.Truncate path _ -> reportOutput path
     Protocol.Chmod path _ -> reportOutput path
@@ -181,8 +181,10 @@ handleJobMsg _tidStr conn job msg =
       | otherwise = do
         forwardExceptions (handleDelayedInput handlers accessType actDesc path)
         sendGo conn
-    reportOutput path =
-      forwardExceptions $ handleOutput handlers actDesc path
+    reportOutput path = reportOutputs [path]
+    reportOutputs paths = do
+      forwardExceptions $ mapM_ (handleOutput handlers actDesc) paths
+      unless (all ("/" `BS8.isPrefixOf`) paths) $ sendGo conn
 
 withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
 withRegistered registry key val =
