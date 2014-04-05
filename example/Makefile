@@ -1,6 +1,6 @@
 default: all
 
-all: out/a out/subdir.list needsm other
+all: out/a out/subdir.list needsm other out/par_result
 
 INCLUDE_DIR=inc
 
@@ -46,6 +46,17 @@ out/subdir.list:
 	do
 		ls -l subdir > $@
 	done
+
+out/par_result:
+	./par_exec > $@
+
+par_exec: par_exec.hs
+	ghc -o $@ $<
+	rm par_exec.{o,hi}
+
+out/after_sleep:
+	sleep 0.5
+	echo "after_sleep" > $@
 
 subdir/a:
 	echo hi > subdir/a
