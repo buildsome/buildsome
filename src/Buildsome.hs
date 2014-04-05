@@ -30,7 +30,7 @@ import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.ColorText (ColorText, renderStr)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories)
 import Lib.Exception (finally)
-import Lib.FSHook (FSHook, Handlers(..))
+import Lib.FSHook (FSHook)
 import Lib.FSHook.AccessType (AccessType(..))
 import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
@@ -92,20 +92,6 @@ data Buildsome = Buildsome
   , bsParallelism :: Parallelism
   , bsFreshPrinterIds :: Fresh Printer.Id
   }
-
-recordInput ::
-  IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
-  AccessType -> Reason -> FilePath -> IO ()
-recordInput inputsRef accessType reason path = do
-  mstat <- getMFileStatus path
-  atomicModifyIORef'_ inputsRef $
-    -- Keep the older mtime in the map, and we'll eventually compare
-    -- the final mtime to the oldest one
-    M.insertWith merge path (accessType, reason, mstat)
-  where
-    merge _ (oldAccessType, oldReason, oldMStat) =
-     -- Keep the highest access type, and the oldest reason/mstat
-     (max accessType oldAccessType, oldReason, oldMStat)
 
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = go 0
@@ -496,46 +482,68 @@ data RunCmdResults = RunCmdResults
   , rcrSlaveStats :: Slave.Stats
   }
 
+recordInput ::
+  IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
+  Reason -> FSHook.Input -> IO ()
+recordInput inputsRef reason (FSHook.Input accessType path) = do
+  mstat <- getMFileStatus path
+  atomicModifyIORef'_ inputsRef $
+    -- Keep the older mtime in the map, and we'll eventually compare
+    -- the final mtime to the oldest one
+    M.insertWith merge path (accessType, reason, mstat)
+  where
+    merge _ (oldAccessType, oldReason, oldMStat) =
+     -- Keep the highest access type, and the oldest reason/mstat
+     (max accessType oldAccessType, oldReason, oldMStat)
+
+recordOutputs :: Buildsome -> IORef (Map FilePath Reason) -> Reason -> Set FilePath -> [FSHook.Output] -> IO ()
+recordOutputs buildsome outputsRef accessDoc targetOutputsSet outputs =
+  E.mask_ $ do
+    atomicModifyIORef'_ outputsRef $ M.union $
+      M.fromList [(path, accessDoc) | FSHook.Output path <- outputs]
+    registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
+  where
+    paths = S.fromList $ map FSHook.outputPath outputs
+
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
-  pauseTime <- newIORef 0
+  pauseTimeRef <- newIORef 0
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef M.empty
   slaveStatsRef <- newIORef mempty
   let
-    addPauseTime delta = atomicModifyIORef'_ pauseTime (+delta)
+    addPauseTime delta = atomicModifyIORef'_ pauseTimeRef (+delta)
     mappendSlaveStats stats = atomicModifyIORef_ slaveStatsRef (mappend stats)
     measurePauseTime act = do
       (time, res) <- timeIt act
       addPauseTime time
       return res
-    handleInputCommon accessType actDesc path useInput
-      | MagicFiles.inputIgnored path = return ()
-      | otherwise = do
-        actualOutputs <- readIORef outputsRef
-        -- There's no problem for a target to read its own outputs freely:
-        unless (path `M.member` actualOutputs || path `S.member` targetOutputsSet) $ do
-          () <- useInput
-          recordInput inputsRef accessType actDesc path
-    handleInput accessType actDesc path =
-      handleInputCommon accessType actDesc path $ return ()
-    handleDelayedInput accessType actDesc path =
-      handleInputCommon accessType actDesc path $
-        measurePauseTime . (>>= mappendSlaveStats) . waitForSlaves btePrinter parCell bteBuildsome =<<
-        makeSlavesForAccessType accessType bte { bteReason = actDesc } Implicit path
-    handleOutput actDesc path
-      | MagicFiles.outputIgnored path = return ()
-      | otherwise = E.mask_ $ do
-        atomicModifyIORef'_ outputsRef $ M.insert path actDesc
-        when (path `S.member` targetOutputsSet) $
-          registerOutputs bteBuildsome $ S.singleton path
+    makeInputs accessDoc inputs = measurePauseTime $ do
+      slaves <-
+        fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
+        makeSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
+      mappendSlaveStats =<< waitForSlaves btePrinter parCell bteBuildsome slaves
+    outputIgnored (FSHook.Output path) = MagicFiles.outputIgnored path
+    inputIgnored actualOutputs (FSHook.Input _ path) =
+      MagicFiles.inputIgnored path ||
+      path `M.member` actualOutputs ||
+      path `S.member` targetOutputsSet
+    fsAccessHandler isDelayed accessDoc inputs outputs = do
+      actualOutputs <- readIORef outputsRef
+      let filteredOutputs = filter (not . outputIgnored) outputs
+          filteredInputs = filter (not . inputIgnored actualOutputs) inputs
+      recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet filteredOutputs
+      case isDelayed of
+        FSHook.NotDelayed -> return ()
+        FSHook.Delayed -> makeInputs accessDoc filteredInputs
+      mapM_ (recordInput inputsRef accessDoc) filteredInputs
   Print.cmd btePrinter target
   (time, stdOutputs) <-
     FSHook.runCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
     (timeIt . shellCmdVerify target ["HOME", "PATH"])
     (ColorText.render (targetShow (targetOutputs target)))
-    Handlers {..}
-  subtractedTime <- (time-) <$> readIORef pauseTime
+    fsAccessHandler
+  subtractedTime <- (time-) <$> readIORef pauseTimeRef
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
   slaveStats <- readIORef slaveStatsRef

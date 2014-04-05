@@ -2,7 +2,8 @@
 module Lib.FSHook
   ( FSHook
   , with
-  , InputHandler, OutputHandler, Handlers(..)
+  , Input(..), Output(..), IsDelayed(..)
+  , FSAccessHandler
   , AccessDoc
   , runCommand
   ) where
@@ -43,21 +44,26 @@ type AccessDoc = ByteString
 
 type JobId = ByteString
 
-type InputHandler = AccessType -> AccessDoc -> FilePath -> IO ()
-type OutputHandler = AccessDoc -> FilePath -> IO ()
+-- Hook is delayed waiting for handler to complete
+data IsDelayed = Delayed | NotDelayed
 
-data Handlers = Handlers
-  { handleInput :: InputHandler
-  , handleDelayedInput :: InputHandler
-  , handleOutput :: OutputHandler
+data Input = Input
+  { inputAccessType :: AccessType
+  , inputPath :: FilePath
   }
+
+newtype Output = Output
+  { outputPath :: FilePath
+  }
+
+type FSAccessHandler = IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
 
 data RunningJob = RunningJob
   { jobLabel :: ByteString
   , jobActiveConnections :: IORef (Map Int (ThreadId, MVar ()))
   , jobFreshConnIds :: Fresh Int
   , jobThreadId :: ThreadId
-  , jobHandlers :: Handlers
+  , jobFSAccessHandler :: FSAccessHandler
   , jobRootFilter :: FilePath
   }
 
@@ -136,55 +142,61 @@ handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Func -> IO ()
 handleJobMsg _tidStr conn job msg =
   case msg of
     -- outputs
-    Protocol.OpenW path _openWMode _creationMode -> reportOutput path
+    Protocol.OpenW path _openWMode _creationMode -> handleOutput path
                  -- TODO ^ need to make sure ReadWriteMode only ever
                  -- opens files created by same job or inexistent
-    Protocol.Creat path _ -> reportOutput path
-    Protocol.Rename a b -> reportOutputs [a, b]
-    Protocol.Unlink path -> reportOutput path
-    Protocol.Truncate path _ -> reportOutput path
-    Protocol.Chmod path _ -> reportOutput path
-    Protocol.Chown path _ _ -> reportOutput path
-    Protocol.MkNod path _ _ -> reportOutput path -- TODO: Special mkNod handling?
-    Protocol.MkDir path _ -> reportOutput path
-    Protocol.RmDir path -> reportOutput path
+    Protocol.Creat path _ -> handleOutput path
+    Protocol.Rename a b -> handleOutputs [a, b]
+    Protocol.Unlink path -> handleOutput path
+    Protocol.Truncate path _ -> handleOutput path
+    Protocol.Chmod path _ -> handleOutput path
+    Protocol.Chown path _ _ -> handleOutput path
+    Protocol.MkNod path _ _ -> handleOutput path -- TODO: Special mkNod handling?
+    Protocol.MkDir path _ -> handleOutput path
+    Protocol.RmDir path -> handleOutput path
 
     -- I/O
-    Protocol.SymLink target linkPath -> reportOutput linkPath >> reportSingleInput AccessTypeFull target
-    Protocol.Link src dest -> forwardExceptions $
-      error $ unwords ["Hard links not supported:", show src, "->", show dest]
-      -- TODO: Record the fact it's a link
-      --reportOutput dest >> reportSingleInput src
+    Protocol.SymLink target linkPath ->
+      -- TODO: We don't actually read the input here, but we don't
+      -- handle symlinks correctly yet, so better be false-positive
+      -- than false-negative
+      handle [Input AccessTypeFull target] [Output linkPath]
+    Protocol.Link src dest -> error $ unwords ["Hard links not supported:", show src, "->", show dest]
 
     -- inputs
-    Protocol.OpenR path -> reportSingleInput AccessTypeFull path
-    Protocol.Access path _mode -> reportSingleInput AccessTypeModeOnly path
-    Protocol.Stat path -> reportSingleInput AccessTypeFull path
-    Protocol.LStat path -> reportSingleInput AccessTypeFull path
-    Protocol.OpenDir path -> reportSingleInput AccessTypeFull path
-    Protocol.ReadLink path -> reportSingleInput AccessTypeModeOnly path
-    Protocol.Exec path -> reportSingleInput AccessTypeFull path
-    Protocol.ExecP mPath attempted -> do
-      forwardExceptions $ forM_
-        ( [(AccessTypeFull, path) | Just path <- [mPath]] ++
-          [(AccessTypeModeOnly, path) | path <- attempted] ) $
-        \(accessType, path) -> handleDelayedInput handlers accessType actDesc path
-      sendGo conn
+    Protocol.OpenR path -> handleInput AccessTypeFull path
+    Protocol.Access path _mode -> handleInput AccessTypeModeOnly path
+    Protocol.Stat path -> handleInput AccessTypeFull path
+    Protocol.LStat path -> handleInput AccessTypeFull path
+    Protocol.OpenDir path -> handleInput AccessTypeFull path
+    Protocol.ReadLink path -> handleInput AccessTypeFull path
+    Protocol.Exec path -> handleInput AccessTypeFull path
+    Protocol.ExecP mPath attempted ->
+      handleAccess Delayed actDesc inputs []
+      where
+        inputs =
+          [Input AccessTypeFull path | Just path <- [mPath]] ++
+          map (Input AccessTypeModeOnly) attempted
   where
-    handlers = jobHandlers job
+    handleAccess = jobHandleAccess job conn
+    handle inputs outputs = handleAccess isDelayed actDesc inputs outputs
+      where
+        isDelayed
+          | all ("/" `BS8.isPrefixOf`) (map inputPath inputs ++ map outputPath outputs) = NotDelayed
+          | otherwise = Delayed
     actDesc = BS8.pack (Protocol.showFunc msg) <> " done by " <> jobLabel job
-    forwardExceptions =
-      handleSync $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
-    reportSingleInput accessType path
-      | "/" `BS8.isPrefixOf` path =
-        forwardExceptions $ handleInput handlers accessType actDesc path
-      | otherwise = do
-        forwardExceptions (handleDelayedInput handlers accessType actDesc path)
-        sendGo conn
-    reportOutput path = reportOutputs [path]
-    reportOutputs paths = do
-      forwardExceptions $ mapM_ (handleOutput handlers actDesc) paths
-      unless (all ("/" `BS8.isPrefixOf`) paths) $ sendGo conn
+    handleInput accessType path = handle [Input accessType path] []
+    handleOutput path = handleOutputs [path]
+    handleOutputs paths = handle [] (map Output paths)
+
+jobHandleAccess :: RunningJob -> Socket -> IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
+jobHandleAccess job conn isDelayed desc inputs outputs = do
+  forwardExceptions $ jobFSAccessHandler job isDelayed desc inputs outputs
+  case isDelayed of
+    Delayed -> sendGo conn
+    NotDelayed -> return ()
+  where
+    forwardExceptions = handleSync $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
 
 withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
 withRegistered registry key val =
@@ -216,8 +228,10 @@ mkEnvVars fsHook rootFilter jobId =
   , ("BUILDSOME_ROOT_FILTER", rootFilter)
   ]
 
-runCommand :: FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString -> Handlers -> IO r
-runCommand fsHook rootFilter cmd label handlers = do
+runCommand ::
+  FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString ->
+  FSAccessHandler -> IO r
+runCommand fsHook rootFilter cmd label fsAccessHandler = do
   activeConnections <- newIORef M.empty
   freshConnIds <- Fresh.new 0
   jobIdNum <- Fresh.next $ fsHookFreshJobIds fsHook
@@ -230,7 +244,7 @@ runCommand fsHook rootFilter cmd label handlers = do
             , jobFreshConnIds = freshConnIds
             , jobThreadId = tid
             , jobRootFilter = rootFilter
-            , jobHandlers = handlers
+            , jobFSAccessHandler = fsAccessHandler
             }
   -- Don't leak connections still running our handlers once we leave!
   let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
