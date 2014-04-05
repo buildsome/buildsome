@@ -68,8 +68,10 @@ data FSHook = FSHook
   , fsHookServerAddress :: FilePath
   }
 
-data ProtocolError = ProtocolError String deriving (Show, Typeable)
+data ProtocolError = ProtocolError String deriving (Typeable)
 instance E.Exception ProtocolError
+instance Show ProtocolError where
+  show (ProtocolError msg) = "ProtocolError: " ++ msg
 
 serve :: FSHook -> Socket -> IO ()
 serve fsHook conn = do
