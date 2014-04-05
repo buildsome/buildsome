@@ -21,7 +21,8 @@
 
 #define MAX_FRAME_SIZE 8192
 
-#define PREFIX "BUILDSOME_"
+#define ENVVARS_PREFIX "BUILDSOME_"
+#define PROTOCOL_HELLO "PROTOCOL2: HELLO, I AM: "
 
 static int gettid(void)
 {
@@ -33,10 +34,10 @@ static int connect_master(void)
     int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
     ASSERT(-1 != fd);
 
-    char *env_sockaddr = getenv(PREFIX "MASTER_UNIX_SOCKADDR");
+    char *env_sockaddr = getenv(ENVVARS_PREFIX "MASTER_UNIX_SOCKADDR");
     ASSERT(env_sockaddr);
 
-    char *env_job_id = getenv(PREFIX "JOB_ID");
+    char *env_job_id = getenv(ENVVARS_PREFIX "JOB_ID");
     ASSERT(env_job_id);
 
     struct sockaddr_un addr = {
@@ -49,10 +50,9 @@ static int connect_master(void)
     int connect_rc = connect(fd, &addr, sizeof addr);
     ASSERT(0 == connect_rc);
 
-    #define HELLO "PROTOCOL1: HELLO, I AM: "
-    char hello[strlen(HELLO) + strlen(env_job_id) + 16];
+    char hello[strlen(PROTOCOL_HELLO) + strlen(env_job_id) + 16];
     hello[sizeof hello-1] = 0;
-    int len = snprintf(hello, sizeof hello-1, HELLO "%d:%d:%s", getpid(), gettid(), env_job_id);
+    int len = snprintf(hello, sizeof hello-1, PROTOCOL_HELLO "%d:%d:%s", getpid(), gettid(), env_job_id);
     ssize_t send_rc = send(fd, hello, len, 0);
     ASSERT(send_rc == len);
     return fd;
@@ -95,7 +95,7 @@ static void initialize_process_state(void)
     if(-1U != process_state.cwd_length) return;
     update_cwd();
 
-    const char *root_filter = getenv(PREFIX "ROOT_FILTER");
+    const char *root_filter = getenv(ENVVARS_PREFIX "ROOT_FILTER");
     ASSERT(root_filter);
 
     unsigned len = strlen(root_filter);
