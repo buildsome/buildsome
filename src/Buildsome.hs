@@ -285,7 +285,10 @@ verifyTargetOutputs buildsome outputs target = do
   unless (null existingIllegalOutputs) $ do
     Print.posMessage (targetPos target) $ Color.error $
       "Illegal output files created: " <> show existingIllegalOutputs
-    mapM_ removeFileOrDirectory existingIllegalOutputs
+
+    Print.warn (targetPos target) $ "leaving leaked unspecified output effects" -- Need to make sure we only record actual outputs, and not *attempted* outputs before we delete this
+    -- mapM_ removeFileOrDirectory existingIllegalOutputs
+
     E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
   warnOverSpecified "outputs" specified (outputs `S.union` phoniesSet buildsome) (targetPos target)
   where
