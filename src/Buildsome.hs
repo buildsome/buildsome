@@ -17,7 +17,7 @@ import Data.ByteString (ByteString)
 import Data.IORef
 import Data.List (partition)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, maybeToList, isJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Monoid
 import Data.Set (Set)
 import Data.String (IsString(..))
@@ -178,15 +178,15 @@ instance Show TargetNotCreated where
     [ targetShow path
     , " explicitly demanded but was not created by its target rule" ]
 
-makeDirectSlave :: BuildTargetEnv -> Explicitness -> FilePath -> IO (Maybe Slave)
-makeDirectSlave bte@BuildTargetEnv{..} explicitness path =
+makeDirectSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
+makeDirectSlaves bte@BuildTargetEnv{..} explicitness path =
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing -> do
     when (explicitness == Explicit) $ assertExists path $ MissingRule path bteReason
-    return Nothing
+    return []
   Just tgt -> do
     slave <- getSlaveForTarget bte tgt
-    Just <$> case explicitness of
+    (: []) <$> case explicitness of
       Implicit -> return slave
       Explicit -> verifyFileGetsCreated slave
   where
@@ -209,13 +209,13 @@ makeChildSlaves bte@BuildTargetEnv{..} path
 makeSlavesForAccessType ::
   AccessType -> BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 makeSlavesForAccessType AccessTypeFull = makeSlaves
-makeSlavesForAccessType AccessTypeModeOnly = (fmap . fmap . fmap . fmap) maybeToList makeDirectSlave
+makeSlavesForAccessType AccessTypeModeOnly = makeDirectSlaves
 
 makeSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 makeSlaves bte@BuildTargetEnv{..} explicitness path = do
-  mSlave <- makeDirectSlave bte explicitness path
+  slaves <- makeDirectSlaves bte explicitness path
   childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
-  return $ maybeToList mSlave ++ childs
+  return $ slaves ++ childs
 
 -- e.g: .pyc files
 handleLegalUnspecifiedOutputs :: Buildsome -> Target -> [FilePath] -> IO ()
