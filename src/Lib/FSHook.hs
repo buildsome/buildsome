@@ -5,7 +5,7 @@ module Lib.FSHook
   , Input(..), Output(..), IsDelayed(..)
   , FSAccessHandler
   , AccessDoc
-  , runCommand
+  , runCommand, timedRunCommand
   ) where
 
 import Control.Applicative ((<$>))
@@ -17,14 +17,16 @@ import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
 import Data.Monoid ((<>))
+import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.FSHook.AccessType (AccessType(..))
 import Lib.FilePath (FilePath, takeDirectory, (</>))
 import Lib.Fresh (Fresh)
-import Lib.IORef (atomicModifyIORef_)
+import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
+import Lib.TimeIt (timeIt)
 import Network.Socket (Socket)
 import Paths_buildsome (getDataFileName)
 import Prelude hiding (FilePath)
@@ -227,6 +229,26 @@ mkEnvVars fsHook rootFilter jobId =
   , ("BUILDSOME_JOB_ID", jobId)
   , ("BUILDSOME_ROOT_FILTER", rootFilter)
   ]
+
+timedRunCommand ::
+  FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString ->
+  FSAccessHandler -> IO (NominalDiffTime, r)
+timedRunCommand fsHook rootFilter cmd label fsAccessHandler = do
+  pauseTimeRef <- newIORef 0
+  let
+    addPauseTime delta = atomicModifyIORef'_ pauseTimeRef (+delta)
+    measurePauseTime act = do
+      (time, res) <- timeIt act
+      addPauseTime time
+      return res
+    wrappedFsAccessHandler isDelayed accessDoc inputs outputs = do
+      let act = fsAccessHandler isDelayed accessDoc inputs outputs
+      case isDelayed of
+        Delayed -> measurePauseTime act
+        NotDelayed -> act
+  (time, res) <- runCommand fsHook rootFilter (timeIt . cmd) label wrappedFsAccessHandler
+  subtractedTime <- (time-) <$> readIORef pauseTimeRef
+  return (subtractedTime, res)
 
 runCommand ::
   FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString ->

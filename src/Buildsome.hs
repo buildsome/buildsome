@@ -507,18 +507,12 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet outputs =
 
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
-  pauseTimeRef <- newIORef 0
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef M.empty
   slaveStatsRef <- newIORef mempty
   let
-    addPauseTime delta = atomicModifyIORef'_ pauseTimeRef (+delta)
     mappendSlaveStats stats = atomicModifyIORef_ slaveStatsRef (mappend stats)
-    measurePauseTime act = do
-      (time, res) <- timeIt act
-      addPauseTime time
-      return res
-    makeInputs accessDoc inputs = measurePauseTime $ do
+    makeInputs accessDoc inputs = do
       slaves <-
         fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
         makeSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
@@ -537,19 +531,17 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
         FSHook.NotDelayed -> return ()
         FSHook.Delayed -> makeInputs accessDoc filteredInputs
       mapM_ (recordInput inputsRef accessDoc) filteredInputs
-  Print.cmd btePrinter target
   (time, stdOutputs) <-
-    FSHook.runCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
-    (timeIt . shellCmdVerify target ["HOME", "PATH"])
+    FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
+    (shellCmdVerify target ["HOME", "PATH"])
     (ColorText.render (targetShow (targetOutputs target)))
     fsAccessHandler
-  subtractedTime <- (time-) <$> readIORef pauseTimeRef
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
   slaveStats <- readIORef slaveStatsRef
   return RunCmdResults
     { rcrStdOutputs = stdOutputs
-    , rcrSelfTime = realToFrac subtractedTime
+    , rcrSelfTime = realToFrac time
     , rcrInputs = inputs
     , rcrOutputs = outputs
     , rcrSlaveStats = slaveStats
@@ -591,6 +583,8 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
         { bteReason = ColorText.render $ "Hint from " <> targetShow (targetOutputs target)
         } Explicit $ targetAllInputs target
     hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
+
+    Print.cmd btePrinter target
 
     rcr@RunCmdResults{..} <- runCmd bte parCell target
 
