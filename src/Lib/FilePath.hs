@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.FilePath
   ( FilePath
+  , isAbsolute
   , splitFileName
   , canonicalizePath
   , canonicalizePathAsRelative
@@ -23,7 +24,7 @@ type FilePath = Posix.RawFilePath
 
 splitPath :: FilePath -> [FilePath]
 splitPath path
-  | "/" `BS8.isPrefixOf` path = "/" : BS8.split '/' (BS8.tail path)
+  | isAbsolute path = "/" : BS8.split '/' (BS8.tail path)
   | otherwise = BS8.split '/' path
 
 joinPath :: [FilePath] -> FilePath

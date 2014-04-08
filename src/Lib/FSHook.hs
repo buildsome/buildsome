@@ -22,7 +22,7 @@ import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.FSHook.AccessType (AccessType(..))
-import Lib.FilePath (FilePath, takeDirectory, (</>))
+import Lib.FilePath (FilePath, (</>), takeDirectory, isAbsolute)
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
@@ -184,7 +184,7 @@ handleJobMsg _tidStr conn job msg =
     handle inputs outputs = handleAccess isDelayed actDesc inputs outputs
       where
         isDelayed
-          | all ("/" `BS8.isPrefixOf`) (map inputPath inputs ++ map outputPath outputs) = NotDelayed
+          | all isAbsolute (map inputPath inputs ++ map outputPath outputs) = NotDelayed
           | otherwise = Delayed
     actDesc = BS8.pack (Protocol.showFunc msg) <> " done by " <> jobLabel job
     handleInput accessType path = handle [Input accessType path] []
