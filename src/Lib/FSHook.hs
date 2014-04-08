@@ -8,7 +8,7 @@ module Lib.FSHook
   , runCommand, timedRunCommand
   ) where
 
-import Control.Applicative ((<$>))
+import Control.Applicative (Applicative(..), (<$>))
 import Control.Concurrent (ThreadId, myThreadId, killThread)
 import Control.Concurrent.MVar
 import Control.Exception.Async (handleSync)
@@ -60,8 +60,10 @@ newtype Output = Output
 
 type FSAccessHandler = IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
 
+type JobLabel = ByteString
+
 data RunningJob = RunningJob
-  { jobLabel :: ByteString
+  { jobLabel :: JobLabel
   , jobActiveConnections :: IORef (Map Int (ThreadId, MVar ()))
   , jobFreshConnIds :: Fresh Int
   , jobThreadId :: ThreadId
@@ -69,8 +71,10 @@ data RunningJob = RunningJob
   , jobRootFilter :: FilePath
   }
 
+data Job = KillingJob JobLabel | CompletedJob JobLabel | LiveJob RunningJob
+
 data FSHook = FSHook
-  { fsHookRunningJobs :: IORef (Map JobId RunningJob)
+  { fsHookRunningJobs :: IORef (Map JobId Job)
   , fsHookFreshJobIds :: Fresh Int
   , fsHookLdPreloadPath :: FilePath
   , fsHookServerAddress :: FilePath
@@ -94,10 +98,18 @@ serve fsHook conn = do
       case M.lookup jobId runningJobs of
         Nothing -> do
           let jobIds = M.keys runningJobs
-          E.throwIO $ ProtocolError $ "Bad slave id: " ++ show jobId ++ " mismatches all: " ++ show jobIds
-        Just job -> handleJobConnection fullTidStr conn job
+          E.throwIO $ ProtocolError $ concat ["Bad slave id: ", show jobId, " mismatches all: ", show jobIds]
+        Just (KillingJob _label) ->
+          -- New connection created in the process of killing connections, ignore it
+          return ()
+        Just (LiveJob job) -> handleJobConnection fullTidStr conn job
+        Just (CompletedJob label) ->
+          E.throwIO $ ProtocolError $ concat
+          -- Main/parent process completed, and leaked some subprocess
+          -- which connected again!
+          ["Job: ", BS8.unpack jobId, "(", BS8.unpack label, ") received new connections after formal completion!"]
       where
-        fullTidStr = BS8.unpack pidStr ++ ":" ++ BS8.unpack tidStr
+        fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
         [pidStr, tidStr, jobId] = BS8.split ':' pidJobId
 
 maxMsgSize :: Int
@@ -250,6 +262,15 @@ timedRunCommand fsHook rootFilter cmd label fsAccessHandler = do
   subtractedTime <- (time-) <$> readIORef pauseTimeRef
   return (subtractedTime, res)
 
+withRunningJob :: FSHook -> JobId -> RunningJob -> IO r -> IO r
+withRunningJob fsHook jobId job body = do
+  setJob (LiveJob job)
+  (body <* setJob (CompletedJob (jobLabel job)))
+    `E.onException` setJob (KillingJob (jobLabel job))
+  where
+    registry = fsHookRunningJobs fsHook
+    setJob = atomicModifyIORef_ registry . M.insert jobId
+
 runCommand ::
   FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString ->
   FSAccessHandler -> IO r
@@ -272,7 +293,7 @@ runCommand fsHook rootFilter cmd label fsAccessHandler = do
   let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
   (`E.finally` onActiveConnections awaitConnection) $
     (`E.onException` onActiveConnections killConnection) $
-    withRegistered (fsHookRunningJobs fsHook) jobId job $
+    withRunningJob fsHook jobId job $
     cmd (mkEnvVars fsHook rootFilter jobId)
   where
     killConnection (tid, _mvar) = killThread tid
