@@ -28,7 +28,7 @@ import Lib.AnnotatedException (annotateException)
 import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.ColorText (ColorText, renderStr)
-import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories)
+import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories, exists)
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook)
 import Lib.FSHook.AccessType (AccessType(..))
@@ -157,7 +157,7 @@ want printer buildsome reason paths = do
 
 assertExists :: E.Exception e => FilePath -> e -> IO ()
 assertExists path err = do
-  doesExist <- Posix.fileExist path
+  doesExist <- exists path
   unless doesExist $ E.throwIO err
 
 fromBytestring8 :: IsString str => ByteString -> str

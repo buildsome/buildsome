@@ -6,6 +6,7 @@ module Lib.Directory
   , createDirectories
   , getDirectoryContents
   , makeAbsolutePath
+  , exists
   ) where
 
 import Control.Applicative ((<$>))
@@ -18,6 +19,12 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified System.Directory as Dir
 import qualified System.Posix.ByteString as Posix
 
+{-# INLINE exists #-}
+exists :: FilePath -> IO Bool
+exists path
+  | BS8.null path = return True
+  | otherwise = Posix.fileExist path
+
 catchDoesNotExist :: IO a -> IO a -> IO a
 catchDoesNotExist act handler =
   act `E.catch` \e ->
@@ -27,8 +34,8 @@ catchDoesNotExist act handler =
 
 getMFileStatus :: FilePath -> IO (Maybe Posix.FileStatus)
 getMFileStatus path = do
-  exists <- Posix.fileExist path
-  if exists
+  doesExist <- exists path
+  if doesExist
     then (Just <$> Posix.getFileStatus path) `catchDoesNotExist` return Nothing
     else return Nothing
 
@@ -36,8 +43,8 @@ createDirectories :: FilePath -> IO ()
 createDirectories path
   | BS8.null path = return ()
   | otherwise = do
-    exists <- Posix.fileExist path
-    unless exists $ do
+    doesExist <- exists path
+    unless doesExist $ do
       createDirectories $ takeDirectory path
       Posix.createDirectory path 0o777
 
