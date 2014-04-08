@@ -2,9 +2,15 @@
 module Lib.FSHook
   ( FSHook
   , with
-  , Input(..), Output(..), IsDelayed(..)
+
+  , HasEffect(..), OutputBehavior(..)
+  , Input(..), Output(..)
+
+  , IsDelayed(..)
   , FSAccessHandler
+
   , AccessType(..), AccessDoc
+
   , runCommand, timedRunCommand
   ) where
 
@@ -54,8 +60,34 @@ data Input = Input
   , inputPath :: FilePath
   }
 
-newtype Output = Output
-  { outputPath :: FilePath
+data HasEffect = NoEffect | HasEffect
+
+data OutputBehavior = OutputBehavior
+  { behaviorWhenFileDoesExist :: HasEffect
+  , behaviorWhenFileDoesNotExist :: HasEffect
+  }
+
+nonExistingFileChanger :: OutputBehavior
+nonExistingFileChanger = OutputBehavior
+  { behaviorWhenFileDoesExist = NoEffect
+  , behaviorWhenFileDoesNotExist = HasEffect
+  }
+
+existingFileChanger :: OutputBehavior
+existingFileChanger = OutputBehavior
+  { behaviorWhenFileDoesExist = HasEffect
+  , behaviorWhenFileDoesNotExist = NoEffect
+  }
+
+fileChanger :: OutputBehavior
+fileChanger = OutputBehavior
+  { behaviorWhenFileDoesExist = HasEffect
+  , behaviorWhenFileDoesNotExist = HasEffect
+  }
+
+data Output = Output
+  { outputBehavior :: OutputBehavior
+  , outputPath :: FilePath
   }
 
 type FSAccessHandler = IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
@@ -155,53 +187,59 @@ sendGo conn = void $ SockBS.send conn (BS8.pack "GO")
 handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Func -> IO ()
 handleJobMsg _tidStr conn job msg =
   case msg of
+    -- TODO: If any of these outputs are NOT also mode-only inputs on
+    -- their file paths, don't use handleOutputs so that we don't
+    -- report them as inputs
+
     -- outputs
-    Protocol.OpenW path _openWMode _creationMode -> handleOutput path
-                 -- TODO ^ need to make sure ReadWriteMode only ever
-                 -- opens files created by same job or inexistent
-    Protocol.Creat path _ -> handleOutput path
-    Protocol.Rename a b -> handleOutputs [a, b]
-    Protocol.Unlink path -> handleOutput path
-    Protocol.Truncate path _ -> handleOutput path
-    Protocol.Chmod path _ -> handleOutput path
-    Protocol.Chown path _ _ -> handleOutput path
-    Protocol.MkNod path _ _ -> handleOutput path -- TODO: Special mkNod handling?
-    Protocol.MkDir path _ -> handleOutput path
-    Protocol.RmDir path -> handleOutput path
+    Protocol.OpenW path _openWMode _creationMode
+                             -> handleOutputs [(Output fileChanger path)]
+    Protocol.Creat path _    -> handleOutputs [(Output fileChanger path)]
+    Protocol.Rename a b      -> handleOutputs [(Output existingFileChanger a), (Output fileChanger b)]
+    Protocol.Unlink path     -> handleOutputs [(Output existingFileChanger path)]
+    Protocol.Truncate path _ -> handleOutputs [(Output existingFileChanger path)]
+    Protocol.Chmod path _    -> handleOutputs [(Output existingFileChanger path)]
+    Protocol.Chown path _ _  -> handleOutputs [(Output existingFileChanger path)]
+    Protocol.MkNod path _ _  -> handleOutputs [(Output nonExistingFileChanger path)] -- TODO: Special mkNod handling?
+    Protocol.MkDir path _    -> handleOutputs [(Output nonExistingFileChanger path)]
+    Protocol.RmDir path      -> handleOutputs [(Output existingFileChanger path)]
 
     -- I/O
     Protocol.SymLink target linkPath ->
       -- TODO: We don't actually read the input here, but we don't
       -- handle symlinks correctly yet, so better be false-positive
       -- than false-negative
-      handle [Input AccessTypeFull target] [Output linkPath]
+      handle [target, linkPath]
+        [Input AccessTypeFull target, Input AccessTypeModeOnly linkPath]
+        [Output nonExistingFileChanger linkPath]
     Protocol.Link src dest -> error $ unwords ["Hard links not supported:", show src, "->", show dest]
 
     -- inputs
-    Protocol.OpenR path -> handleInput AccessTypeFull path
-    Protocol.Access path _mode -> handleInput AccessTypeModeOnly path
-    Protocol.Stat path -> handleInput AccessTypeStat path
-    Protocol.LStat path -> handleInput AccessTypeStat path
-    Protocol.OpenDir path -> handleInput AccessTypeFull path
-    Protocol.ReadLink path -> handleInput AccessTypeFull path
-    Protocol.Exec path -> handleInput AccessTypeFull path
-    Protocol.ExecP mPath attempted ->
-      handleAccess Delayed actDesc inputs []
+    Protocol.OpenR path            -> handleInput AccessTypeFull path
+    Protocol.Access path _mode     -> handleInput AccessTypeModeOnly path
+    Protocol.Stat path             -> handleInput AccessTypeStat path
+    Protocol.LStat path            -> handleInput AccessTypeStat path
+    Protocol.OpenDir path          -> handleInput AccessTypeFull path
+    Protocol.ReadLink path         -> handleInput AccessTypeFull path
+    Protocol.Exec path             -> handleInput AccessTypeFull path
+    Protocol.ExecP mPath attempted -> handleAccess Delayed actDesc inputs []
       where
         inputs =
           [Input AccessTypeFull path | Just path <- [mPath]] ++
           map (Input AccessTypeModeOnly) attempted
   where
     handleAccess = jobHandleAccess job conn
-    handle inputs outputs = handleAccess isDelayed actDesc inputs outputs
+    handle paths inputs outputs = handleAccess isDelayed actDesc inputs outputs
       where
         isDelayed
-          | all isAbsolute (map inputPath inputs ++ map outputPath outputs) = NotDelayed
+          | all isAbsolute paths = NotDelayed
           | otherwise = Delayed
     actDesc = BS8.pack (Protocol.showFunc msg) <> " done by " <> jobLabel job
-    handleInput accessType path = handle [Input accessType path] []
-    handleOutput path = handleOutputs [path]
-    handleOutputs paths = handle [] (map Output paths)
+    handleInput accessType path = handle [path] [Input accessType path] []
+    handleOutputs outputs =
+      handle (map outputPath outputs)
+      (map (Input AccessTypeModeOnly . outputPath) outputs) -- the outputs are also mode-only inputs
+      outputs
 
 jobHandleAccess :: RunningJob -> Socket -> IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
 jobHandleAccess job conn isDelayed desc inputs outputs = do

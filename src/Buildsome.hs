@@ -526,14 +526,11 @@ recordInput inputsRef reason (FSHook.Input accessType path) = do
      -- Keep the highest access type, and the oldest reason/mstat
      (max accessType oldAccessType, oldReason, oldMStat)
 
-recordOutputs :: Buildsome -> IORef (Map FilePath Reason) -> Reason -> Set FilePath -> [FSHook.Output] -> IO ()
-recordOutputs buildsome outputsRef accessDoc targetOutputsSet outputs =
-  E.mask_ $ do
-    atomicModifyIORef'_ outputsRef $ M.union $
-      M.fromList [(path, accessDoc) | FSHook.Output path <- outputs]
-    registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
-  where
-    paths = S.fromList $ map FSHook.outputPath outputs
+recordOutputs :: Buildsome -> IORef (Map FilePath Reason) -> Reason -> Set FilePath -> Set FilePath -> IO ()
+recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
+  atomicModifyIORef'_ outputsRef $ M.union $
+    M.fromList [(path, accessDoc) | path <- S.toList paths]
+  registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
@@ -549,20 +546,21 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
         fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
         mkSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
       mappendSlaveStats . mappend parentSlaveStats =<< waitForSlaves btePrinter parCell bteBuildsome slaves
-    outputIgnored (FSHook.Output path) = MagicFiles.outputIgnored path
+    outputIgnored = MagicFiles.outputIgnored . FSHook.outputPath
     inputIgnored actualOutputs (FSHook.Input _ path) =
       MagicFiles.inputIgnored path ||
       path `M.member` actualOutputs ||
       path `S.member` targetOutputsSet
-    fsAccessHandler isDelayed accessDoc inputs outputs = do
+    fsAccessHandler isDelayed accessDoc rawInputs rawOutputs = do
       actualOutputs <- readIORef outputsRef
-      let filteredOutputs = filter (not . outputIgnored) outputs
-          filteredInputs = filter (not . inputIgnored actualOutputs) inputs
-      recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet filteredOutputs
+      let outputs = filter (not . outputIgnored) rawOutputs
+          inputs = filter (not . inputIgnored actualOutputs) rawInputs
+          outputPaths = S.fromList $ map FSHook.outputPath outputs
       case isDelayed of
         FSHook.NotDelayed -> return ()
-        FSHook.Delayed -> makeInputs accessDoc filteredInputs filteredOutputs
-      mapM_ (recordInput inputsRef accessDoc) filteredInputs
+        FSHook.Delayed -> makeInputs accessDoc inputs outputs
+      recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet outputPaths
+      mapM_ (recordInput inputsRef accessDoc) inputs
   (time, stdOutputs) <-
     FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
     (shellCmdVerify target ["HOME", "PATH"])
