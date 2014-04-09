@@ -100,9 +100,8 @@ static void initialize_process_state(void)
     unsigned len = strlen(root_filter);
     ASSERT(len < sizeof process_state.root_filter);
     memcpy(process_state.root_filter, root_filter, len);
-    if(root_filter[len] != '/') {
-        process_state.root_filter[len] = '/';
-        len++;
+    if(root_filter[len] == '/') {
+        len--;
     }
     ASSERT(len < sizeof process_state.root_filter);
     process_state.root_filter[len] = 0;
@@ -233,22 +232,26 @@ static void await_go(void)
         writer_append_str(&w, src);                             \
         struct writer dest_writer = { dest, sizeof dest };      \
         canonize_abs_path(&dest_writer, temp_path);             \
-        bool in_root = try_chop_common_root(dest);              \
+        bool in_root = try_chop_common_root(                    \
+            process_state.root_filter_length,                   \
+            process_state.root_filter, dest);                   \
         needs_await = needs_await || in_root;                   \
     } while(0)
 
-static bool try_chop_common_root(char *path)
+static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *canonized_path)
 {
-    if(0 == process_state.root_filter_length) return true;
+    if(0 == prefix_length) return true;
 
-    size_t path_len = strlen(path);
-    if(path_len < process_state.root_filter_length ||
-       strncmp(path, process_state.root_filter, process_state.root_filter_length))
+    size_t canonized_path_len = strlen(canonized_path);
+    if(canonized_path_len < prefix_length ||
+       strncmp(canonized_path, prefix, prefix_length))
     {
         return false;
     }
-    memmove(path, path + process_state.root_filter_length, path_len - process_state.root_filter_length);
-    path[path_len - process_state.root_filter_length] = 0;
+
+    unsigned copy_pos = prefix_length + (canonized_path[prefix_length] == '/' ? 1 : 0);
+    memmove(canonized_path, canonized_path + copy_pos, canonized_path_len - copy_pos);
+    canonized_path[canonized_path_len - copy_pos] = 0;
     return true;
 }
 
