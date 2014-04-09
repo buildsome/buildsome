@@ -1,0 +1,11 @@
+* stat of directories is non-deterministic: Directories (as
+  containers) are shared outputs between all targets that create files
+  in them. Thus, "stat" on them is either non-deterministic, or forces
+  a total order on all file creators in the directory. buildsome
+  chooses the former.
+
+* symlinks not handled correctly yet.
+
+* any out-of-band access (to /dev, /proc, /tmp or the socket API for
+  that matter) is untracked and can inject any amount of
+  non-determinism into the build process.
