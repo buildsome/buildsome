@@ -545,7 +545,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
   return RunCmdResults
     { rcrStdOutputs = stdOutputs
     , rcrSelfTime = realToFrac time
-    , rcrInputs = inputs
+    , rcrInputs = inputs `M.difference` outputs
     , rcrOutputs = outputs
     , rcrSlaveStats = slaveStats
     }
