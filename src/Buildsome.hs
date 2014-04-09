@@ -179,7 +179,9 @@ instance Show TargetNotCreated where
     , " explicitly demanded but was not created by its target rule" ]
 
 makeDirectAccessSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
-makeDirectAccessSlaves bte@BuildTargetEnv{..} explicitness path =
+makeDirectAccessSlaves bte@BuildTargetEnv{..} explicitness path
+  | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
+  | otherwise =
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing -> do
     when (explicitness == Explicit) $ assertExists path $ MissingRule path bteReason
@@ -212,7 +214,9 @@ makeSlavesForAccessType AccessTypeFull = makeSlaves
 makeSlavesForAccessType AccessTypeModeOnly = makeDirectAccessSlaves
 
 makeSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
-makeSlaves bte@BuildTargetEnv{..} explicitness path = do
+makeSlaves bte@BuildTargetEnv{..} explicitness path
+  | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
+  | otherwise = do
   slaves <- makeDirectAccessSlaves bte explicitness path
   childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
   return $ slaves ++ childs
