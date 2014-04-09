@@ -2,7 +2,6 @@
 #include "writer.h"
 #include "canonize_path.h"
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -380,21 +379,21 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 }
 
 /* Depends on the full path */
-DEFINE_WRAPPER(int, stat, (const char *path, struct stat *buf))
+DEFINE_WRAPPER(int, __xstat, (int vers, const char *path, struct stat *buf))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, stat);
     PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(needs_await, msg, int, stat, path, buf);
+    return AWAIT_CALL_REAL(needs_await, msg, int, __xstat, vers, path, buf);
 }
 
 /* Depends on the full direct path */
-DEFINE_WRAPPER(int, lstat, (const char *path, struct stat *buf))
+DEFINE_WRAPPER(int, __lxstat, (int vers, const char *path, struct stat *buf))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, lstat);
     PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(needs_await, msg, int, lstat, path, buf);
+    return AWAIT_CALL_REAL(needs_await, msg, int, __lxstat, vers, path, buf);
 }
 
 /* Depends on the full path */
