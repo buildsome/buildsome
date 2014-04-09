@@ -20,15 +20,6 @@
     * This means we must try to generate slaves for every output that
       is also an input (or disallow these unspecified outputs)
 
-  * "/tmp" is not delayed so can't check if the file was inexistent, but can assume so, and verify:
-
-    * It is eventually deleted
-    * No other job accesses the same file
-
-    * Not good to run this logic only on filtered output paths!
-
-* FSHook to re-export AccessType
-
 * Check error parsing with netbeans (Entering directory + other errors)
 
 * Better prints:
