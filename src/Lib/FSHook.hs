@@ -180,8 +180,8 @@ handleJobMsg _tidStr conn job msg =
     -- inputs
     Protocol.OpenR path -> handleInput AccessTypeFull path
     Protocol.Access path _mode -> handleInput AccessTypeModeOnly path
-    Protocol.Stat path -> handleInput AccessTypeFull path
-    Protocol.LStat path -> handleInput AccessTypeFull path
+    Protocol.Stat path -> handleInput AccessTypeStat path
+    Protocol.LStat path -> handleInput AccessTypeStat path
     Protocol.OpenDir path -> handleInput AccessTypeFull path
     Protocol.ReadLink path -> handleInput AccessTypeFull path
     Protocol.Exec path -> handleInput AccessTypeFull path

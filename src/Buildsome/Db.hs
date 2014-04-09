@@ -20,7 +20,7 @@ import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.BuildId (BuildId)
 import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
-import Lib.FileDesc (FileDesc, FileModeDesc)
+import Lib.FileDesc (FileDesc, FileModeDesc, FileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
@@ -34,7 +34,7 @@ import qualified Database.Sophia as Sophia
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.4"
+schemaVersion = "schema.ver.5"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -50,7 +50,7 @@ instance Binary FileDescCache
 
 type Reason = ByteString
 
-data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc | InputAccessIgnoredFile
+data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc | InputAccessStatOnly FileStatDesc | InputAccessIgnoredFile
   deriving (Generic, Show)
 instance Binary InputAccess
 

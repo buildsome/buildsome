@@ -3,10 +3,14 @@
 module Lib.FileDesc
   ( FileDesc
   , fileDescOfMStat
+
   , FileModeDesc
-  , fileModeDescOfMStat
-  , getFileModeDesc
+  , fileModeDescOfMStat, getFileModeDesc
+
   , assertSameMTimes
+
+  , FileStatDesc
+  , fileStatDescOfMStat, getFileStatDesc
   ) where
 
 import Control.Applicative ((<$>))
@@ -20,6 +24,7 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus, catchDoesNotExist, getDirectoryContents)
 import Lib.FilePath (FilePath)
+import Lib.PosixInstances ()
 import Prelude hiding (FilePath)
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
@@ -29,10 +34,10 @@ import qualified System.Posix.ByteString as Posix
 type ContentHash = ByteString
 
 data FileDesc
-  = RegularFile ContentHash
-  | Symlink FilePath
-  | Directory ContentHash -- Of the getDirectoryContents
-  | NoFile -- an unlinked/deleted file at a certain path is also a
+  = RegularFileDesc ContentHash
+  | SymlinkDesc FilePath
+  | DirectoryDesc ContentHash -- Of the getDirectoryContents
+  | NoFileDesc -- an unlinked/deleted file at a certain path is also a
            -- valid input or output of a build step
   deriving (Generic, Eq, Show)
 instance Binary FileDesc
@@ -40,6 +45,34 @@ instance Binary FileDesc
 data FileModeDesc = FileModeDesc Posix.FileMode | NoFileMode
   deriving (Generic, Eq, Show)
 instance Binary FileModeDesc
+
+data FileType
+  = BlockDevice
+  | CharacterDevice
+  | Directory
+  | NamedPipe
+  | RegularFile
+  | Socket
+  | SymbolicLink
+  deriving (Generic, Eq, Show)
+instance Binary FileType
+
+data FileStatEssence = FileStatEssence
+  { deviceID        :: Posix.DeviceID
+  , fileGroup       :: Posix.GroupID
+  , fileID          :: Posix.FileID
+  , fileMode        :: Posix.FileMode
+  , fileOwner       :: Posix.UserID
+  , fileType        :: FileType
+  , linkCount       :: Posix.LinkCount
+  , specialDeviceID :: Posix.DeviceID
+  , fileSize        :: Maybe Posix.FileOffset -- Nothing if FileType=Directory (see KNOWN_ISSUES (stat of directory))
+  } deriving (Generic, Eq, Show)
+instance Binary FileStatEssence
+
+data FileStatDesc = FileStatDesc FileStatEssence | NoFileStat
+  deriving (Generic, Eq, Show)
+instance Binary FileStatDesc
 
 instance Binary Posix.CMode where
   get = Posix.CMode <$> getWord32le
@@ -51,14 +84,52 @@ instance E.Exception ThirdPartyMeddlingError
 data UnsupportedFileTypeError = UnsupportedFileTypeError FilePath deriving (Show, Typeable)
 instance E.Exception UnsupportedFileTypeError
 
+fileTypeOfStat :: Posix.FileStatus -> FileType
+fileTypeOfStat stat
+  | Posix.isBlockDevice stat = BlockDevice
+  | Posix.isCharacterDevice stat = CharacterDevice
+  | Posix.isDirectory stat = Directory
+  | Posix.isNamedPipe stat = NamedPipe
+  | Posix.isRegularFile stat = RegularFile
+  | Posix.isSocket stat = Socket
+  | Posix.isSymbolicLink stat = SymbolicLink
+  | otherwise = error "Unrecognized file type"
+
+fileStatEssence :: Posix.FileStatus -> FileStatEssence
+fileStatEssence stat =
+  FileStatEssence
+  { deviceID          = Posix.deviceID stat
+  , fileGroup         = Posix.fileGroup stat
+  , fileID            = Posix.fileID stat
+  , fileMode          = Posix.fileMode stat
+  , fileOwner         = Posix.fileOwner stat
+  , fileType          = fileTypeOfStat stat
+  , linkCount         = Posix.linkCount stat
+  , specialDeviceID   = Posix.specialDeviceID stat
+  , fileSize          =
+    if Posix.isDirectory stat
+    then Nothing -- See KNOWN_ISSUES (stat of directory)
+    else Just (Posix.fileSize stat)
+  }
+
+fileStatDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileStatDesc
+fileStatDescOfMStat path oldMStat = do
+  newMStat <- getMFileStatus path
+  let newMStatEssence = fileStatEssence <$> newMStat
+  when (newMStatEssence /= (fileStatEssence <$> oldMStat)) $ E.throwIO $
+    ThirdPartyMeddlingError path "changed during build!"
+  return $ maybe NoFileStat FileStatDesc newMStatEssence
+
+getFileStatDesc :: FilePath -> IO FileStatDesc
+getFileStatDesc path = fileStatDescOfMStat path =<< getMFileStatus path
+
 fileModeDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileModeDesc
 fileModeDescOfMStat path oldMStat = do
   newMStat <- getMFileStatus path
-  when ((Posix.fileMode <$> newMStat) /= (Posix.fileMode <$> oldMStat)) $ E.throwIO $
+  let newMMode = Posix.fileMode <$> newMStat
+  when (newMMode /= (Posix.fileMode <$> oldMStat)) $ E.throwIO $
     ThirdPartyMeddlingError path "mode changed during build!"
-  case newMStat of
-    Nothing -> return NoFileMode
-    Just stat -> return $ FileModeDesc $ Posix.fileMode stat
+  return $ maybe NoFileMode FileModeDesc newMMode
 
 assertSameMTimes :: FilePath -> Maybe Posix.FileStatus -> Maybe Posix.FileStatus -> IO ()
 assertSameMTimes path oldMStat newMStat =
@@ -85,17 +156,17 @@ fileDescOfMStat path oldMStat = do
   newMStat <- getMFileStatus path
   assertSameMTimes path oldMStat newMStat
   case newMStat of
-    Nothing -> return NoFile
+    Nothing -> return NoFileDesc
     Just stat
       | Posix.isRegularFile stat ->
-        return $ RegularFile $
+        return $ RegularFileDesc $
         fromMaybe (error ("File disappeared: " ++ show path))
         mContentHash
       | Posix.isDirectory stat ->
-        return $ Directory $
+        return $ DirectoryDesc $
         fromMaybe (error ("Directory disappeared: " ++ show path))
         mContentHash
-      | Posix.isSymbolicLink stat -> Symlink <$> Posix.readSymbolicLink path
+      | Posix.isSymbolicLink stat -> SymlinkDesc <$> Posix.readSymbolicLink path
       | otherwise -> E.throwIO $ UnsupportedFileTypeError path
   where
     assertExists act =

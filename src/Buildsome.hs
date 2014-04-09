@@ -31,7 +31,7 @@ import Lib.ColorText (ColorText, renderStr)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories, exists)
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook)
-import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc)
+import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc, fileStatDescOfMStat, getFileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
@@ -211,6 +211,9 @@ makeSlavesForAccessType ::
   FSHook.AccessType -> BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 makeSlavesForAccessType FSHook.AccessTypeFull = makeSlaves
 makeSlavesForAccessType FSHook.AccessTypeModeOnly = makeDirectAccessSlaves
+makeSlavesForAccessType FSHook.AccessTypeStat =
+  -- This is a (necessary) hack! See KNOWN_ISSUES: "stat of directories"
+  makeDirectAccessSlaves
 
 makeSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 makeSlaves bte@BuildTargetEnv{..} explicitness path
@@ -324,8 +327,9 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.Executio
     forM_ (M.toList elInputsDescs) $ \(filePath, oldInputAccess) ->
       case snd oldInputAccess of
         Db.InputAccessFull     oldDesc     -> compareToNewDesc "input"       (getFileDesc db) (filePath, oldDesc)
-        Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc  (filePath, oldModeDesc)
+        Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc (filePath, oldModeDesc)
         Db.InputAccessIgnoredFile          -> return ()
+        Db.InputAccessStatOnly oldStatDesc -> compareToNewDesc "input(stat)" getFileStatDesc (filePath, oldStatDesc)
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
@@ -343,6 +347,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.Executio
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
     inputAccessToType Db.InputAccessModeOnly {} = Just FSHook.AccessTypeModeOnly
+    inputAccessToType Db.InputAccessStatOnly {} = Just FSHook.AccessTypeStat
     inputAccessToType Db.InputAccessFull {} = Just FSHook.AccessTypeFull
     inputAccessToType Db.InputAccessIgnoredFile = Nothing
     waitForInputs = do
@@ -571,6 +576,8 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     inputAccess path (_, reason, _) | MagicFiles.allowedUnspecifiedOutput path = return (reason, Db.InputAccessIgnoredFile)
     inputAccess path (FSHook.AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
     inputAccess path (FSHook.AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
+    inputAccess path (FSHook.AccessTypeStat, reason, mStat) =
+      (,) reason . Db.InputAccessStatOnly <$> fileStatDescOfMStat path mStat
 
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell targetRep target =

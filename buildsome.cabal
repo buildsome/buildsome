@@ -62,6 +62,7 @@ executable buildsome
                ,     Lib.Parallelism
                ,     Lib.Parsec
                ,     Lib.PoolAlloc
+               ,     Lib.PosixInstances
                ,     Lib.Printer
                ,     Lib.Process
                ,     Lib.ScanFileUpwards
@@ -72,6 +73,7 @@ executable buildsome
                ,     Lib.Sock
                ,     Lib.StdOutputs
                ,     Lib.StringPattern
+               ,     Lib.TimeInstances
                ,     Lib.TimeIt
                ,     Lib.Timeout
                ,     Lib.Version
