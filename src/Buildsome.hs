@@ -31,7 +31,6 @@ import Lib.ColorText (ColorText, renderStr)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories, exists)
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook)
-import Lib.FSHook.AccessType (AccessType(..))
 import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
@@ -209,9 +208,9 @@ makeChildSlaves bte@BuildTargetEnv{..} path
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
 
 makeSlavesForAccessType ::
-  AccessType -> BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
-makeSlavesForAccessType AccessTypeFull = makeSlaves
-makeSlavesForAccessType AccessTypeModeOnly = makeDirectAccessSlaves
+  FSHook.AccessType -> BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
+makeSlavesForAccessType FSHook.AccessTypeFull = makeSlaves
+makeSlavesForAccessType FSHook.AccessTypeModeOnly = makeDirectAccessSlaves
 
 makeSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 makeSlaves bte@BuildTargetEnv{..} explicitness path
@@ -343,8 +342,8 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.Executio
     compareToNewDesc str getNewDesc (filePath, oldDesc) = do
       newDesc <- liftIO $ getNewDesc filePath
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
-    inputAccessToType Db.InputAccessModeOnly {} = Just AccessTypeModeOnly
-    inputAccessToType Db.InputAccessFull {} = Just AccessTypeFull
+    inputAccessToType Db.InputAccessModeOnly {} = Just FSHook.AccessTypeModeOnly
+    inputAccessToType Db.InputAccessFull {} = Just FSHook.AccessTypeFull
     inputAccessToType Db.InputAccessIgnoredFile = Nothing
     waitForInputs = do
       -- TODO: This is good for parallelism, but bad if the set of
@@ -481,13 +480,13 @@ removeOldOutput printer buildsome registeredOutputs path = do
 data RunCmdResults = RunCmdResults
   { rcrSelfTime :: DiffTime -- excluding pause times
   , rcrStdOutputs :: StdOutputs ByteString
-  , rcrInputs :: Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)
+  , rcrInputs :: Map FilePath (FSHook.AccessType, Reason, Maybe Posix.FileStatus)
   , rcrOutputs :: Map FilePath Reason
   , rcrSlaveStats :: Slave.Stats
   }
 
 recordInput ::
-  IORef (Map FilePath (AccessType, Reason, Maybe Posix.FileStatus)) ->
+  IORef (Map FilePath (FSHook.AccessType, Reason, Maybe Posix.FileStatus)) ->
   Reason -> FSHook.Input -> IO ()
 recordInput inputsRef reason (FSHook.Input accessType path) = do
   mstat <- getMFileStatus path
@@ -570,8 +569,8 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
   where
     db = bsDb buildsome
     inputAccess path (_, reason, _) | MagicFiles.allowedUnspecifiedOutput path = return (reason, Db.InputAccessIgnoredFile)
-    inputAccess path (AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
-    inputAccess path (AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
+    inputAccess path (FSHook.AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
+    inputAccess path (FSHook.AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
 
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell targetRep target =

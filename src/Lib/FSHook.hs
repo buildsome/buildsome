@@ -4,7 +4,7 @@ module Lib.FSHook
   , with
   , Input(..), Output(..), IsDelayed(..)
   , FSAccessHandler
-  , AccessDoc
+  , AccessType(..), AccessDoc
   , runCommand, timedRunCommand
   ) where
 
