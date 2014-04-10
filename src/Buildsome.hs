@@ -369,8 +369,25 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.Executio
       hintedSlaves <-
         mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
 
+      targetParentsStats <- buildTargetParents bte parCell target
+
       let allSlaves = speculativeSlaves ++ hintedSlaves
-      waitForSlaves btePrinter parCell bteBuildsome allSlaves
+      mappend targetParentsStats <$>
+        waitForSlaves btePrinter parCell bteBuildsome allSlaves
+
+buildTargetParents :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO Slave.Stats
+buildTargetParents bte@BuildTargetEnv{..} parCell target =
+  waitForSlaves btePrinter parCell bteBuildsome . concat =<<
+  ( mapM mkParentSlaves .
+    filter (`notElem` ["", "/"]) .
+    targetOutputs
+  ) target
+  where
+    mkParentSlaves outputPath =
+      mkSlaves bte
+      { bteReason =
+        ColorText.render $ "Container directory of target output: " <> targetShow outputPath
+      } Explicit (FilePath.takeDirectory outputPath)
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -594,6 +611,8 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
   Print.targetWrap btePrinter bteReason target "BUILDING" $ do
+    targetParentsStats <- buildTargetParents bte parCell target
+
     registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
     mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
 
@@ -613,7 +632,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
     printStrLn btePrinter $
       "Build (now) took " <> Color.timing (show rcrSelfTime <> " seconds")
     let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
-    return $ mconcat [selfStats, hintedStats, rcrSlaveStats]
+    return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
