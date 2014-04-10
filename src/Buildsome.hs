@@ -500,6 +500,18 @@ recordInput inputsRef reason (FSHook.Input accessType path) = do
     -- the final mtime to the oldest one
     M.insertWith merge path (accessType, reason, mstat)
   where
+    merge (FSHook.AccessTypeFull, newReason, Just newStat)
+          (oldAccessType, _oldReason, _oldMStat)
+      | Posix.isDirectory newStat
+      , oldAccessType < FSHook.AccessTypeFull =
+      -- Special-case a read-directory that follows a stat/mode. The
+      -- opendir will generate the targets inside, which will modify
+      -- the directory's stats. This would be detected as "Third Party
+      -- meddling", so for directories upgrading to full access type,
+      -- we need to remember the new stat (which might miss third
+      -- party meddling by others in this scenario in a (typically)
+      -- very short time, so is not a big deal)
+      (FSHook.AccessTypeFull, newReason, Just newStat)
     merge _ (oldAccessType, oldReason, oldMStat) =
      -- Keep the highest access type, and the oldest reason/mstat
      (max accessType oldAccessType, oldReason, oldMStat)
