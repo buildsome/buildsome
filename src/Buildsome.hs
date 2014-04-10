@@ -28,7 +28,7 @@ import Lib.AnnotatedException (annotateException)
 import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.ColorText (ColorText, renderStr)
-import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, createDirectories, exists)
+import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, exists)
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook)
 import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc, fileStatDescOfMStat, getFileStatDesc)
@@ -594,9 +594,6 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
   Print.targetWrap btePrinter bteReason target "BUILDING" $ do
-    -- TODO: Register each created subdirectory as an output?
-    mapM_ (createDirectories . FilePath.takeDirectory) $ targetOutputs target
-
     registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
     mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
 

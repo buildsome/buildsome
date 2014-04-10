@@ -29,6 +29,9 @@ needsm: needsm.o
 	${LINK}
 local }
 
+out:
+	mkdir $@
+
 out/a: ${OBJS} | $./a.h
 	${LINK}
 
