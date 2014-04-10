@@ -135,7 +135,7 @@ data BuildTargetEnv = BuildTargetEnv
   }
 
 mkSlavesForPaths :: BuildTargetEnv -> Explicitness -> [FilePath] -> IO [Slave]
-mkSlavesForPaths bte explicitness = fmap concat . mapM (makeSlaves bte explicitness)
+mkSlavesForPaths bte explicitness = fmap concat . mapM (mkSlaves bte explicitness)
 
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO Slave.Stats
 want printer buildsome reason paths = do
@@ -207,16 +207,16 @@ makeChildSlaves bte@BuildTargetEnv{..} path
     DirectoryBuildMap childTargets childPatterns =
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
 
-makeSlavesForAccessType ::
+mkSlavesForAccessType ::
   FSHook.AccessType -> BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
-makeSlavesForAccessType FSHook.AccessTypeFull = makeSlaves
-makeSlavesForAccessType FSHook.AccessTypeModeOnly = makeDirectAccessSlaves
-makeSlavesForAccessType FSHook.AccessTypeStat =
+mkSlavesForAccessType FSHook.AccessTypeFull = mkSlaves
+mkSlavesForAccessType FSHook.AccessTypeModeOnly = makeDirectAccessSlaves
+mkSlavesForAccessType FSHook.AccessTypeStat =
   -- This is a (necessary) hack! See KNOWN_ISSUES: "stat of directories"
   makeDirectAccessSlaves
 
-makeSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
-makeSlaves bte@BuildTargetEnv{..} explicitness path
+mkSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
+mkSlaves bte@BuildTargetEnv{..} explicitness path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | otherwise = do
   slaves <- makeDirectAccessSlaves bte explicitness path
@@ -362,7 +362,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.Executio
         else case inputAccessToType inputAccess of
           Nothing -> return []
           Just accessType ->
-            makeSlavesForAccessType accessType
+            mkSlavesForAccessType accessType
             bte { bteReason = depReason } Implicit inputPath
 
       let hintReason = ColorText.render $ "Hint from " <> (targetShow . targetOutputs) target
@@ -535,7 +535,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     makeInputs accessDoc inputs = do
       slaves <-
         fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
-        makeSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
+        mkSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
       mappendSlaveStats =<< waitForSlaves btePrinter parCell bteBuildsome slaves
     outputIgnored (FSHook.Output path) = MagicFiles.outputIgnored path
     inputIgnored actualOutputs (FSHook.Input _ path) =
