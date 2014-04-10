@@ -1,6 +1,8 @@
 * -k for keep going, but by default, refuse to (make new slaves ||
   allocate parallelism) after a failure!
 
+  * Parallelism travels to successful paths after the exception path happened
+
 * Consider all outputs as potential inputs on the same file
 
   * Can later optimize and specify that some outputs do not reveal
