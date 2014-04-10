@@ -369,25 +369,22 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.Executio
       hintedSlaves <-
         mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
 
-      targetParentsStats <- buildTargetParents bte parCell target
+      targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
 
       let allSlaves = speculativeSlaves ++ hintedSlaves
       mappend targetParentsStats <$>
         waitForSlaves btePrinter parCell bteBuildsome allSlaves
 
-buildTargetParents :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO Slave.Stats
-buildTargetParents bte@BuildTargetEnv{..} parCell target =
-  waitForSlaves btePrinter parCell bteBuildsome . concat =<<
-  ( mapM mkParentSlaves .
-    filter (`notElem` ["", "/"]) .
-    targetOutputs
-  ) target
+buildParentDirectories :: BuildTargetEnv -> Parallelism.Cell -> Explicitness -> [FilePath] -> IO Slave.Stats
+buildParentDirectories bte@BuildTargetEnv{..} parCell explicitness =
+  waitForSlaves btePrinter parCell bteBuildsome . concat <=<
+  mapM mkParentSlaves . filter (`notElem` ["", "/"])
   where
-    mkParentSlaves outputPath =
+    mkParentSlaves path =
       mkSlavesDirectAccess bte
       { bteReason =
-        ColorText.render $ "Container directory of target output: " <> targetShow outputPath
-      } Explicit (FilePath.takeDirectory outputPath)
+        ColorText.render $ "Container directory of: " <> targetShow path
+      } explicitness (FilePath.takeDirectory path)
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -549,11 +546,13 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
   slaveStatsRef <- newIORef mempty
   let
     mappendSlaveStats stats = atomicModifyIORef_ slaveStatsRef (mappend stats)
-    makeInputs accessDoc inputs = do
+    makeInputs accessDoc inputs outputs = do
+      let allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
+      parentSlaveStats <- buildParentDirectories bte parCell Implicit allPaths
       slaves <-
         fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
         mkSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
-      mappendSlaveStats =<< waitForSlaves btePrinter parCell bteBuildsome slaves
+      mappendSlaveStats . mappend parentSlaveStats =<< waitForSlaves btePrinter parCell bteBuildsome slaves
     outputIgnored (FSHook.Output path) = MagicFiles.outputIgnored path
     inputIgnored actualOutputs (FSHook.Input _ path) =
       MagicFiles.inputIgnored path ||
@@ -566,7 +565,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet filteredOutputs
       case isDelayed of
         FSHook.NotDelayed -> return ()
-        FSHook.Delayed -> makeInputs accessDoc filteredInputs
+        FSHook.Delayed -> makeInputs accessDoc filteredInputs filteredOutputs
       mapM_ (recordInput inputsRef accessDoc) filteredInputs
   (time, stdOutputs) <-
     FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
@@ -611,7 +610,7 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
   Print.targetWrap btePrinter bteReason target "BUILDING" $ do
-    targetParentsStats <- buildTargetParents bte parCell target
+    targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
 
     registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
     mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
