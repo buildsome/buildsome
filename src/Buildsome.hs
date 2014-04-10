@@ -606,9 +606,9 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
 
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell targetRep target = do
-  mTime <- findApplyExecutionLog bte parCell targetRep target
-  case mTime of
-    Just time -> return time
+  mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
+  case mSlaveStats of
+    Just slaveStats -> return slaveStats
     Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
       targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
 
