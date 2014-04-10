@@ -20,11 +20,14 @@ import Data.Binary.Get (getWord32le)
 import Data.Binary.Put (putWord32le)
 import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
+import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus, catchDoesNotExist, getDirectoryContents)
 import Lib.FilePath (FilePath)
+import Lib.Posix.FileType (FileType, fileTypeOfStat)
 import Lib.Posix.Instances ()
+import Lib.TimeInstances ()
 import Prelude hiding (FilePath)
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
@@ -46,31 +49,34 @@ data FileModeDesc = FileModeDesc Posix.FileMode | NoFileMode
   deriving (Generic, Eq, Show)
 instance Binary FileModeDesc
 
-data FileType
-  = BlockDevice
-  | CharacterDevice
-  | Directory
-  | NamedPipe
-  | RegularFile
-  | Socket
-  | SymbolicLink
-  deriving (Generic, Eq, Show)
-instance Binary FileType
-
-data FileStatEssence = FileStatEssence
+-- Must not compare other fields in the stat of directories because
+-- they may change as files are created by various process in the
+-- directory (see KNOWN_ISSUES).
+data BasicStatEssence = BasicStatEssence
   { deviceID        :: Posix.DeviceID
   , fileGroup       :: Posix.GroupID
   , fileID          :: Posix.FileID
   , fileMode        :: Posix.FileMode
   , fileOwner       :: Posix.UserID
-  , fileType        :: FileType
   , linkCount       :: Posix.LinkCount
   , specialDeviceID :: Posix.DeviceID
-  , fileSize        :: Maybe Posix.FileOffset -- Nothing if FileType=Directory (see KNOWN_ISSUES (stat of directory))
   } deriving (Generic, Eq, Show)
-instance Binary FileStatEssence
+instance Binary BasicStatEssence
 
-data FileStatDesc = FileStatDesc FileStatEssence | NoFileStat
+data FullStatEssence = FullStatEssence
+  { basicStatEssence      :: BasicStatEssence
+  , fileSize              :: Posix.FileOffset
+  , fileType              :: FileType
+  , accessTimeHiRes       :: POSIXTime
+  , modificationTimeHiRes :: POSIXTime
+  , statusChangeTimeHiRes :: POSIXTime
+  } deriving (Generic, Eq, Show)
+instance Binary FullStatEssence
+
+data FileStatDesc
+  = FileStatDirectory BasicStatEssence
+  | FileStatOther FullStatEssence
+  | NoFileStat
   deriving (Generic, Eq, Show)
 instance Binary FileStatDesc
 
@@ -84,41 +90,44 @@ instance E.Exception ThirdPartyMeddlingError
 data UnsupportedFileTypeError = UnsupportedFileTypeError FilePath deriving (Show, Typeable)
 instance E.Exception UnsupportedFileTypeError
 
-fileTypeOfStat :: Posix.FileStatus -> FileType
-fileTypeOfStat stat
-  | Posix.isBlockDevice stat = BlockDevice
-  | Posix.isCharacterDevice stat = CharacterDevice
-  | Posix.isDirectory stat = Directory
-  | Posix.isNamedPipe stat = NamedPipe
-  | Posix.isRegularFile stat = RegularFile
-  | Posix.isSocket stat = Socket
-  | Posix.isSymbolicLink stat = SymbolicLink
-  | otherwise = error "Unrecognized file type"
-
-fileStatEssence :: Posix.FileStatus -> FileStatEssence
-fileStatEssence stat =
-  FileStatEssence
+-- Basic stat essence compares only things that do not change in a
+-- directory stat when files are changed/created in that directory
+basicStatEssenceOfStat :: Posix.FileStatus -> BasicStatEssence
+basicStatEssenceOfStat stat = BasicStatEssence
   { deviceID          = Posix.deviceID stat
   , fileGroup         = Posix.fileGroup stat
   , fileID            = Posix.fileID stat
   , fileMode          = Posix.fileMode stat
   , fileOwner         = Posix.fileOwner stat
-  , fileType          = fileTypeOfStat stat
   , linkCount         = Posix.linkCount stat
   , specialDeviceID   = Posix.specialDeviceID stat
-  , fileSize          =
-    if Posix.isDirectory stat
-    then Nothing -- See KNOWN_ISSUES (stat of directory)
-    else Just (Posix.fileSize stat)
   }
+
+-- Full stat essence should contain everything a program doing stat()
+-- could be looking at
+fullStatEssenceOfStat :: Posix.FileStatus -> FullStatEssence
+fullStatEssenceOfStat stat = FullStatEssence
+  { basicStatEssence = basicStatEssenceOfStat stat
+  , fileType = fileTypeOfStat stat
+  , fileSize = Posix.fileSize stat
+  , accessTimeHiRes = Posix.accessTimeHiRes stat
+  , modificationTimeHiRes = Posix.modificationTimeHiRes stat
+  , statusChangeTimeHiRes = Posix.statusChangeTimeHiRes stat
+  }
+
+fileStatDesc :: Maybe Posix.FileStatus -> FileStatDesc
+fileStatDesc Nothing = NoFileStat
+fileStatDesc (Just stat)
+  | Posix.isDirectory stat = FileStatDirectory $ basicStatEssenceOfStat stat
+  | otherwise = FileStatOther $ fullStatEssenceOfStat stat
 
 fileStatDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileStatDesc
 fileStatDescOfMStat path oldMStat = do
   newMStat <- getMFileStatus path
-  let newMStatEssence = fileStatEssence <$> newMStat
-  when (newMStatEssence /= (fileStatEssence <$> oldMStat)) $ E.throwIO $
+  let newMStatDesc = fileStatDesc newMStat
+  when (newMStatDesc /= fileStatDesc oldMStat) $ E.throwIO $
     ThirdPartyMeddlingError path "changed during build!"
-  return $ maybe NoFileStat FileStatDesc newMStatEssence
+  return newMStatDesc
 
 getFileStatDesc :: FilePath -> IO FileStatDesc
 getFileStatDesc path = fileStatDescOfMStat path =<< getMFileStatus path
