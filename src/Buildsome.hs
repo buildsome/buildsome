@@ -443,14 +443,12 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
       Nothing ->
         ( M.insert targetRep newSlaveMVar oldSlaveMap
-        , mkSlave newSlaveMVar $ \printer getParId ->
-          E.bracket (Parallelism.newCell =<< getParId) (Parallelism.release par) $
-          \parCell -> restoreMask $ do
+        , mkSlave newSlaveMVar $ \printer allocParCell ->
+          allocParCell $ \parCell -> restoreMask $ do
             let newBte = bte { bteParents = newParents, btePrinter = printer }
             buildTarget newBte parCell targetRep target
         )
     where
-      par = bsParallelism bteBuildsome
       annotate =
         annotateException $ renderStr $
         "build failure of " <> targetShow (targetOutputs target) <> ":\n"
@@ -459,10 +457,10 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
       mkSlave mvar action = do
         slave <-
           E.handle panicHandler $ do
-            getParId <- Parallelism.startAlloc $ bsParallelism bteBuildsome
+            allocParCell <- Parallelism.startAlloc $ bsParallelism bteBuildsome
             depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
             depPrinter <- Printer.newFrom btePrinter depPrinterId
-            Slave.new depPrinterId (targetOutputs target) $ annotate $ action depPrinter getParId
+            Slave.new depPrinterId (targetOutputs target) $ annotate $ action depPrinter allocParCell
         putMVar mvar slave
         return slave
 

@@ -1,9 +1,9 @@
 module Lib.Parallelism
   ( ParId
   , Parallelism, new
-  , Cell, newCell
+  , Cell
   , startAlloc
-  , release, withReleased
+  , withReleased
   ) where
 
 import Data.IORef
@@ -18,8 +18,10 @@ type Parallelism = PoolAlloc ParId
 new :: ParId -> IO Parallelism
 new n = PoolAlloc.new [1..n]
 
-startAlloc :: Parallelism -> IO (IO ParId)
-startAlloc = PoolAlloc.startAlloc
+startAlloc :: Parallelism -> IO ((Cell -> IO r) -> IO r)
+startAlloc parallelism = do
+  alloc <- PoolAlloc.startAlloc parallelism
+  return $ E.bracket (newIORef =<< alloc) (release parallelism)
 
 release :: Parallelism -> Cell -> IO ()
 release parallelism cell = do
@@ -38,6 +40,3 @@ localReleasePool parallelism cell =
 
 withReleased :: Cell -> Parallelism -> IO a -> IO a
 withReleased cell parallelism = localReleasePool parallelism cell
-
-newCell :: ParId -> IO Cell
-newCell = newIORef
