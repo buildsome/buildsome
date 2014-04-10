@@ -1,8 +1,6 @@
 * -k for keep going, but by default, refuse to (make new slaves ||
   allocate parallelism) after a failure!
 
-* Hint parent dir deps for outputs too, not only for direct slaves
-
 * Consider all outputs as potential inputs on the same file
 
   * Can later optimize and specify that some outputs do not reveal
