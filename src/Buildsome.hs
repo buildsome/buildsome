@@ -177,8 +177,8 @@ instance Show TargetNotCreated where
     [ targetShow path
     , " explicitly demanded but was not created by its target rule" ]
 
-makeDirectAccessSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
-makeDirectAccessSlaves bte@BuildTargetEnv{..} explicitness path
+mkSlavesDirectAccess :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
+mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | otherwise =
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
@@ -210,16 +210,16 @@ makeChildSlaves bte@BuildTargetEnv{..} path
 mkSlavesForAccessType ::
   FSHook.AccessType -> BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 mkSlavesForAccessType FSHook.AccessTypeFull = mkSlaves
-mkSlavesForAccessType FSHook.AccessTypeModeOnly = makeDirectAccessSlaves
+mkSlavesForAccessType FSHook.AccessTypeModeOnly = mkSlavesDirectAccess
 mkSlavesForAccessType FSHook.AccessTypeStat =
   -- This is a (necessary) hack! See KNOWN_ISSUES: "stat of directories"
-  makeDirectAccessSlaves
+  mkSlavesDirectAccess
 
 mkSlaves :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 mkSlaves bte@BuildTargetEnv{..} explicitness path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | otherwise = do
-  slaves <- makeDirectAccessSlaves bte explicitness path
+  slaves <- mkSlavesDirectAccess bte explicitness path
   childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
   return $ slaves ++ childs
 
