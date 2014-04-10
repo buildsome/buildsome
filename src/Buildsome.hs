@@ -447,10 +447,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
           E.bracket (Parallelism.newCell =<< getParId) (Parallelism.release par) $
           \parCell -> restoreMask $ do
             let newBte = bte { bteParents = newParents, btePrinter = printer }
-            mTime <- findApplyExecutionLog newBte parCell targetRep target
-            case mTime of
-              Nothing -> buildTarget newBte parCell targetRep target
-              Just time -> return time
+            buildTarget newBte parCell targetRep target
         )
     where
       par = bsParallelism bteBuildsome
@@ -608,30 +605,33 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
       (,) reason . Db.InputAccessStatOnly <$> fileStatDescOfMStat path mStat
 
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
-buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
-  Print.targetWrap btePrinter bteReason target "BUILDING" $ do
-    targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
+buildTarget bte@BuildTargetEnv{..} parCell targetRep target = do
+  mTime <- findApplyExecutionLog bte parCell targetRep target
+  case mTime of
+    Just time -> return time
+    Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
+      targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
 
-    registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
-    mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
+      registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
+      mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
 
-    slaves <-
-      mkSlavesForPaths bte
-        { bteReason = ColorText.render $ "Hint from " <> targetShow (targetOutputs target)
-        } Explicit $ targetAllInputs target
-    hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
+      slaves <-
+        mkSlavesForPaths bte
+          { bteReason = ColorText.render $ "Hint from " <> targetShow (targetOutputs target)
+          } Explicit $ targetAllInputs target
+      hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
 
-    Print.cmd btePrinter target
+      Print.cmd btePrinter target
 
-    rcr@RunCmdResults{..} <- runCmd bte parCell target
+      rcr@RunCmdResults{..} <- runCmd bte parCell target
 
-    verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.keysSet rcrOutputs) target
-    saveExecutionLog bteBuildsome target rcr
+      verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.keysSet rcrOutputs) target
+      saveExecutionLog bteBuildsome target rcr
 
-    printStrLn btePrinter $
-      "Build (now) took " <> Color.timing (show rcrSelfTime <> " seconds")
-    let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
-    return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
+      printStrLn btePrinter $
+        "Build (now) took " <> Color.timing (show rcrSelfTime <> " seconds")
+      let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
+      return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
