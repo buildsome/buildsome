@@ -62,7 +62,7 @@ executable buildsome
                ,     Lib.Parallelism
                ,     Lib.Parsec
                ,     Lib.PoolAlloc
-               ,     Lib.PosixInstances
+               ,     Lib.Posix.Instances
                ,     Lib.Printer
                ,     Lib.Process
                ,     Lib.ScanFileUpwards

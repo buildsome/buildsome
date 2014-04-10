@@ -24,7 +24,7 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus, catchDoesNotExist, getDirectoryContents)
 import Lib.FilePath (FilePath)
-import Lib.PosixInstances ()
+import Lib.Posix.Instances ()
 import Prelude hiding (FilePath)
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5

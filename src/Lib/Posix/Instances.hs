@@ -1,6 +1,6 @@
 {-# LANGUAGE StandaloneDeriving, DeriveGeneric #-}
 {-# OPTIONS -fno-warn-orphans #-}
-module Lib.PosixInstances () where
+module Lib.Posix.Instances () where
 
 import Data.Binary(Binary)
 import Foreign.C.Types (CTime(..))
