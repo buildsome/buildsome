@@ -22,16 +22,19 @@ startAlloc :: Parallelism -> IO (IO ParId)
 startAlloc = PoolAlloc.startAlloc
 
 release :: Parallelism -> Cell -> IO ()
-release parallelism cell = PoolAlloc.release parallelism =<< readIORef cell
+release parallelism cell = do
+  parId <- readIORef cell
+  E.mask_ $ do
+    PoolAlloc.release parallelism parId
+    writeIORef cell $ error "Attempt to read released resource"
 
 -- | Release the currently held item, run given action, then regain
 -- new item instead
 localReleasePool :: Parallelism -> Cell -> IO b -> IO b
 localReleasePool parallelism cell =
-  E.bracket_ (release parallelism cell >> markError) alloc
-  where
-    markError = writeIORef cell $ error "Attempt to read released resource"
-    alloc = writeIORef cell =<< PoolAlloc.alloc parallelism
+  E.bracket_
+  (release parallelism cell)
+  (writeIORef cell =<< PoolAlloc.alloc parallelism)
 
 withReleased :: Cell -> Parallelism -> IO a -> IO a
 withReleased cell parallelism = localReleasePool parallelism cell
