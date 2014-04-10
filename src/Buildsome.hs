@@ -384,7 +384,7 @@ buildTargetParents bte@BuildTargetEnv{..} parCell target =
   ) target
   where
     mkParentSlaves outputPath =
-      mkSlaves bte
+      mkSlavesDirectAccess bte
       { bteReason =
         ColorText.render $ "Container directory of target output: " <> targetShow outputPath
       } Explicit (FilePath.takeDirectory outputPath)
