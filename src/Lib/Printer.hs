@@ -80,8 +80,8 @@ okTextAttrs :: [Console.SGR]
 okTextAttrs = [Console.SetColor Console.Foreground Console.Vivid Console.Green]
 
 {-# INLINE printWrap #-}
-printWrap :: Printer -> ColorText -> IO a -> IO a
-printWrap printer str body = do
+printWrap :: Printer -> ColorText -> ColorText -> IO a -> IO a
+printWrap printer str entryMsg body = do
   printStrLn printer before
   res <-
     wrappedBody `onException` \e ->
@@ -95,5 +95,5 @@ printWrap printer str body = do
     indentLevel  = printerIndentLevelRef printer
     addIndent d  = modifyIORef indentLevel (+d)
     wrappedBody  = E.bracket_ (addIndent 1) (addIndent (-1)) body
-    before       = mconcat ["{ ", str]
+    before       = mconcat ["{ ", str, " ", entryMsg]
     after suffix = mconcat ["} ", str, " ", suffix]

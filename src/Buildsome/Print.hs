@@ -42,10 +42,9 @@ warn pos str =
   posMessage pos $ Color.warning $ "WARNING: " <> str
 
 targetWrap :: Printer -> Reason -> Target -> ColorText -> IO a -> IO a
-targetWrap printer reason target str body =
-  Printer.printWrap printer (targetShow (targetOutputs target)) $ do
-    printStrLn printer $ mconcat [str, " (", fromBytestring8 reason, ")"]
-    body
+targetWrap printer reason target str =
+  Printer.printWrap printer (targetShow (targetOutputs target)) $ mconcat
+  [str, " (", fromBytestring8 reason, ")"]
 
 colorStdOutputs :: StdOutputs ByteString -> StdOutputs ColorText
 colorStdOutputs (StdOutputs out err) =
