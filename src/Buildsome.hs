@@ -681,7 +681,7 @@ with makefilePath makefile opt@Opt{..} body =
   FSHook.with $ \fsHook ->
   Db.with (buildDbFilename makefilePath) $ \db -> do
     slaveMapByTargetRep <- newIORef M.empty
-    pool <- Parallelism.new $ fromMaybe 1 optParallelism
+    parallelism <- Parallelism.new $ fromMaybe 1 optParallelism
     freshPrinterIds <- Fresh.new 1
     buildId <- BuildId.new
     rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
@@ -696,7 +696,7 @@ with makefilePath makefile opt@Opt{..} body =
         , bsDb = db
         , bsFsHook = fsHook
         , bsSlaveByTargetRep = slaveMapByTargetRep
-        , bsParallelism = pool
+        , bsParallelism = parallelism
         , bsFreshPrinterIds = freshPrinterIds
         }
     deleteRemovedOutputs buildsome
