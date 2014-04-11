@@ -1,12 +1,4 @@
-* -k for keep going, but by default, refuse to (make new slaves ||
-  allocate parallelism) after a failure!
-
-  * Parallelism travels to successful paths after the exception path happened
-
 * Consider all outputs as potential inputs on the same file
-
-  * Can later optimize and specify that some outputs do not reveal
-    information about inputs
 
   * These inputs are fine if they are specified target outputs,
     because then they are brought to a known deleted state before
@@ -24,6 +16,11 @@
 
     * This means we must try to generate slaves for every output that
       is also an input (or disallow these unspecified outputs)
+
+* -k for keep going, but by default, refuse to (make new slaves ||
+  allocate parallelism) after a failure!
+
+  * Parallelism travels to successful paths after the exception path happened
 
 * Check error parsing with netbeans (Entering directory + other errors)
 
