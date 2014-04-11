@@ -4,6 +4,8 @@ module Lib.FSHook.Protocol
   , OpenWriteMode(..), showOpenWriteMode
   , CreationMode(..), showCreationMode
   , Func(..), showFunc
+  , IsDelayed(..)
+  , Msg(..)
   ) where
 
 import Control.Applicative
@@ -59,6 +61,14 @@ data Func
   | Exec FilePath
   | ExecP (Maybe FilePath) [FilePath]{-prior searched paths (that did not exist)-}
   deriving (Show)
+
+-- Hook is delayed waiting for handler to complete
+data IsDelayed = Delayed | NotDelayed
+
+data Msg = Msg
+  { msgIsDelayed :: IsDelayed
+  , msgFunc :: Func
+  }
 
 {-# INLINE showFunc #-}
 showFunc :: Func -> String
@@ -161,23 +171,27 @@ funcs =
   ]
 
 {-# INLINE parseMsgLazy #-}
-parseMsgLazy :: BSL.ByteString -> IO Func
-parseMsgLazy = runGet $ do
-  funcId <- getWord32le
-  let (_name, getter) = funcs ! fromIntegral funcId
-  func <- getter
-  finished <- isEmpty
-  unless finished $ fail "Unexpected trailing input in message"
-  return func
+parseMsgLazy :: BSL.ByteString -> IO Msg
+parseMsgLazy bs = do
+  Msg isDelayed <$> mkFunc
+  where
+    (isDelayed, mkFunc) = (`runGet` bs) $ do
+      isDelayedInt <- getWord8
+      funcId <- getWord32le
+      let (_name, getter) = funcs ! fromIntegral funcId
+      ioFunc <- getter
+      finished <- isEmpty
+      unless finished $ fail "Unexpected trailing input in message"
+      return (if isDelayedInt == 0 then NotDelayed else Delayed, ioFunc)
 
 {-# INLINE strictToLazy #-}
 strictToLazy :: ByteString -> BSL.ByteString
 strictToLazy x = BSL.fromChunks [x]
 
 {-# INLINE parseMsg #-}
-parseMsg :: ByteString -> IO Func
+parseMsg :: ByteString -> IO Msg
 parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloMsg #-}
 helloMsg :: ByteString
-helloMsg = "PROTOCOL2: HELLO, I AM: "
+helloMsg = "PROTOCOL3: HELLO, I AM: "

@@ -28,7 +28,8 @@ import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.FSHook.AccessType (AccessType(..))
-import Lib.FilePath (FilePath, (</>), takeDirectory, isAbsolute)
+import Lib.FSHook.Protocol (IsDelayed(..))
+import Lib.FilePath (FilePath, (</>), takeDirectory)
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
@@ -51,9 +52,6 @@ import qualified System.Posix.ByteString as Posix
 type AccessDoc = ByteString
 
 type JobId = ByteString
-
--- Hook is delayed waiting for handler to complete
-data IsDelayed = Delayed | NotDelayed
 
 data Input = Input
   { inputAccessType :: AccessType
@@ -184,9 +182,9 @@ sendGo :: Socket -> IO ()
 sendGo conn = void $ SockBS.send conn (BS8.pack "GO")
 
 {-# INLINE handleJobMsg #-}
-handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Func -> IO ()
-handleJobMsg _tidStr conn job msg =
-  case msg of
+handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Msg -> IO ()
+handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
+  case func of
     -- TODO: If any of these outputs are NOT also mode-only inputs on
     -- their file paths, don't use handleOutputs so that we don't
     -- report them as inputs
@@ -209,7 +207,7 @@ handleJobMsg _tidStr conn job msg =
       -- TODO: We don't actually read the input here, but we don't
       -- handle symlinks correctly yet, so better be false-positive
       -- than false-negative
-      handle [target, linkPath]
+      handle
         [Input AccessTypeFull target, Input AccessTypeModeOnly linkPath]
         [Output nonExistingFileChanger linkPath]
     Protocol.Link src dest -> error $ unwords ["Hard links not supported:", show src, "->", show dest]
@@ -222,22 +220,18 @@ handleJobMsg _tidStr conn job msg =
     Protocol.OpenDir path          -> handleInput AccessTypeFull path
     Protocol.ReadLink path         -> handleInput AccessTypeFull path
     Protocol.Exec path             -> handleInput AccessTypeFull path
-    Protocol.ExecP mPath attempted -> handleAccess Delayed actDesc inputs []
+    Protocol.ExecP mPath attempted -> handleAccess isDelayed actDesc inputs []
       where
         inputs =
           [Input AccessTypeFull path | Just path <- [mPath]] ++
           map (Input AccessTypeModeOnly) attempted
   where
     handleAccess = jobHandleAccess job conn
-    handle paths inputs outputs = handleAccess isDelayed actDesc inputs outputs
-      where
-        isDelayed
-          | all isAbsolute paths = NotDelayed
-          | otherwise = Delayed
-    actDesc = BS8.pack (Protocol.showFunc msg) <> " done by " <> jobLabel job
-    handleInput accessType path = handle [path] [Input accessType path] []
+    handle inputs outputs = handleAccess isDelayed actDesc inputs outputs
+    actDesc = BS8.pack (Protocol.showFunc func) <> " done by " <> jobLabel job
+    handleInput accessType path = handle [Input accessType path] []
     handleOutputs outputs =
-      handle (map outputPath outputs)
+      handle
       (map (Input AccessTypeModeOnly . outputPath) outputs) -- the outputs are also mode-only inputs
       outputs
 
