@@ -124,9 +124,11 @@ fileStatDesc (Just stat)
 fileStatDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileStatDesc
 fileStatDescOfMStat path oldMStat = do
   newMStat <- getMFileStatus path
-  let newMStatDesc = fileStatDesc newMStat
-  when (newMStatDesc /= fileStatDesc oldMStat) $ E.throwIO $
-    ThirdPartyMeddlingError path "changed during build!"
+  let oldMStatDesc = fileStatDesc oldMStat
+      newMStatDesc = fileStatDesc newMStat
+  when (oldMStatDesc /= newMStatDesc) $ E.throwIO $
+    ThirdPartyMeddlingError path $ concat
+    ["changed during build: ", show oldMStatDesc, " -> ", show newMStatDesc]
   return newMStatDesc
 
 getFileStatDesc :: FilePath -> IO FileStatDesc
@@ -135,19 +137,21 @@ getFileStatDesc path = fileStatDescOfMStat path =<< getMFileStatus path
 fileModeDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileModeDesc
 fileModeDescOfMStat path oldMStat = do
   newMStat <- getMFileStatus path
-  let newMMode = Posix.fileMode <$> newMStat
-  when (newMMode /= (Posix.fileMode <$> oldMStat)) $ E.throwIO $
-    ThirdPartyMeddlingError path "mode changed during build!"
+  let oldMMode = Posix.fileMode <$> oldMStat
+      newMMode = Posix.fileMode <$> newMStat
+  when (oldMMode /= newMMode) $ E.throwIO $
+    ThirdPartyMeddlingError path $ concat
+    ["mode changed during build: ", show oldMMode, " -> ", show newMMode]
   return $ maybe NoFileMode FileModeDesc newMMode
 
 assertSameMTimes :: FilePath -> Maybe Posix.FileStatus -> Maybe Posix.FileStatus -> IO ()
 assertSameMTimes path oldMStat newMStat =
-  unless (compareMTimes oldMStat newMStat) $ E.throwIO $
-  ThirdPartyMeddlingError path "changed during build!"
+  when (oldMMTime /= newMMTime) $ E.throwIO $
+  ThirdPartyMeddlingError path $ concat
+  ["changed during build: ", show oldMMTime, " -> ", show newMMTime]
   where
-    compareMTimes x y =
-      (Posix.modificationTime <$> x) ==
-      (Posix.modificationTime <$> y)
+    oldMMTime = Posix.modificationTime <$> oldMStat
+    newMMTime = Posix.modificationTime <$> newMStat
 
 fileDescOfMStat :: FilePath -> Maybe Posix.FileStatus -> IO FileDesc
 fileDescOfMStat path oldMStat = do

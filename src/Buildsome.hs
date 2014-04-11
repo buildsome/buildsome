@@ -30,7 +30,7 @@ import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.ColorText (ColorText, renderStr)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.Exception (finally)
-import Lib.FSHook (FSHook)
+import Lib.FSHook (FSHook, OutputBehavior(..), HasEffect(..))
 import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc, fileStatDescOfMStat, getFileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
@@ -532,6 +532,15 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
     M.fromList [(path, accessDoc) | path <- S.toList paths]
   registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
+outputHasEffect :: FSHook.Output -> IO Bool
+outputHasEffect (FSHook.Output behavior path) = do
+  outputExists <- Dir.exists path
+  return $
+    case (outputExists, behavior) of
+    (True, OutputBehavior { behaviorWhenFileDoesExist = HasEffect }) -> True
+    (False, OutputBehavior { behaviorWhenFileDoesNotExist = HasEffect }) -> True
+    _ -> False
+
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
   inputsRef <- newIORef M.empty
@@ -555,11 +564,19 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       actualOutputs <- readIORef outputsRef
       let outputs = filter (not . outputIgnored) rawOutputs
           inputs = filter (not . inputIgnored actualOutputs) rawInputs
-          outputPaths = S.fromList $ map FSHook.outputPath outputs
-      case isDelayed of
-        FSHook.NotDelayed -> return ()
-        FSHook.Delayed -> makeInputs accessDoc inputs outputs
-      recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet outputPaths
+      filteredOutputs <-
+        case isDelayed of
+        FSHook.NotDelayed ->
+          -- We'd like to filter those with no effect, but due to
+          -- undelayed fs access, we really can't
+          return outputs
+        FSHook.Delayed -> do
+          makeInputs accessDoc inputs outputs
+          filterM outputHasEffect outputs
+      -- After makeInputs, we know the current FS state will determine
+      -- output's actual behavior.
+      recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet $
+        S.fromList $ map FSHook.outputPath filteredOutputs
       mapM_ (recordInput inputsRef accessDoc) inputs
   (time, stdOutputs) <-
     FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
