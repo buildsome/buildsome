@@ -1,21 +1,18 @@
-* Consider all outputs as potential inputs on the same file
+* fs_override: If not delayed & output effect failed (no-op), it might
+  still indicate input, so send it, but send it with failure=true.
 
-  * These inputs are fine if they are specified target outputs,
-    because then they are brought to a known deleted state before
-    command is executed
+  Haskell side can assert failure outputs are absolute paths (or it
+  would be delayed), and then we know that they're legitimate inputs
+  (but not outputs)
 
-  * They are also fine if the file did not exist -- but then:
+* runCmd should not take Target? Prints should be outside? It can be pretty generalized and perhaps out of Buildsome
 
-    * No other job must have this file as input (including implicit
-      input when used as an output).
+* Dir.exists -> FilePath.exists ?
 
-    * The file must be deleted after the command too
-
-  * They are also fine if the input is treated as input, and the
-    output is actually a no-op (e.g: mkdir on dir that already exists)
-
-    * This means we must try to generate slaves for every output that
-      is also an input (or disallow these unspecified outputs)
+* Ban access to unspecified empty-file outputs by other
+  processes. This need not last beyond current session
+  * O_RDWR should be considered both input and output
+  * banning is of inputs
 
 * -k for keep going, but by default, refuse to (make new slaves ||
   allocate parallelism) after a failure!
