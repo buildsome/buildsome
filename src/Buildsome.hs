@@ -556,14 +556,14 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
         mkSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
       mappendSlaveStats . mappend parentSlaveStats =<< waitForSlaves btePrinter parCell bteBuildsome slaves
     outputIgnored = MagicFiles.outputIgnored . FSHook.outputPath
-    inputIgnored actualOutputs (FSHook.Input _ path) =
+    inputIgnored recordedOutputs (FSHook.Input _ path) =
       MagicFiles.inputIgnored path ||
-      path `M.member` actualOutputs ||
+      path `M.member` recordedOutputs ||
       path `S.member` targetOutputsSet
     fsAccessHandler isDelayed accessDoc rawInputs rawOutputs = do
-      actualOutputs <- readIORef outputsRef
+      recordedOutputs <- readIORef outputsRef
       let outputs = filter (not . outputIgnored) rawOutputs
-          inputs = filter (not . inputIgnored actualOutputs) rawInputs
+          inputs = filter (not . inputIgnored recordedOutputs) rawInputs
       filteredOutputs <-
         case isDelayed of
         FSHook.NotDelayed ->
