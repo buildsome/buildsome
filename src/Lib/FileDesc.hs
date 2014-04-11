@@ -58,7 +58,6 @@ data BasicStatEssence = BasicStatEssence
   , fileID          :: Posix.FileID
   , fileMode        :: Posix.FileMode
   , fileOwner       :: Posix.UserID
-  , linkCount       :: Posix.LinkCount
   , specialDeviceID :: Posix.DeviceID
   } deriving (Generic, Eq, Show)
 instance Binary BasicStatEssence
@@ -99,7 +98,6 @@ basicStatEssenceOfStat stat = BasicStatEssence
   , fileID            = Posix.fileID stat
   , fileMode          = Posix.fileMode stat
   , fileOwner         = Posix.fileOwner stat
-  , linkCount         = Posix.linkCount stat
   , specialDeviceID   = Posix.specialDeviceID stat
   }
 

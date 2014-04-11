@@ -9,3 +9,7 @@
 * any out-of-band access (to /dev, /proc, /tmp or the socket API for
   that matter) is untracked and can inject any amount of
   non-determinism into the build process.
+
+* link count is ignored in stats (can cause false positives if any
+  third party even opens a file/dir, and unlikely to be used as
+  legitimate input of a build process)
