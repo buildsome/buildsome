@@ -28,7 +28,7 @@ import Lib.AnnotatedException (annotateException)
 import Lib.BuildId (BuildId)
 import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.ColorText (ColorText, renderStr)
-import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing, exists)
+import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook)
 import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc, fileStatDescOfMStat, getFileStatDesc)
@@ -60,6 +60,7 @@ import qualified Data.Set as S
 import qualified Lib.BuildId as BuildId
 import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.ColorText as ColorText
+import qualified Lib.Directory as Dir
 import qualified Lib.FSHook as FSHook
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Fresh as Fresh
@@ -156,7 +157,7 @@ want printer buildsome reason paths = do
 
 assertExists :: E.Exception e => FilePath -> e -> IO ()
 assertExists path err = do
-  doesExist <- exists path
+  doesExist <- Dir.exists path
   unless doesExist $ E.throwIO err
 
 fromBytestring8 :: IsString str => ByteString -> str
@@ -266,14 +267,14 @@ verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
 verifyTargetOutputs buildsome outputs target = do
   -- Legal unspecified need to be kept/deleted according to policy:
   handleLegalUnspecifiedOutputs buildsome target =<<
-    filterM Posix.fileExist unspecifiedOutputs
+    filterM Dir.exists unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
   -- input use by any other job:
   -- TODO: Add to a ban-from-input-list (by other jobs)
 
   -- Illegal unspecified that do exist are a problem:
-  existingIllegalOutputs <- filterM Posix.fileExist illegalOutputs
+  existingIllegalOutputs <- filterM Dir.exists illegalOutputs
   unless (null existingIllegalOutputs) $ do
     Print.posMessage (targetPos target) $ Color.error $
       "Illegal output files created: " <> show existingIllegalOutputs
