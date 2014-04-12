@@ -3,6 +3,7 @@ module Lib.FSHook.Protocol
   ( parseMsg, helloPrefix
   , OpenWriteMode(..), showOpenWriteMode
   , CreationMode(..), showCreationMode
+  , InFilePath, OutFilePath
   , Func(..), showFunc
   , IsDelayed(..)
   , Msg(..)
@@ -39,26 +40,29 @@ showCreationMode NoCreate = ""
 showCreationMode (Create x) = "(CREATE:" ++ showOct x "" ++ ")"
 {-# INLINE showCreationMode #-}
 
+type InFilePath = FilePath
+type OutFilePath = FilePath
+
 data Func
-  = OpenR FilePath
-  | OpenW FilePath OpenWriteMode CreationMode
-  | Stat FilePath
-  | LStat FilePath
-  | Creat FilePath Word32
-  | Rename FilePath FilePath
-  | Unlink FilePath
-  | Access FilePath Word32{- TODO: replace Int with AccessMode -}
-  | OpenDir FilePath
-  | Truncate FilePath Word64{- length -}
-  | Chmod FilePath Word32{-mode-}
-  | ReadLink FilePath
-  | MkNod FilePath Word32{-mode-} Word64{-dev-}
-  | MkDir FilePath Word32{-mode-}
-  | RmDir FilePath
-  | SymLink FilePath FilePath
-  | Link FilePath FilePath
-  | Chown FilePath Word32 Word32
-  | Exec FilePath
+  = OpenR InFilePath
+  | OpenW OutFilePath OpenWriteMode CreationMode
+  | Stat InFilePath
+  | LStat InFilePath
+  | Creat OutFilePath Word32
+  | Rename OutFilePath OutFilePath
+  | Unlink OutFilePath
+  | Access InFilePath Word32{- TODO: replace Int with AccessMode -}
+  | OpenDir InFilePath
+  | Truncate OutFilePath Word64{- length -}
+  | Chmod OutFilePath Word32{-mode-}
+  | ReadLink InFilePath
+  | MkNod OutFilePath Word32{-mode-} Word64{-dev-}
+  | MkDir OutFilePath Word32{-mode-}
+  | RmDir OutFilePath
+  | SymLink InFilePath OutFilePath
+  | Link OutFilePath OutFilePath
+  | Chown OutFilePath Word32 Word32
+  | Exec InFilePath
   | ExecP (Maybe FilePath) [FilePath]{-prior searched paths (that did not exist)-}
   deriving (Show)
 
@@ -112,6 +116,12 @@ getNullTerminated len = truncateAt 0 <$> getByteString len
 getPath :: Get FilePath
 getPath = getNullTerminated mAX_PATH
 
+getInPath :: Get InFilePath
+getInPath = getPath
+
+getOutPath :: Get OutFilePath
+getOutPath = getPath
+
 fLAG_ALSO_READ :: Word32
 fLAG_ALSO_READ = 1
 fLAG_CREATE :: Word32
@@ -119,7 +129,7 @@ fLAG_CREATE = 2
 
 {-# INLINE parseOpenW #-}
 parseOpenW :: Get Func
-parseOpenW = mkOpen <$> getPath <*> getWord32le <*> getWord32le
+parseOpenW = mkOpen <$> getOutPath <*> getWord32le <*> getWord32le
   where
     mkOpen path flags mode =
       OpenW path (openMode flags) (creationMode flags mode)
@@ -148,25 +158,25 @@ execP file cwd envPath confStrPath
 funcs :: IntMap (String, Get (IO Func))
 funcs =
   M.fromList
-  [ (0x10000, ("openR"   , return <$> (OpenR <$> getPath)))
-  , (0x10001, ("openW"   , return <$> parseOpenW))
-  , (0x10002, ("creat"   , return <$> (Creat <$> getPath <*> getWord32le)))
-  , (0x10003, ("stat"    , return <$> (Stat <$> getPath)))
-  , (0x10004, ("lstat"   , return <$> (LStat <$> getPath)))
-  , (0x10005, ("opendir" , return <$> (OpenDir <$> getPath)))
-  , (0x10006, ("access"  , return <$> (Access <$> getPath <*> getWord32le)))
-  , (0x10007, ("truncate", return <$> (Truncate <$> getPath <*> getWord64le)))
-  , (0x10008, ("unlink"  , return <$> (Unlink <$> getPath)))
-  , (0x10009, ("rename"  , return <$> (Rename <$> getPath <*> getPath)))
-  , (0x1000A, ("chmod"   , return <$> (Chmod <$> getPath <*> getWord32le)))
-  , (0x1000B, ("readlink", return <$> (ReadLink <$> getPath)))
-  , (0x1000C, ("mknod"   , return <$> (MkNod <$> getPath <*> getWord32le <*> getWord64le)))
-  , (0x1000D, ("mkdir"   , return <$> (MkDir <$> getPath <*> getWord32le)))
-  , (0x1000E, ("rmdir"   , return <$> (RmDir <$> getPath)))
-  , (0x1000F, ("symlink" , return <$> (SymLink <$> getPath <*> getPath)))
-  , (0x10010, ("link"    , return <$> (Link <$> getPath <*> getPath)))
-  , (0x10011, ("chown"   , return <$> (Chown <$> getPath <*> getWord32le <*> getWord32le)))
-  , (0x10012, ("exec"    , return <$> (Exec <$> getPath)))
+  [ (0x10000, ("openR"   , return <$> (OpenR <$> getInPath)))
+  , (0x10001, ("openW"   , return <$> parseOpenW)) -- TODO: Parse here, do post-process in func like execP
+  , (0x10002, ("creat"   , return <$> (Creat <$> getOutPath <*> getWord32le)))
+  , (0x10003, ("stat"    , return <$> (Stat <$> getInPath)))
+  , (0x10004, ("lstat"   , return <$> (LStat <$> getInPath)))
+  , (0x10005, ("opendir" , return <$> (OpenDir <$> getInPath)))
+  , (0x10006, ("access"  , return <$> (Access <$> getInPath <*> getWord32le)))
+  , (0x10007, ("truncate", return <$> (Truncate <$> getOutPath <*> getWord64le)))
+  , (0x10008, ("unlink"  , return <$> (Unlink <$> getOutPath)))
+  , (0x10009, ("rename"  , return <$> (Rename <$> getOutPath <*> getOutPath)))
+  , (0x1000A, ("chmod"   , return <$> (Chmod <$> getOutPath <*> getWord32le)))
+  , (0x1000B, ("readlink", return <$> (ReadLink <$> getInPath)))
+  , (0x1000C, ("mknod"   , return <$> (MkNod <$> getOutPath <*> getWord32le <*> getWord64le)))
+  , (0x1000D, ("mkdir"   , return <$> (MkDir <$> getOutPath <*> getWord32le)))
+  , (0x1000E, ("rmdir"   , return <$> (RmDir <$> getOutPath)))
+  , (0x1000F, ("symlink" , return <$> (SymLink <$> getInPath <*> getOutPath)))
+  , (0x10010, ("link"    , return <$> (Link <$> getOutPath <*> getOutPath)))
+  , (0x10011, ("chown"   , return <$> (Chown <$> getOutPath <*> getWord32le <*> getWord32le)))
+  , (0x10012, ("exec"    , return <$> (Exec <$> getInPath)))
   , (0x10013, ("execp"   , execP <$> getNullTerminated mAX_EXEC_FILE <*> getPath <*> getNullTerminated mAX_PATH_ENV_VAR_LENGTH <*> getNullTerminated mAX_PATH_CONF_STR))
   ]
 

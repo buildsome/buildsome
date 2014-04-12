@@ -208,26 +208,34 @@ enum func {
 #define MAX_PATH_CONF_STR       (10*1024)
 #define MAX_EXEC_FILE           (MAX_PATH)
 
+typedef struct {
+    char in_path[MAX_PATH];
+} in_path;
+
+typedef struct {
+    char out_path[MAX_PATH];
+} out_path;
+
 /* NOTE: This must be kept in sync with Protocol.hs */
-struct func_openr     {char path[MAX_PATH];};
-struct func_openw     {char path[MAX_PATH]; uint32_t flags; uint32_t mode;};
-struct func_creat     {char path[MAX_PATH]; uint32_t mode;};
-struct func_stat      {char path[MAX_PATH];};
-struct func_lstat     {char path[MAX_PATH];};
-struct func_opendir   {char path[MAX_PATH];};
-struct func_access    {char path[MAX_PATH]; uint32_t mode;};
-struct func_truncate  {char path[MAX_PATH]; uint64_t length;};
-struct func_unlink    {char path[MAX_PATH];};
-struct func_rename    {char oldpath[MAX_PATH]; char newpath[MAX_PATH];};
-struct func_chmod     {char path[MAX_PATH]; uint32_t mode;};
-struct func_readlink  {char path[MAX_PATH]; };
-struct func_mknod     {char path[MAX_PATH]; uint32_t mode; uint64_t dev;};
-struct func_mkdir     {char path[MAX_PATH]; uint32_t mode;};
-struct func_rmdir     {char path[MAX_PATH];};
-struct func_symlink   {char target[MAX_PATH]; char linkpath[MAX_PATH];};
-struct func_link      {char oldpath[MAX_PATH]; char newpath[MAX_PATH];};
-struct func_chown     {char path[MAX_PATH]; uint32_t owner; uint32_t group;};
-struct func_exec      {char path[MAX_PATH];};
+struct func_openr     {in_path path;};
+struct func_openw     {out_path path; uint32_t flags; uint32_t mode;};
+struct func_creat     {out_path path; uint32_t mode;};
+struct func_stat      {in_path path;};
+struct func_lstat     {in_path path;};
+struct func_opendir   {in_path path;};
+struct func_access    {in_path path; uint32_t mode;};
+struct func_truncate  {out_path path; uint64_t length;};
+struct func_unlink    {out_path path;};
+struct func_rename    {out_path oldpath; out_path newpath;};
+struct func_chmod     {out_path path; uint32_t mode;};
+struct func_readlink  {in_path path; };
+struct func_mknod     {out_path path; uint32_t mode; uint64_t dev;};
+struct func_mkdir     {out_path path; uint32_t mode;};
+struct func_rmdir     {out_path path;};
+struct func_symlink   {in_path target /* TODO: target should probably not even be here */; out_path linkpath;};
+struct func_link      {out_path oldpath; out_path newpath;};
+struct func_chown     {out_path path; uint32_t owner; uint32_t group;};
+struct func_exec      {in_path path;};
 struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_var_PATH[MAX_PATH_ENV_VAR_LENGTH]; char conf_str_CS_PATH[MAX_PATH_CONF_STR];};
 
 #define DEFINE_WRAPPER(ret_type, name, params)  \
@@ -281,13 +289,19 @@ static bool await_go(void)
                                process_state.cwd_length);               \
         }                                                               \
         writer_append_str(&temp_writer, src);                           \
-        struct writer dest_writer = { dest, sizeof dest };              \
+        struct writer dest_writer = { PS(dest) };                       \
         canonize_abs_path(&dest_writer, temp_path);                     \
         bool in_root = try_chop_common_root(                            \
             process_state.root_filter_length,                           \
             process_state.root_filter, dest);                           \
         needs_await = needs_await || in_root;                           \
     } while(0)
+
+#define IN_PATH_COPY(needs_await, dest, src)    \
+    PATH_COPY(needs_await, (dest).in_path, src)
+
+#define OUT_PATH_COPY(needs_await, dest, src)   \
+    PATH_COPY(needs_await, (dest).out_path, src)
 
 static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *canonized_path)
 {
@@ -311,7 +325,7 @@ static bool notify_openr_await(const char *path)
 {
     bool needs_await = false;
     DEFINE_MSG(msg, openr);
-    PATH_COPY(needs_await, msg.args.path, path);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
     return SEND_MSG_AWAIT(needs_await, msg);
 }
 
@@ -320,7 +334,7 @@ static bool notify_openw(const char *path, bool is_also_read, bool is_create, mo
 {
     bool needs_await = false;
     DEFINE_MSG(msg, openw);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     if(is_also_read) msg.args.flags |= FLAG_ALSO_READ;
     if(is_create)    msg.args.flags |= FLAG_CREATE;
     msg.args.mode = mode;
@@ -444,7 +458,7 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, creat);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "creat \"%s\"", path), needs_await, msg, int, creat, path, mode);
 }
@@ -454,7 +468,7 @@ DEFINE_WRAPPER(int, __xstat, (int vers, const char *path, struct stat *buf))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, stat);
-    PATH_COPY(needs_await, msg.args.path, path);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "xstat \"%s\"", path), needs_await, msg, int, __xstat, vers, path, buf);
 }
 
@@ -463,7 +477,7 @@ DEFINE_WRAPPER(int, __lxstat, (int vers, const char *path, struct stat *buf))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, lstat);
-    PATH_COPY(needs_await, msg.args.path, path);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "lstat \"%s\"", path), needs_await, msg, int, __lxstat, vers, path, buf);
 }
 
@@ -472,7 +486,7 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, opendir);
-    PATH_COPY(needs_await, msg.args.path, path);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
     return AWAIT_CALL_REAL(PERM_ERROR(NULL, "opendir \"%s\"", path), needs_await, msg, DIR *, opendir, path);
 }
 
@@ -481,7 +495,7 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, access);
-    PATH_COPY(needs_await, msg.args.path, path);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "access \"%s\" 0x%X", path, mode), needs_await, msg, int, access, path, mode);
 }
@@ -491,7 +505,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, truncate);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "truncate \"%s\" %lu", path, length), needs_await, msg, int, truncate, path, length);
 }
 
@@ -500,7 +514,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, unlink);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "unlink \"%s\"", path), needs_await, msg, int, unlink, path);
 }
 
@@ -509,8 +523,8 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, rename);
-    PATH_COPY(needs_await, msg.args.oldpath, oldpath);
-    PATH_COPY(needs_await, msg.args.newpath, newpath);
+    OUT_PATH_COPY(needs_await, msg.args.oldpath, oldpath);
+    OUT_PATH_COPY(needs_await, msg.args.newpath, newpath);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "rename \"%s\" -> \"%s\"", oldpath, newpath), needs_await, msg, int, rename, oldpath, newpath);
 }
 
@@ -519,7 +533,7 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, chmod);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "chmod \"%s\"", path), needs_await, msg, int, chmod, path, mode);
 }
@@ -529,7 +543,7 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, readlink);
-    PATH_COPY(needs_await, msg.args.path, path);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "readlink \"%s\"", path), needs_await, msg, ssize_t, readlink, path, buf, bufsiz);
 }
 
@@ -538,7 +552,7 @@ DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, mknod);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     msg.args.dev = dev;
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "mknod \"%s\"", path), needs_await, msg, int, mknod, path, mode, dev);
@@ -549,7 +563,7 @@ DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, mkdir);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "mkdir \"%s\"", path), needs_await, msg, int, mkdir, path, mode);
 }
@@ -559,7 +573,7 @@ DEFINE_WRAPPER(int, rmdir, (const char *path))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, rmdir);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "rmdir \"%s\"", path), needs_await, msg, int, rmdir, path);
 }
 
@@ -571,8 +585,8 @@ DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, symlink);
-    PATH_COPY(needs_await, msg.args.target, target);
-    PATH_COPY(needs_await, msg.args.linkpath, linkpath);
+    IN_PATH_COPY(needs_await, msg.args.target, target);
+    OUT_PATH_COPY(needs_await, msg.args.linkpath, linkpath);
     /* TODO: Maybe not AWAIT here, and handle it properly? */
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "symlink \"%s\" -> \"%s\"", linkpath, target), needs_await, msg, int, symlink, linkpath, target);
 }
@@ -583,8 +597,8 @@ DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, link);
-    PATH_COPY(needs_await, msg.args.oldpath, oldpath);
-    PATH_COPY(needs_await, msg.args.newpath, newpath);
+    OUT_PATH_COPY(needs_await, msg.args.oldpath, oldpath);
+    OUT_PATH_COPY(needs_await, msg.args.newpath, newpath);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "link \"%s\" -> \"%s\"", newpath, oldpath), needs_await, msg, int, link, oldpath, newpath);
 }
 
@@ -593,7 +607,7 @@ DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, chown);
-    PATH_COPY(needs_await, msg.args.path, path);
+    OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.owner = owner;
     msg.args.group = group;
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "chown \"%s\" %d:%d", path, owner, group), needs_await, msg, int, chown, path, owner, group);
@@ -758,7 +772,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 {
     bool needs_await = false;
     DEFINE_MSG(msg, exec);
-    PATH_COPY(needs_await, msg.args.path, filename);
+    IN_PATH_COPY(needs_await, msg.args.path, filename);
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "execve: \"%s\"", filename), needs_await, msg, int, execve, filename, argv, envp);
 }
 
