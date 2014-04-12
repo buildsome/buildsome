@@ -237,10 +237,13 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
 
 jobHandleAccess :: RunningJob -> Socket -> IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
 jobHandleAccess job conn isDelayed desc inputs outputs = do
-  forwardExceptions $ jobFSAccessHandler job isDelayed desc inputs outputs
-  case isDelayed of
-    Delayed -> sendGo conn
-    NotDelayed -> return ()
+  forwardExceptions $ do
+    jobFSAccessHandler job isDelayed desc inputs outputs
+    -- Intentionally avoid sendGo if jobFSAccessHandler failed. It
+    -- means we disallow the effect.
+    case isDelayed of
+      Delayed -> sendGo conn
+      NotDelayed -> return ()
   where
     forwardExceptions = handleSync $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
 
