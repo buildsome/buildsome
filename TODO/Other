@@ -1,18 +1,29 @@
-* fs_override: If not delayed & output effect failed (no-op), it might
-  still indicate input, so send it, but send it with failure=true.
+* OOPS: Output content compared even for directories, but for outputs it makes sense to compare mode-only
 
-  Haskell side can assert failure outputs are absolute paths (or it
-  would be delayed), and then we know that they're legitimate inputs
-  (but not outputs)
+* Outputs:
 
-* runCmd should not take Target? Prints should be outside? It can be pretty generalized and perhaps out of Buildsome
+  * fs_override: send whether output actually happened (if not, consider as input mode only)
+                  and whether file existed (false is the only state we know how to revert to)
+
+  * UNDELAYED:
+    if already encountered in this runCmd, ignore (re-use of output)
+    file existed -> illegal output, warn about potential leaked effect on file, errorize
+
+  * DELAYED:
+    if already encountered in this runCmd, ignore (re-use of output)
+    if file exists, throw an exception, which prevents sendGo which prevents output to that file, errorize
+
+  * End of build is only reached if all disallowed outputs were to non-existing files, so we can delete them
 
 * Dir.exists -> FilePath.exists ?
+
+* ReadWriteMode should generate a full-input, not a mode-only input
+  for that file (this shouldn't affect anything, though)
 
 * Ban access to unspecified empty-file outputs by other
   processes. This need not last beyond current session
   * O_RDWR should be considered both input and output
-  * banning is of inputs
+  * banning is of inputs only
 
 * -k for keep going, but by default, refuse to (make new slaves ||
   allocate parallelism) after a failure!
