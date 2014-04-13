@@ -1,4 +1,4 @@
-* OOPS: Output content compared even for directories, but for outputs it makes sense to compare mode-only
+* Do we really need the execution log or hints' parent directory creation?
 
 * Outputs:
 
@@ -6,12 +6,12 @@
                   and whether file existed (false is the only state we know how to revert to)
 
   * UNDELAYED:
-    if already encountered in this runCmd, ignore (re-use of output)
-    file existed -> illegal output, warn about potential leaked effect on file, errorize
+    if already encountered in this runCmd or output did not happen, not a new output
+    new output (file existed) -> illegal output, warn about potential leaked effect on file, errorize
 
   * DELAYED:
-    if already encountered in this runCmd, ignore (re-use of output)
-    if file exists, throw an exception, which prevents sendGo which prevents output to that file, errorize
+    if already encountered in this runCmd or output did not happen, not a new output
+    new output (file exists), throw an exception, which prevents sendGo which prevents output to that file, errorize
 
   * End of build is only reached if all disallowed outputs were to non-existing files, so we can delete them
 
