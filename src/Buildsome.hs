@@ -561,6 +561,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       path `M.member` recordedOutputs ||
       path `S.member` targetOutputsSet
     fsAccessHandler isDelayed accessDoc rawInputs rawOutputs = do
+      printStrLn btePrinter $ ("fsAccessHandler: " ++ show isDelayed ++ ", " ++ show accessDoc ++ " " ++ show rawInputs ++ " " ++ show rawOutputs :: String)
       recordedOutputs <- readIORef outputsRef
       let outputs = filter (not . outputIgnored) rawOutputs
           inputs = filter (not . inputIgnored recordedOutputs) rawInputs

@@ -32,7 +32,7 @@ class (IsString p, Monoid p) => Printable p where
 instance Printable String where
   intercalate = List.intercalate
   lines = List.lines
-  putStrLn = putStrLn
+  putStrLn = Prelude.putStrLn
 
 instance Printable ByteString where
   intercalate = BS8.intercalate
