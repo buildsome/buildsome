@@ -5,13 +5,14 @@ module Buildsome
   ) where
 
 import Buildsome.Db (Db, IRef(..), Reason)
-import Buildsome.FileDescCache (getFileDesc, fileDescOfMStat)
+import Buildsome.FileContentDescCache (fileContentDescOfStat)
+import Buildsome.Meddling (assertSameMTime)
 import Buildsome.Opts (Opt(..))
 import Buildsome.Print (targetShow)
 import Control.Applicative ((<$>), Applicative(..))
 import Control.Concurrent.MVar
 import Control.Monad
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Trans.Either
 import Data.ByteString (ByteString)
 import Data.IORef
@@ -31,7 +32,7 @@ import Lib.ColorText (ColorText, renderStr)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.Exception (finally)
 import Lib.FSHook (FSHook, OutputBehavior(..), HasEffect(..))
-import Lib.FileDesc (fileModeDescOfMStat, getFileModeDesc, fileStatDescOfMStat, getFileStatDesc)
+import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
@@ -318,24 +319,39 @@ waitForSlaves printer parCell buildsome slaves =
   Parallelism.withReleased parCell (bsParallelism buildsome) $
   mconcat <$> mapM (Slave.wait printer) slaves
 
+verifyFileDesc ::
+  (IsString str, Monoid str, MonadIO m) =>
+  str -> FilePath -> Db.FileDesc ne desc ->
+  (Posix.FileStatus -> desc -> EitherT (str, FilePath) m ()) ->
+  EitherT (str, FilePath) m ()
+verifyFileDesc str filePath fileDesc existingVerify = do
+  mStat <- liftIO $ Dir.getMFileStatus filePath
+  case (mStat, fileDesc) of
+    (Nothing, Db.FileDescNonExisting _) -> return ()
+    (Just stat, Db.FileDescExisting desc) -> existingVerify stat desc
+    (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
+    (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
+
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Cell ->
   TargetRep -> Target -> Db.ExecutionLog ->
   IO (Either (ByteString, FilePath) Slave.Stats)
-tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.ExecutionLog {..} = do
-  nestedSlaveStats <- waitForInputs
+tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.ExecutionLog {..} = do
+  nestedSlaveStats <- executionLogWaitForInputs bte parCell target el
   runEitherT $ do
-    forM_ (M.toList elInputsDescs) $ \(filePath, oldInputAccess) ->
-      case snd oldInputAccess of
-        Db.InputAccessFull     oldDesc     -> compareToNewDesc "input"       (getFileDesc db) (filePath, oldDesc)
-        Db.InputAccessModeOnly oldModeDesc -> compareToNewDesc "input(mode)" getFileModeDesc (filePath, oldModeDesc)
-        Db.InputAccessIgnoredFile          -> return ()
-        Db.InputAccessStatOnly oldStatDesc -> compareToNewDesc "input(stat)" getFileStatDesc (filePath, oldStatDesc)
+    forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
+      verifyFileDesc "input" filePath desc $ \stat (Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
+        let verify str getDesc mPair = verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
+        verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
+        verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
+        verify "content" (fileContentDescOfStat db filePath stat) mContentAccess
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
-    mapM_ (compareToNewDesc "output" (getFileDesc db)) $ M.toList elOutputsDescs
-
+    forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) -> do
+      verifyFileDesc "output" filePath outputDesc $ \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
+        verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
+        verifyMDesc "output(content)" filePath (fileContentDescOfStat db filePath stat) oldMContentDesc
     liftIO $
       applyExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
@@ -344,37 +360,43 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target Db.Executio
     return $ mappend selfStats nestedSlaveStats
   where
     db = bsDb bteBuildsome
-    compareToNewDesc str getNewDesc (filePath, oldDesc) = do
-      newDesc <- liftIO $ getNewDesc filePath
+    verifyMDesc _   _        _       Nothing        = return ()
+    verifyMDesc str filePath getDesc (Just oldDesc) =
+      verifyDesc str filePath getDesc oldDesc
+
+    verifyDesc str filePath getDesc oldDesc = do
+      newDesc <- liftIO $ getDesc
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
-    inputAccessToType Db.InputAccessModeOnly {} = Just FSHook.AccessTypeModeOnly
-    inputAccessToType Db.InputAccessStatOnly {} = Just FSHook.AccessTypeStat
-    inputAccessToType Db.InputAccessFull {} = Just FSHook.AccessTypeFull
-    inputAccessToType Db.InputAccessIgnoredFile = Nothing
-    waitForInputs = do
-      -- TODO: This is good for parallelism, but bad if the set of
-      -- inputs changed, as it may build stuff that's no longer
-      -- required:
-      let hinted = S.fromList $ targetAllInputs target
-      speculativeSlaves <-
-        fmap concat $ forM (M.toList elInputsDescs) $ \(inputPath, (depReason, inputAccess)) ->
-        if inputPath `S.member` hinted
-        then return []
-        else case inputAccessToType inputAccess of
-          Nothing -> return []
-          Just accessType ->
-            mkSlavesForAccessType accessType
-            bte { bteReason = depReason } Implicit inputPath
 
-      let hintReason = ColorText.render $ "Hint from " <> (targetShow . targetOutputs) target
-      hintedSlaves <-
-        mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
+executionLogWaitForInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO Slave.Stats
+executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
+  -- TODO: This is good for parallelism, but bad if the set of
+  -- inputs changed, as it may build stuff that's no longer
+  -- required:
+  speculativeSlaves <- fmap concat $ mapM mkInputSlave (M.toList elInputsDescs)
 
-      targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
+  let hintReason = ColorText.render $ "Hint from " <> (targetShow . targetOutputs) target
+  hintedSlaves <-
+    mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
 
-      let allSlaves = speculativeSlaves ++ hintedSlaves
-      mappend targetParentsStats <$>
-        waitForSlaves btePrinter parCell bteBuildsome allSlaves
+  targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
+
+  let allSlaves = speculativeSlaves ++ hintedSlaves
+  mappend targetParentsStats <$>
+    waitForSlaves btePrinter parCell bteBuildsome allSlaves
+  where
+    hinted = S.fromList $ targetAllInputs target
+    mkInputSlave (inputPath, desc)
+      | inputPath `S.member` hinted = return []
+      | otherwise = mkInputSlaveFor desc Implicit inputPath
+    mkInputSlaveFor (Db.FileDescNonExisting depReason) =
+      mkSlavesDirectAccess bte { bteReason = depReason }
+    mkInputSlaveFor (Db.FileDescExisting inputDesc) =
+      case inputDesc of
+      Db.InputDesc { Db.idContentAccess = Just (depReason, _) } -> mkSlaves bte { bteReason = depReason }
+      Db.InputDesc { Db.idStatAccess = Just (depReason, _) } -> mkSlavesDirectAccess bte { bteReason = depReason }
+      Db.InputDesc { Db.idModeAccess = Just (depReason, _) } -> mkSlavesDirectAccess bte { bteReason = depReason }
+      Db.InputDesc Nothing Nothing Nothing -> const $ const $ return []
 
 buildParentDirectories :: BuildTargetEnv -> Parallelism.Cell -> Explicitness -> [FilePath] -> IO Slave.Stats
 buildParentDirectories bte@BuildTargetEnv{..} parCell explicitness =
@@ -495,42 +517,10 @@ removeOldOutput printer buildsome registeredOutputs path = do
 data RunCmdResults = RunCmdResults
   { rcrSelfTime :: DiffTime -- excluding pause times
   , rcrStdOutputs :: StdOutputs ByteString
-  , rcrInputs :: Map FilePath (FSHook.AccessType, Reason, Maybe Posix.FileStatus)
+  , rcrInputs :: Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)
   , rcrOutputs :: Map FilePath Reason
   , rcrSlaveStats :: Slave.Stats
   }
-
-recordInput ::
-  IORef (Map FilePath (FSHook.AccessType, Reason, Maybe Posix.FileStatus)) ->
-  Reason -> FSHook.Input -> IO ()
-recordInput inputsRef reason (FSHook.Input accessType path) = do
-  mstat <- getMFileStatus path
-  atomicModifyIORef'_ inputsRef $
-    -- Keep the older mtime in the map, and we'll eventually compare
-    -- the final mtime to the oldest one
-    M.insertWith merge path (accessType, reason, mstat)
-  where
-    merge (FSHook.AccessTypeFull, newReason, Just newStat)
-          (oldAccessType, _oldReason, _oldMStat)
-      | Posix.isDirectory newStat
-      , oldAccessType < FSHook.AccessTypeFull =
-      -- Special-case a read-directory that follows a stat/mode. The
-      -- opendir will generate the targets inside, which will modify
-      -- the directory's stats. This would be detected as "Third Party
-      -- meddling", so for directories upgrading to full access type,
-      -- we need to remember the new stat (which might miss third
-      -- party meddling by others in this scenario in a (typically)
-      -- very short time, so is not a big deal)
-      (FSHook.AccessTypeFull, newReason, Just newStat)
-    merge _ (oldAccessType, oldReason, oldMStat) =
-     -- Keep the highest access type, and the oldest reason/mstat
-     (max accessType oldAccessType, oldReason, oldMStat)
-
-recordOutputs :: Buildsome -> IORef (Map FilePath Reason) -> Reason -> Set FilePath -> Set FilePath -> IO ()
-recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
-  atomicModifyIORef'_ outputsRef $ M.union $
-    M.fromList [(path, accessDoc) | path <- S.toList paths]
-  registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
 outputHasEffect :: FSHook.Output -> IO Bool
 outputHasEffect (FSHook.Output behavior path) = do
@@ -540,6 +530,30 @@ outputHasEffect (FSHook.Output behavior path) = do
     (True, OutputBehavior { behaviorWhenFileDoesExist = HasEffect }) -> True
     (False, OutputBehavior { behaviorWhenFileDoesNotExist = HasEffect }) -> True
     _ -> False
+
+recordInput ::
+  IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
+  Reason -> FSHook.Input -> IO ()
+recordInput inputsRef reason (FSHook.Input accessType path) = do
+  mStat <- getMFileStatus path
+  atomicModifyIORef'_ inputsRef $ M.insertWith merge path
+    (newAccessTypes, mStat)
+  where
+    newAccessTypes = M.singleton accessType reason
+    -- TODO: We'd like to verify no meddling of the create-delete,
+    -- which would go undetected, lacking mtime via:
+
+    -- merge (_, Just _) (_, Nothing) = ...
+
+    -- However, we must then verify that it wasn't a legal output file
+    -- of the same job
+    merge _ (oldAccessTypes, oldMStat) = (oldAccessTypes `mappend` newAccessTypes, oldMStat)
+
+recordOutputs :: Buildsome -> IORef (Map FilePath Reason) -> Reason -> Set FilePath -> Set FilePath -> IO ()
+recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
+  atomicModifyIORef'_ outputsRef $ M.union $
+    M.fromList [(path, accessDoc) | path <- S.toList paths]
+  registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
@@ -561,7 +575,6 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       path `M.member` recordedOutputs ||
       path `S.member` targetOutputsSet
     fsAccessHandler isDelayed accessDoc rawInputs rawOutputs = do
-      printStrLn btePrinter $ ("fsAccessHandler: " ++ show isDelayed ++ ", " ++ show accessDoc ++ " " ++ show rawInputs ++ " " ++ show rawOutputs :: String)
       recordedOutputs <- readIORef outputsRef
       let outputs = filter (not . outputIgnored) rawOutputs
           inputs = filter (not . inputIgnored recordedOutputs) rawInputs
@@ -578,7 +591,8 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       -- output's actual behavior.
       recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet $
         S.fromList $ map FSHook.outputPath filteredOutputs
-      mapM_ (recordInput inputsRef accessDoc) inputs
+      mapM_ (recordInput inputsRef accessDoc) $
+        filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
   (time, stdOutputs) <-
     FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
     (shellCmdVerify target ["HOME", "PATH"])
@@ -590,7 +604,11 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
   return RunCmdResults
     { rcrStdOutputs = stdOutputs
     , rcrSelfTime = realToFrac time
-    , rcrInputs = inputs `M.difference` outputs
+    , rcrInputs =
+      -- This is because we don't serialize input/output access
+      -- (especially when undelayed!) to the same file. So we don't
+      -- really have a correct input stat/desc here for such inputs. However, outputs should always considered as mode-only inputs.
+      inputs `M.difference` outputs
     , rcrOutputs = outputs
     , rcrSlaveStats = slaveStats
     }
@@ -602,7 +620,16 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
   inputsDescs <- M.traverseWithKey inputAccess rcrInputs
   outputDescPairs <-
     forM (M.keys rcrOutputs) $ \outPath -> do
-      fileDesc <- getFileDesc db outPath
+      mStat <- Dir.getMFileStatus outPath
+      fileDesc <-
+        case mStat of
+        Nothing -> return $ Db.FileDescNonExisting ()
+        Just stat -> do
+          mContentDesc <-
+            if Posix.isDirectory stat
+            then return Nothing
+            else Just <$> fileContentDescOfStat db outPath stat
+          return $ Db.FileDescExisting $ Db.OutputDesc (fileStatDescOfStat stat) mContentDesc
       return (outPath, fileDesc)
   writeIRef (Db.executionLog target (bsDb buildsome)) Db.ExecutionLog
     { elBuildId = bsBuildId buildsome
@@ -613,11 +640,34 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     }
   where
     db = bsDb buildsome
-    inputAccess path (_, reason, _) | MagicFiles.allowedUnspecifiedOutput path = return (reason, Db.InputAccessIgnoredFile)
-    inputAccess path (FSHook.AccessTypeFull, reason, mStat) = (,) reason . Db.InputAccessFull <$> fileDescOfMStat db path mStat
-    inputAccess path (FSHook.AccessTypeModeOnly, reason, mStat) = (,) reason . Db.InputAccessModeOnly <$> fileModeDescOfMStat path mStat
-    inputAccess path (FSHook.AccessTypeStat, reason, mStat) =
-      (,) reason . Db.InputAccessStatOnly <$> fileStatDescOfMStat path mStat
+    inputAccess ::
+      FilePath ->
+      (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
+      IO (Db.FileDesc Reason Db.InputDesc)
+    inputAccess path (accessTypes, Nothing) = do
+      let reason =
+            case M.elems accessTypes of
+            [] -> error $ "AccessTypes empty in rcrInputs:" ++ show path
+            x:_ -> x
+      assertSameMTime path Nothing
+      return $ Db.FileDescNonExisting reason
+    inputAccess path (accessTypes, Just stat) = do
+      assertSameMTime path (Just stat)
+      let
+        addDesc accessType getDesc = do
+          desc <- getDesc
+          return $ flip (,) desc <$> M.lookup accessType accessTypes
+      modeAccess <-
+        addDesc FSHook.AccessTypeModeOnly $ return $ fileModeDescOfStat stat
+      statAccess <-
+        addDesc FSHook.AccessTypeStat $ return $ fileStatDescOfStat stat
+      contentAccess <-
+        addDesc FSHook.AccessTypeFull $ fileContentDescOfStat db path stat
+      return $ Db.FileDescExisting Db.InputDesc
+        { Db.idModeAccess = modeAccess
+        , Db.idStatAccess = statAccess
+        , Db.idContentAccess = contentAccess
+        }
 
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell targetRep target = do

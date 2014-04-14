@@ -2,9 +2,10 @@
 module Buildsome.Db
   ( Db, with
   , registeredOutputsRef, leakedOutputsRef
-  , InputAccess(..)
+  , InputDesc(..), FileDesc(..)
+  , OutputDesc(..)
   , ExecutionLog(..), executionLog
-  , FileDescCache(..), fileDescCache
+  , FileContentDescCache(..), fileContentDescCache
   , Reason
   , IRef(..)
   ) where
@@ -20,7 +21,7 @@ import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.BuildId (BuildId)
 import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
-import Lib.FileDesc (FileDesc, FileModeDesc, FileStatDesc)
+import Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
@@ -34,7 +35,7 @@ import qualified Database.Sophia as Sophia
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.5"
+schemaVersion = "schema.ver.6"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -42,25 +43,40 @@ data Db = Db
   , dbLeakedOutputs :: IORef (Set FilePath)
   }
 
-data FileDescCache = FileDescCache
-  { fdcModificationTime :: Posix.EpochTime
-  , fdcFileDesc :: FileDesc
+data FileContentDescCache = FileContentDescCache
+  { fcdcModificationTime :: Posix.EpochTime
+  , fcdcFileContentDesc :: FileContentDesc
   } deriving (Generic, Show)
-instance Binary FileDescCache
+instance Binary FileContentDescCache
 
 type Reason = ByteString
 
-data InputAccess = InputAccessModeOnly FileModeDesc | InputAccessFull FileDesc | InputAccessStatOnly FileStatDesc | InputAccessIgnoredFile
-  deriving (Generic, Show)
-instance Binary InputAccess
+data InputDesc = InputDesc
+  { idModeAccess :: Maybe (Reason, FileModeDesc)
+  , idStatAccess :: Maybe (Reason, FileStatDesc)
+  , idContentAccess :: Maybe (Reason, FileContentDesc)
+  } deriving (Generic)
+instance Binary InputDesc
+
+data FileDesc ne e
+  = FileDescNonExisting ne
+  | FileDescExisting e
+  deriving (Generic)
+instance (Binary ne, Binary e) => Binary (FileDesc ne e)
+
+data OutputDesc = OutputDesc
+  { odStatDesc :: FileStatDesc
+  , odContentDesc :: Maybe FileContentDesc -- Nothing if directory
+  } deriving (Generic)
+instance Binary OutputDesc
 
 data ExecutionLog = ExecutionLog
   { elBuildId :: BuildId
-  , elInputsDescs :: Map FilePath (Reason, InputAccess)
-  , elOutputsDescs :: Map FilePath FileDesc
+  , elInputsDescs :: Map FilePath (FileDesc Reason InputDesc)
+  , elOutputsDescs :: Map FilePath (FileDesc () OutputDesc)
   , elStdoutputs :: StdOutputs ByteString
   , elSelfTime :: DiffTime
-  } deriving (Generic, Show)
+  } deriving (Generic)
 instance Binary ExecutionLog
 
 registeredOutputsRef :: Db -> IORef (Set FilePath)
@@ -116,5 +132,5 @@ executionLog target = mkIRefKey targetKey
   where
     targetKey = MD5.hash $ targetCmds target -- TODO: Canonicalize commands (whitespace/etc)
 
-fileDescCache :: FilePath -> Db -> IRef FileDescCache
-fileDescCache = mkIRefKey
+fileContentDescCache :: FilePath -> Db -> IRef FileContentDescCache
+fileContentDescCache = mkIRefKey

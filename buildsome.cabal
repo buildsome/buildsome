@@ -30,7 +30,8 @@ executable buildsome
                ,     Buildsome.Clean
                ,     Buildsome.Color
                ,     Buildsome.Db
-               ,     Buildsome.FileDescCache
+               ,     Buildsome.FileContentDescCache
+               ,     Buildsome.Meddling
                ,     Buildsome.Print
                ,     Buildsome.MagicFiles
                ,     Buildsome.Opts
