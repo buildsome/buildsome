@@ -243,6 +243,7 @@ struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_va
     name##_func name;                           \
     ret_type name params
 
+/* TODO: Remove unused ret_type */
 #define SILENT_CALL_REAL(ret_type, name, ...)           \
     ({                                                  \
         name##_func *real = dlsym(RTLD_NEXT, #name);    \
@@ -320,15 +321,6 @@ static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *can
     return true;
 }
 
-static bool notify_openr_await(const char *path) __attribute__((warn_unused_result));
-static bool notify_openr_await(const char *path)
-{
-    bool needs_await = false;
-    DEFINE_MSG(msg, openr);
-    IN_PATH_COPY(needs_await, msg.args.path, path);
-    return SEND_MSG_AWAIT(needs_await, msg);
-}
-
 static bool notify_openw(const char *path, bool is_also_read, bool is_create, mode_t mode) __attribute__((warn_unused_result));
 static bool notify_openw(const char *path, bool is_also_read, bool is_create, mode_t mode)
 {
@@ -341,25 +333,41 @@ static bool notify_openw(const char *path, bool is_also_read, bool is_create, mo
     return SEND_MSG_AWAIT(needs_await, msg);
 }
 
-static bool open_common(const char *path, int flags, va_list args, mode_t *out_mode) __attribute__((warn_unused_result));
-static bool open_common(const char *path, int flags, va_list args, mode_t *out_mode)
+static bool notify_openr(const char *path) __attribute__((warn_unused_result));
+static bool notify_openr(const char *path)
+{
+    bool needs_await = false;
+    DEFINE_MSG(msg, openr);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
+    return SEND_MSG_AWAIT(needs_await, msg);
+}
+
+typedef int open_func(const char *path, int flags, ...);
+
+static int open_common(const char *open_func_name, const char *path, int flags, va_list args)
 {
     bool is_also_read = false;
     bool is_create = flags & CREATION_FLAGS;
-    *out_mode = is_create ? va_arg(args, int /* mode_t actually, va_arg rejects types smaller than int */) : 0;
-
+    mode_t mode = is_create ? va_arg(args, mode_t) : 0;
     switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {
     case O_RDONLY:
-        return notify_openr_await(path);
+        /* TODO: Remove ASSERT and correctly handle O_CREAT, O_TRUNCATE */
+        ASSERT(!(flags & CREATION_FLAGS));
+        if(!notify_openr(path)) return PERM_ERROR(-1, "openr \"%s\"", path);
+        break;
     case O_RDWR:
         is_also_read = true;
         /* fall-through */
     case O_WRONLY:
-        return notify_openw(path, is_also_read, is_create, *out_mode);
+        if(!notify_openw(path, is_also_read, is_create, mode)) return PERM_ERROR(-1, "openw \"%s\" (0x%X)", path, flags);
+        break;
     default:
         LOG("invalid open mode?!");
         ASSERT(0);
+        return -1;
     }
+    open_func *real = dlsym(RTLD_NEXT, open_func_name);
+    return real(path, flags, mode);
 }
 
 /* Full direct path refers to both the [in]existence of a file, its stat and
@@ -372,88 +380,91 @@ static bool open_common(const char *path, int flags, va_list args, mode_t *out_m
 
 /* For read: Depends on the full path */
 /* For write: Outputs the full path */
-DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
+open_func open;
+int open(const char *path, int flags, ...)
 {
     va_list args;
     va_start(args, flags);
-    mode_t mode;
-    bool res = open_common(path, flags, args, &mode);
+    int rc = open_common("open", path, flags, args);
     va_end(args);
-    if(!res) return PERM_ERROR(-1, "open \"%s\"", path);
-
-    /* open_common handles the reporting */
-    return SILENT_CALL_REAL(int, open, path, flags, mode);
+    return rc;
 }
 
 /* Ditto open */
-DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
+open_func open64;
+int open64(const char *path, int flags, ...)
 {
     va_list args;
     va_start(args, flags);
-    mode_t mode;
-    bool res = open_common(path, flags, args, &mode);
+    int rc = open_common("open64", path, flags, args);
     va_end(args);
-
-    if(!res) return PERM_ERROR(-1, "open64 \"%s\"", path);
-
-    /* open_common handles the reporting */
-    return SILENT_CALL_REAL(int, open64, path, flags, mode);
+    return rc;
 }
 
-static bool fopen_common(const char *path, const char *modestr) __attribute__ ((warn_unused_result));
-static bool fopen_common(const char *path, const char *modestr)
+static bool fopen_notify(const char *path, const char *modestr) __attribute__((warn_unused_result));
+static bool fopen_notify(const char *path, const char *modestr)
 {
     mode_t mode = 0666;
     switch(modestr[0]) {
-    case 'r':
-        if(modestr[1] == '+') {
-            return notify_openw(path, /*is_also_read*/true, /*create*/false, 0);
-        } else {
-            return notify_openr_await(path);
+    case 'r': {
+        bool res =
+            modestr[1] == '+'
+            ? notify_openw(path, /*is_also_read*/true, /*create*/false, 0)
+            : notify_openr(path);
+        if(!res) return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
+        break;
+    }
+    case 'w':
+        if(!notify_openw(path, /*is_also_read*/modestr[1] == '+', /*create*/true, mode)) {
+            return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
         }
         break;
-    case 'w':
-        return notify_openw(path, /*is_also_read*/modestr[1] == '+',
-                     /*create*/true, mode);
     case 'a':
-        return notify_openw(path, true, /*create*/true, mode);
+        if(!notify_openw(path, true, /*create*/true, mode)) {
+            return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
+        }
     default:
         LOG("Invalid fopen mode?!");
         ASSERT(0);
     }
+    return true;
 }
 
-/* Ditto open */
-DEFINE_WRAPPER(FILE *, fopen, (const char *path, const char *mode))
+typedef FILE *fopen_func(const char *path, const char *mode);
+
+static FILE *fopen_common(const char *fopen_func_name, const char *path, const char *modestr)
 {
-    if(!fopen_common(path, mode)) return PERM_ERROR(NULL, "fopen \"%s\" \"%s\"", path, mode);
-    /* fopen_common handles the reporting */
-    return SILENT_CALL_REAL(FILE *, fopen, path, mode);
+    if(!fopen_notify(path, modestr)) return NULL;
+    fopen_func *real = dlsym(RTLD_NEXT, fopen_func_name);
+    return real(path, modestr);
 }
 
-/* Ditto open */
-DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *mode))
+fopen_func fopen;
+FILE *fopen(const char *path, const char *modestr)
 {
-    if(!fopen_common(path, mode)) return PERM_ERROR(NULL, "fopen64 \"%s\" \"%s\"", path, mode);
-    /* fopen_common handles the reporting */
-    return SILENT_CALL_REAL(FILE *, fopen64, path, mode);
+    return fopen_common("fopen", path, modestr);
 }
 
-DEFINE_WRAPPER(FILE *, freopen, (const char *path, const char *mode, FILE *stream))
+fopen_func fopen64;
+FILE *fopen64(const char *path, const char *modestr)
 {
-    if(!fopen_common(path, mode)) return PERM_ERROR(NULL, "freopen \"%s\" \"%s\"", path, mode);
-    /* fopen_common handles the reporting */
-    return SILENT_CALL_REAL(FILE *, freopen, path, mode, stream);
+    return fopen_common("fopen64", path, modestr);
 }
 
-DEFINE_WRAPPER(FILE *, freopen64, (const char *path, const char *mode, FILE *stream))
+DEFINE_WRAPPER(FILE *, freopen, (const char *path, const char *modestr, FILE *stream))
 {
-    if(!fopen_common(path, mode)) return PERM_ERROR(NULL, "freopen \"%s\" \"%s\"", path, mode);
+    if(!fopen_notify(path, modestr)) return PERM_ERROR(NULL, "freopen \"%s\" \"%s\"", path, modestr);
     /* fopen_common handles the reporting */
-    return SILENT_CALL_REAL(FILE *, freopen64, path, mode, stream);
+    return SILENT_CALL_REAL(FILE *, freopen, path, modestr, stream);
 }
 
-/* Ditto open(W) */
+DEFINE_WRAPPER(FILE *, freopen64, (const char *path, const char *modestr, FILE *stream))
+{
+    if(!fopen_notify(path, modestr)) return PERM_ERROR(NULL, "freopen64 \"%s\" \"%s\"", path, modestr);
+    /* fopen_common handles the reporting */
+    return SILENT_CALL_REAL(FILE *, freopen64, path, modestr, stream);
+}
+
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
     bool needs_await = false;
