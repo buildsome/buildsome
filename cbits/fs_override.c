@@ -197,11 +197,16 @@ struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_va
         real(__VA_ARGS__);                              \
     })
 
+#define SEND_MSG_AWAIT(_is_delayed, msg)        \
+    do {                                        \
+        (msg).is_delayed = (_is_delayed);       \
+        send_connection(PS(msg));               \
+        if(_is_delayed) await_go();             \
+    } while(0)
+
 #define AWAIT_CALL_REAL(needs_await, msg, ...)  \
     ({                                          \
-        (msg).is_delayed = needs_await;         \
-        send_connection(PS(msg));               \
-        if(needs_await) await_go();             \
+        SEND_MSG_AWAIT(needs_await, msg);       \
         SILENT_CALL_REAL(__VA_ARGS__);          \
     })
 
@@ -263,9 +268,7 @@ static void notify_openr_await(const char *path)
     bool needs_await = false;
     DEFINE_MSG(msg, openr);
     PATH_COPY(needs_await, msg.args.path, path);
-    msg.is_delayed = needs_await;
-    send_connection(PS(msg));
-    if(needs_await) await_go();
+    SEND_MSG_AWAIT(needs_await, msg);
 }
 
 static void notify_openw(const char *path, bool is_also_read, bool is_create, mode_t mode)
@@ -276,9 +279,7 @@ static void notify_openw(const char *path, bool is_also_read, bool is_create, mo
     if(is_also_read) msg.args.flags |= FLAG_ALSO_READ;
     if(is_create)    msg.args.flags |= FLAG_CREATE;
     msg.args.mode = mode;
-    msg.is_delayed = needs_await;
-    send_connection(PS(msg));
-    if(needs_await) await_go();
+    SEND_MSG_AWAIT(needs_await, msg);
 }
 
 static mode_t open_common(const char *path, int flags, va_list args)
@@ -448,11 +449,7 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
     DEFINE_MSG(msg, rename);
     PATH_COPY(needs_await, msg.args.oldpath, oldpath);
     PATH_COPY(needs_await, msg.args.newpath, newpath);
-    msg.is_delayed = needs_await;
-    send_connection(PS(msg));
-    if(msg.args.oldpath[0] != '/' || msg.args.newpath[0] != '/') {
-        await_go();
-    }
+    SEND_MSG_AWAIT(needs_await, msg);
     return SILENT_CALL_REAL(int, rename, oldpath, newpath);
 }
 
@@ -639,9 +636,7 @@ DEFINE_WRAPPER(int, execvpe, (const char *file, char *const argv[], char *const 
         ASSERT(size <= sizeof msg.args.conf_str_CS_PATH); /* Value truncated */
     }
 
-    msg.is_delayed = true;
-    send_connection(PS(msg));
-    await_go();
+    SEND_MSG_AWAIT(true, msg);
     return SILENT_CALL_REAL(int, execvpe, file, argv, envp);
 }
 
