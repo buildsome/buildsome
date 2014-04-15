@@ -296,7 +296,7 @@ warnOverSpecified ::
 warnOverSpecified str specified used pos =
   unless (S.null unused) $
   Print.warn pos $ mconcat
-    ["Over-specified ", str, ": ", targetShow (S.toList unused)]
+  ["Over-specified ", str, ": ", targetShow (S.toList unused)]
   where
     unused = specified `S.difference` used
 

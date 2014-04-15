@@ -1,0 +1,6 @@
+* Test1: undeclared outputs are allowed iff they are inexistent after cmd (success)
+
+* Test2: undeclared outputs are allowed iff they are inexistent before (incorrect success -> fail)
+
+* Test3: file) undeclared output files are not accessed concurrently in other cmds (incorrect success -> fail)
+         dir) undeclared output dirs are not accessed concurrently in other cmds (incorrect success -> fail)

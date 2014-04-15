@@ -1,0 +1,3 @@
+rm test1.out test1.err 2>/dev/null
+buildsome test1_ok >>test1.out 2>>test1.err && echo "Success!"
+(buildsome test1_bad >>test1.out 2>>test1.err && echo "TEST FAIL") || echo "Success!"
