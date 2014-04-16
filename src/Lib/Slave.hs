@@ -2,7 +2,7 @@
 module Lib.Slave
   ( Slave, new
   , str
-  , wait
+  , wait, waitCatch
   , cancel
   , wrap
   , When(..), Stats(..)
@@ -14,10 +14,8 @@ import Data.Map (Map)
 import Data.Monoid
 import Data.String (IsString(..))
 import Data.Time (DiffTime)
-import Lib.Async (verifyCancelled)
 import Lib.BuildMaps (TargetRep)
 import Lib.FilePath (FilePath)
-import Lib.Printer (Printer)
 import Lib.TimeInstances ()
 import Prelude hiding (FilePath)
 import qualified Control.Concurrent.Async as Async
@@ -46,15 +44,14 @@ str slave =
   Printer.idStr (slavePrinterId slave) <> ": " <>
   fromString (show (slaveOutputPaths slave))
 
-wait :: Printer -> Slave -> IO Stats
-wait _printer slave =
-  -- Keep this around so we can enable logging about slave waits
-  -- easily:
-  -- Printer.printWrap _printer ("Waiting for " <> str slave) $
-  Async.wait $ slaveExecution slave
+wait :: Slave -> IO Stats
+wait = Async.wait . slaveExecution
 
-cancel :: Slave -> IO (Either E.SomeException Stats)
-cancel = verifyCancelled . slaveExecution
+waitCatch :: Slave -> IO (Either E.SomeException Stats)
+waitCatch = Async.waitCatch . slaveExecution
+
+cancel :: Slave -> IO ()
+cancel = Async.cancel . slaveExecution
 
 wrap :: (IO Stats -> IO Stats) -> Slave -> IO Slave
 wrap f slave = do

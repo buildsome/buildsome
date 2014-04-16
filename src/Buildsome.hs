@@ -97,10 +97,9 @@ data Buildsome = Buildsome
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = go 0
   where
-    timeoutVerifyCancelled slave =
-      Timeout.warning (Timeout.seconds 2)
-      (unwords ["Slave", Slave.str slave, "did not cancel in 2 seconds!"]) $
-      Slave.cancel slave
+    timeoutWarning time slave =
+      Timeout.warning time $
+      concat ["Slave ", Slave.str slave, " did not cancel in ", show time, "!"]
     go alreadyCancelled = do
       curSlaveMap <- readIORef $ bsSlaveByTargetRep bs
       slaves <-
@@ -112,7 +111,10 @@ cancelAllSlaves bs = go 0
         readMVar mvar
       let count = length slaves
       unless (alreadyCancelled >= count) $ do
-        mapM_ timeoutVerifyCancelled slaves
+        forM_ slaves $ \slave -> timeoutWarning (Timeout.millis 100) slave $
+          Slave.cancel slave
+        forM_ slaves $ \slave -> timeoutWarning (Timeout.seconds 2) slave $
+          Slave.waitCatch slave
         -- Make sure to cancel any potential new slaves that were
         -- created during cancellation
         go count
@@ -144,7 +146,7 @@ want printer buildsome reason paths = do
   printStrLn printer $
     "Building: " <> ColorText.intercalate ", " (map targetShow paths)
   (buildTime, slaveStats) <- timeIt $
-    fmap mconcat . mapM (Slave.wait printer) =<<
+    fmap mconcat . mapM Slave.wait =<<
     mkSlavesForPaths BuildTargetEnv
     { bteBuildsome = buildsome
     , btePrinter = printer
@@ -315,9 +317,9 @@ applyExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
 
 waitForSlaves :: Printer -> Parallelism.Cell -> Buildsome -> [Slave] -> IO Slave.Stats
 waitForSlaves _ _ _ [] = return mempty
-waitForSlaves printer parCell buildsome slaves =
+waitForSlaves _printer parCell buildsome slaves =
   Parallelism.withReleased parCell (bsParallelism buildsome) $
-  mconcat <$> mapM (Slave.wait printer) slaves
+  mconcat <$> mapM Slave.wait slaves
 
 verifyFileDesc ::
   (IsString str, Monoid str, MonadIO m) =>
