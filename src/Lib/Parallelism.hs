@@ -25,10 +25,9 @@ startAlloc parallelism = do
 
 release :: Parallelism -> Cell -> IO ()
 release parallelism cell = do
-  parId <- readIORef cell
-  E.mask_ $ do
-    PoolAlloc.release parallelism parId
-    writeIORef cell $ error "Attempt to read released resource"
+  -- Make sure parId is valid with forced evaluation
+  parId <- E.evaluate =<< atomicModifyIORef cell ((,) (error "Attempt to read released resource"))
+  E.mask_ $ PoolAlloc.release parallelism parId
 
 -- | Release the currently held item, run given action, then regain
 -- new item instead
