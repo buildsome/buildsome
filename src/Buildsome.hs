@@ -743,6 +743,11 @@ shellCmdVerify target inheritEnvs newEnvs = do
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
 
+disallowExceptions :: IO a -> String -> IO a
+disallowExceptions act prefix = act `E.catch` \e@E.SomeException {} -> do
+  putStrLn $ prefix ++ show e
+  E.throwIO e
+
 with :: FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 with makefilePath makefile opt@Opt{..} body =
   FSHook.with $ \fsHook ->
@@ -771,7 +776,7 @@ with makefilePath makefile opt@Opt{..} body =
       -- We must not leak running slaves as we're not allowed to
       -- access fsHook, db, etc after leaving here:
       `E.onException` putStrLn "Shutting down"
-      `finally` cancelAllSlaves buildsome
+      `finally` (cancelAllSlaves buildsome `disallowExceptions` "BUG: Exception thrown at cancelAllSlaves: ")
       -- Must update gitIgnore after all the slaves finished updating
       -- the registered output lists:
       `finally` maybeUpdateGitIgnore buildsome
