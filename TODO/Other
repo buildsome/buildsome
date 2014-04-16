@@ -1,5 +1,3 @@
-* Put the fs_override* logs in a directory
-
 * Do we really need the execution log or hints' parent directory creation?
 
 * Outputs:
