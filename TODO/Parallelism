@@ -1,6 +1,3 @@
-* Oops: parallel threads in a single build command could release the
-  same parallelism more than once
-
 * "Concurrent" identifiers for each concurrent command (even paused ones)
   * Indentation is based on this
 
