@@ -107,7 +107,7 @@ with rawDbPath body = do
   where
     withIORefFile path =
       E.bracket (newIORef =<< decodeFileOrEmpty path)
-                (writeBack path)
+                (E.uninterruptibleMask_ . writeBack path)
     writeBack path ref = do
       BS8.writeFile (BS8.unpack (path <.> "tmp")) .
         BS8.unlines . S.toList =<< readIORef ref
