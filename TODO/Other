@@ -1,3 +1,5 @@
+* Put the fs_override* logs in a directory
+
 * Do we really need the execution log or hints' parent directory creation?
 
 * Outputs:
@@ -69,15 +71,6 @@
 * Should failures be cached in execution log like successes? Thus avoid voodoo successes, and persist failures properly?
 
 * Bugs:
-  * Need to ban undeclared outputs from being inputs to anyone else
-    while cmd ongoing, delete them after cmd
-
-    * Need C side to verify output files do not exist before-hand to
-      avoid covert channels that are then unlinked
-      * Recording only non-output inputs is weird, what if these
-        outputs come later? Need to do the filtering of such input
-        paths at the end
-
   * Wrong FS input model:
     * When file is symlink, everything except lstat/readlink need to
       have an input dependency on the link content AND the file behind
@@ -96,6 +89,8 @@
     only way to fail the job reliably
 
 * Nice to haves:
+  * keep-going needs to avoid dying on first exception from slaves created
+
   * Associate allowedUnspecifiedOutputs with targets somehow? generated
     .pyc currently not associated with anything, cannot know when to
     clean it

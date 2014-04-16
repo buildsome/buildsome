@@ -1,0 +1,4 @@
+* Document thread killability:
+
+  * which thread can kill which -- review where such async exceptions
+    can screw things up?
