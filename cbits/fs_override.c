@@ -1,6 +1,7 @@
 #include "c.h"
 #include "writer.h"
 #include "canonize_path.h"
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <fcntl.h>
 #include <dlfcn.h>
@@ -722,7 +723,10 @@ FILE *log_file(void)
         FILE *(*fopen_real)(const char *path, const char *mode) =
             dlsym(RTLD_NEXT, "fopen");
         char name[256];
-        snprintf(PS(name), "/tmp/fs_override.so.log.%d", getpid());
+        int (*mkdir_real)(const char *pathname, mode_t mode) =
+            dlsym(RTLD_NEXT, "mkdir");
+        mkdir_real("/tmp/fs_override.so.log", 0777);
+        snprintf(PS(name), "/tmp/fs_override.so.log/pid.%d", getpid());
         f = fopen_real(name, "w");
         ASSERT(f);
     }
