@@ -32,11 +32,8 @@ release parallelism cell = do
 
 -- | Release the currently held item, run given action, then regain
 -- new item instead
-localReleasePool :: Parallelism -> Cell -> IO b -> IO b
-localReleasePool parallelism cell =
+withReleased :: Cell -> Parallelism -> IO a -> IO a
+withReleased cell parallelism =
   E.bracket_
   (release parallelism cell)
   (writeIORef cell =<< PoolAlloc.alloc parallelism)
-
-withReleased :: Cell -> Parallelism -> IO a -> IO a
-withReleased cell parallelism = localReleasePool parallelism cell
