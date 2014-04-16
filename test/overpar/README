@@ -1,0 +1,3 @@
+A single cmd owns 1 parallelism unit. If it has multiple internal
+threads that do FS access, it must not "release" its parallelism unit
+more than once.
