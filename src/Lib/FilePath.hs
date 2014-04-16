@@ -9,6 +9,7 @@ module Lib.FilePath
   , (</>), (<.>)
   , takeDirectory, takeFileName
   , makeRelative, makeRelativeToCurrentDirectory
+  , exists
   ) where
 
 import Control.Applicative ((<$>))
@@ -21,6 +22,12 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified System.Posix.ByteString as Posix
 
 type FilePath = Posix.RawFilePath
+
+{-# INLINE exists #-}
+exists :: FilePath -> IO Bool
+exists path
+  | BS8.null path = return True
+  | otherwise = Posix.fileExist path
 
 splitPath :: FilePath -> [FilePath]
 splitPath path

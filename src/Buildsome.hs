@@ -163,7 +163,7 @@ want printer buildsome reason paths = do
 
 assertExists :: E.Exception e => FilePath -> e -> IO ()
 assertExists path err = do
-  doesExist <- Dir.exists path
+  doesExist <- FilePath.exists path
   unless doesExist $ E.throwIO err
 
 fromBytestring8 :: IsString str => ByteString -> str
@@ -273,14 +273,14 @@ verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
 verifyTargetOutputs buildsome outputs target = do
   -- Legal unspecified need to be kept/deleted according to policy:
   handleLegalUnspecifiedOutputs buildsome target =<<
-    filterM Dir.exists unspecifiedOutputs
+    filterM FilePath.exists unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
   -- input use by any other job:
   -- TODO: Add to a ban-from-input-list (by other jobs)
 
   -- Illegal unspecified that do exist are a problem:
-  existingIllegalOutputs <- filterM Dir.exists illegalOutputs
+  existingIllegalOutputs <- filterM FilePath.exists illegalOutputs
   unless (null existingIllegalOutputs) $ do
     Print.posMessage (targetPos target) $ Color.error $
       "Illegal output files created: " <> show existingIllegalOutputs
@@ -529,7 +529,7 @@ data RunCmdResults = RunCmdResults
 
 outputHasEffect :: FSHook.Output -> IO Bool
 outputHasEffect (FSHook.Output behavior path) = do
-  outputExists <- Dir.exists path
+  outputExists <- FilePath.exists path
   return $
     case (outputExists, behavior) of
     (True, OutputBehavior { behaviorWhenFileDoesExist = HasEffect }) -> True
