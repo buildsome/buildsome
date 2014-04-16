@@ -21,12 +21,9 @@
   * O_RDWR should be considered both input and output
   * banning is of inputs only
 
-* -k for keep going, but by default, refuse to (make new slaves ||
-  allocate parallelism) after a failure!
-
-  * Parallelism travels to successful paths after the exception path happened
-
 * Check error parsing with netbeans (Entering directory + other errors)
+
+* Verify that the mtime of all files does not change during run, not just during single command
 
 * Better prints:
 
@@ -48,8 +45,6 @@
   callbacks for create connection that fork the printer, and hand
   those over to handleInput/handleDelayedInput
 
-* Verify that the mtime of all files does not change during run, not just during single command
-
 * Performance:
 
   * Empty run
@@ -61,8 +56,6 @@
       * Only delay those?
 
 * local "clean" support
-
-* Should failures be cached in execution log like successes? Thus avoid voodoo successes, and persist failures properly?
 
 * Bugs:
   * Wrong FS input model:
