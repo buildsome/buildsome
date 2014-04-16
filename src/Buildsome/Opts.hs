@@ -2,6 +2,7 @@ module Buildsome.Opts
   ( DeleteUnspecifiedOutputs(..)
   , OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)
+  , KeepGoing(..)
   , Opt(..), Opts(..), get
   ) where
 
@@ -16,6 +17,7 @@ import qualified Data.ByteString.Char8 as BS8
 data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
 data UpdateGitIgnore = UpdateGitIgnore | DontUpdateGitIgnore
+data KeepGoing = KeepGoing | DieQuickly
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
@@ -23,6 +25,7 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optUpdateGitIgnore :: UpdateGitIgnore
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
+               , optKeepGoing :: KeepGoing
                , optChartsPath :: Maybe FilePath
                }
 
@@ -81,6 +84,10 @@ get = execParser opts
           <*> flag DontOverwriteUnregisteredOutputs OverwriteUnregisteredOutputs
               (long "overwrite" <>
                help "Overwrite outputs not created by buildsome")
+          <*> flag DieQuickly KeepGoing
+              (short 'k' <>
+               long "keep-going" <>
+               help "Continue as much as possible after an error.")
           <*> strOpt (long "charts" <>
                       metavar "charts-file" <>
                       help "File to write charts to")

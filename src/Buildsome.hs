@@ -10,7 +10,9 @@ import Buildsome.Meddling (assertSameMTime)
 import Buildsome.Opts (Opt(..))
 import Buildsome.Print (targetShow)
 import Control.Applicative ((<$>), Applicative(..))
+import Control.Concurrent (myThreadId)
 import Control.Concurrent.MVar
+import Control.Exception.Async (handleSync)
 import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Trans.Either
@@ -92,6 +94,7 @@ data Buildsome = Buildsome
   , bsSlaveByTargetRep :: IORef (Map TargetRep (MVar Slave))
   , bsParallelism :: Parallelism
   , bsFreshPrinterIds :: Fresh Printer.Id
+  , bsFastKillBuild :: E.SomeException -> IO ()
   }
 
 cancelAllSlaves :: Buildsome -> IO ()
@@ -671,34 +674,41 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
         , Db.idContentAccess = contentAccess
         }
 
+redirectExceptions :: Buildsome -> IO a -> IO a
+redirectExceptions buildsome =
+  handleSync $ \e@E.SomeException {} -> do
+    bsFastKillBuild buildsome e
+    E.throwIO e
+
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
-buildTarget bte@BuildTargetEnv{..} parCell targetRep target = do
-  mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
-  case mSlaveStats of
-    Just slaveStats -> return slaveStats
-    Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
-      targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
+buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
+  redirectExceptions bteBuildsome $ do
+    mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
+    case mSlaveStats of
+      Just slaveStats -> return slaveStats
+      Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
+        targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
 
-      registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
-      mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
+        registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
+        mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
 
-      slaves <-
-        mkSlavesForPaths bte
-          { bteReason = ColorText.render $ "Hint from " <> targetShow (targetOutputs target)
-          } Explicit $ targetAllInputs target
-      hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
+        slaves <-
+          mkSlavesForPaths bte
+            { bteReason = ColorText.render $ "Hint from " <> targetShow (targetOutputs target)
+            } Explicit $ targetAllInputs target
+        hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
 
-      Print.cmd btePrinter target
+        Print.cmd btePrinter target
 
-      rcr@RunCmdResults{..} <- runCmd bte parCell target
+        rcr@RunCmdResults{..} <- runCmd bte parCell target
 
-      verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.keysSet rcrOutputs) target
-      saveExecutionLog bteBuildsome target rcr
+        verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.keysSet rcrOutputs) target
+        saveExecutionLog bteBuildsome target rcr
 
-      printStrLn btePrinter $
-        "Build (now) took " <> Color.timing (show rcrSelfTime <> " seconds")
-      let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
-      return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
+        printStrLn btePrinter $
+          "Build (now) took " <> Color.timing (show rcrSelfTime <> " seconds")
+        let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
+        return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
@@ -748,6 +758,18 @@ disallowExceptions act prefix = act `E.catch` \e@E.SomeException {} -> do
   putStrLn $ prefix ++ show e
   E.throwIO e
 
+mkFastKillBuild :: Opts.KeepGoing -> IO (E.SomeException -> IO (), IO ())
+mkFastKillBuild Opts.KeepGoing = return (const (return ()), return ())
+mkFastKillBuild Opts.DieQuickly = do
+  tid <- myThreadId
+  killActionMVar <- newMVar (E.throwTo tid)
+  let fastKillBuild e =
+        modifyMVar killActionMVar $ \killAction -> do
+          killAction e
+          return (const (return ()), ())
+      disableFastKillBuild = E.uninterruptibleMask_ $ void $ swapMVar killActionMVar (const (return ()))
+  return (fastKillBuild, disableFastKillBuild)
+
 with :: FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 with makefilePath makefile opt@Opt{..} body =
   FSHook.with $ \fsHook ->
@@ -757,6 +779,7 @@ with makefilePath makefile opt@Opt{..} body =
     freshPrinterIds <- Fresh.new 1
     buildId <- BuildId.new
     rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
+    (fastKillBuild, disableFastKillBuild) <- mkFastKillBuild optKeepGoing
     let
       buildsome =
         Buildsome
@@ -770,12 +793,14 @@ with makefilePath makefile opt@Opt{..} body =
         , bsSlaveByTargetRep = slaveMapByTargetRep
         , bsParallelism = parallelism
         , bsFreshPrinterIds = freshPrinterIds
+        , bsFastKillBuild = fastKillBuild
         }
     deleteRemovedOutputs buildsome
     body buildsome
       -- We must not leak running slaves as we're not allowed to
       -- access fsHook, db, etc after leaving here:
       `E.onException` putStrLn "Shutting down"
+      `finally` disableFastKillBuild
       `finally` (cancelAllSlaves buildsome `disallowExceptions` "BUG: Exception thrown at cancelAllSlaves: ")
       -- Must update gitIgnore after all the slaves finished updating
       -- the registered output lists:
