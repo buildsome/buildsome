@@ -429,7 +429,7 @@ findApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target = do
           printStrLn btePrinter $ ColorText.render $ mconcat
             [ "Execution log of ", targetShow (targetOutputs target)
             , " did not match because ", fromBytestring8 str, ": "
-            , Color.path (show filePath), " changed"
+            , Color.path (show filePath)
             ]
           return Nothing
         Right stats -> return (Just stats)
