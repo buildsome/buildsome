@@ -36,7 +36,7 @@ import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
 
 standardMakeFilename :: FilePath
-standardMakeFilename = "Makefile"
+standardMakeFilename = "Buildsome.mk"
 
 data SpecifiedInexistentMakefilePath = SpecifiedInexistentMakefilePath FilePath deriving (Typeable)
 instance Show SpecifiedInexistentMakefilePath where
