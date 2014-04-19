@@ -51,7 +51,7 @@ specifiedMakefile path = do
   case mStat of
     Nothing -> E.throwIO $ SpecifiedInexistentMakefilePath path
     Just stat
-      | Posix.isDirectory stat -> return $ path </> "Makefile"
+      | Posix.isDirectory stat -> return $ path </> standardMakeFilename
       | otherwise -> return path
 
 data TargetsRequest = TargetsRequest
