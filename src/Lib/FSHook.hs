@@ -29,6 +29,7 @@ import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.FSHook.AccessType (AccessType(..))
+import Lib.FSHook.OutputBehavior (HasEffect(..), OutputBehavior(..), fileChanger, existingFileChanger, nonExistingFileChanger)
 import Lib.FSHook.Protocol (IsDelayed(..))
 import Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
 import Lib.Fresh (Fresh)
@@ -57,31 +58,6 @@ type JobId = ByteString
 data Input = Input
   { inputAccessType :: AccessType
   , inputPath :: FilePath
-  }
-
-data HasEffect = NoEffect | HasEffect
-
-data OutputBehavior = OutputBehavior
-  { behaviorWhenFileDoesExist :: HasEffect
-  , behaviorWhenFileDoesNotExist :: HasEffect
-  }
-
-nonExistingFileChanger :: OutputBehavior
-nonExistingFileChanger = OutputBehavior
-  { behaviorWhenFileDoesExist = NoEffect
-  , behaviorWhenFileDoesNotExist = HasEffect
-  }
-
-existingFileChanger :: OutputBehavior
-existingFileChanger = OutputBehavior
-  { behaviorWhenFileDoesExist = HasEffect
-  , behaviorWhenFileDoesNotExist = NoEffect
-  }
-
-fileChanger :: OutputBehavior
-fileChanger = OutputBehavior
-  { behaviorWhenFileDoesExist = HasEffect
-  , behaviorWhenFileDoesNotExist = HasEffect
   }
 
 data Output = Output

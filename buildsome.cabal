@@ -52,6 +52,7 @@ executable buildsome
                ,     Lib.Exception
                ,     Lib.FSHook
                ,     Lib.FSHook.AccessType
+               ,     Lib.FSHook.OutputBehavior
                ,     Lib.FSHook.Protocol
                ,     Lib.Fifo
                ,     Lib.FileDesc
