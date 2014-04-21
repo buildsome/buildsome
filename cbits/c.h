@@ -17,4 +17,6 @@ FILE *log_file(void);
 
 #define PS(x)   ((char *)& (x)) , sizeof (x)
 
+#define UNUSED  __attribute__((unused))
+
 #endif

@@ -24,7 +24,7 @@
 #define MAX_FRAME_SIZE 8192
 
 #define ENVVARS_PREFIX "BUILDSOME_"
-#define PROTOCOL_HELLO "PROTOCOL3: HELLO, I AM: "
+#define PROTOCOL_HELLO "PROTOCOL4: HELLO, I AM: "
 
 #define PERM_ERROR(x, fmt, ...)                                 \
     ({                                                          \
@@ -212,8 +212,17 @@ typedef struct {
     char in_path[MAX_PATH];
 } in_path;
 
+enum out_effect {
+    OUT_EFFECT_NOTHING,         /* File did not change */
+    OUT_EFFECT_CREATED,         /* File was created */
+    OUT_EFFECT_DELETED,         /* File was deleted */
+    OUT_EFFECT_CHANGED,         /* File or directory was changed, but had already existed */
+    OUT_EFFECT_UNKNOWN,         /* File may have changed in some way */
+};
+
 typedef struct {
     char out_path[MAX_PATH];
+    enum out_effect out_effect;
 } out_path;
 
 /* NOTE: This must be kept in sync with Protocol.hs */
@@ -300,8 +309,11 @@ static bool await_go(void)
 #define IN_PATH_COPY(needs_await, dest, src)    \
     PATH_COPY(needs_await, (dest).in_path, src)
 
-#define OUT_PATH_COPY(needs_await, dest, src)   \
-    PATH_COPY(needs_await, (dest).out_path, src)
+#define OUT_PATH_COPY(needs_await, dest, src)           \
+    do {                                                \
+        PATH_COPY(needs_await, (dest).out_path, src);   \
+        (dest).out_effect = OUT_EFFECT_UNKNOWN;         \
+    } while(0)
 
 static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *canonized_path)
 {
@@ -320,13 +332,38 @@ static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *can
     return true;
 }
 
+#define CALL_WITH_OUTPUTS(msg, _is_delayed, err, ret_type, args, out_report_code) \
+    ({                                                                  \
+        (msg).is_delayed = (_is_delayed);                               \
+        if(_is_delayed && !send_connection_await(PS(msg), true)) {      \
+            return err;                                                 \
+        }                                                               \
+        ret_type result = SILENT_CALL_REAL args;                        \
+        if(!_is_delayed) {                                              \
+            do out_report_code while(0);                                \
+            bool UNUSED res = send_connection(PS(msg));                 \
+            /* Can't stop me now, effect already happened, so just ignore */ \
+            /* server-side rejects after-the-fact. */                   \
+        }                                                               \
+        result;                                                         \
+    })
+
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, creat);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "creat \"%s\"", path), needs_await, msg, creat, path, mode);
+
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "creat \"%s\"", path),
+        int, (creat, path, mode),
+        {
+            /* May actually truncate file, rather than create it, but
+             * the new content is created now: */
+            msg.args.path.out_effect =
+                (-1 == result) ? OUT_EFFECT_NOTHING : OUT_EFFECT_CREATED;
+        });
 }
 
 /* Depends on the full path */
@@ -371,8 +408,17 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, truncate);
+    msg.args.length = length;
     OUT_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "truncate \"%s\" %lu", path, length), needs_await, msg, truncate, path, length);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "truncate \"%s\" %lu", path, length),
+        int, (truncate, path, length),
+        {
+            msg.args.path.out_effect =
+                (-1 == result)
+                ? OUT_EFFECT_NOTHING
+                : (length == 0 ? OUT_EFFECT_CREATED : OUT_EFFECT_CHANGED);
+        });
 }
 
 /* Outputs the full path */
@@ -381,7 +427,15 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
     bool needs_await = false;
     DEFINE_MSG(msg, unlink);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "unlink \"%s\"", path), needs_await, msg, unlink, path);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "unlink \"%s\"", path),
+        int, (unlink, path),
+        {
+            msg.args.path.out_effect =
+                (-1 == result)
+                ? OUT_EFFECT_NOTHING
+                : OUT_EFFECT_DELETED;
+        });
 }
 
 /* Outputs both full paths */
@@ -391,7 +445,15 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
     DEFINE_MSG(msg, rename);
     OUT_PATH_COPY(needs_await, msg.args.oldpath, oldpath);
     OUT_PATH_COPY(needs_await, msg.args.newpath, newpath);
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "rename \"%s\" -> \"%s\"", oldpath, newpath), needs_await, msg, rename, oldpath, newpath);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "rename \"%s\" -> \"%s\"", oldpath, newpath),
+        int, (rename, oldpath, newpath),
+        {
+            msg.args.oldpath.out_effect =
+                (-1 == result) ? OUT_EFFECT_NOTHING : OUT_EFFECT_DELETED;
+            msg.args.newpath.out_effect =
+                (-1 == result) ? OUT_EFFECT_NOTHING : OUT_EFFECT_CREATED;
+        });
 }
 
 /* Outputs the full path */

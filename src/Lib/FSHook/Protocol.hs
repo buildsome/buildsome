@@ -3,7 +3,7 @@ module Lib.FSHook.Protocol
   ( parseMsg, helloPrefix
   , OpenWriteMode(..), showOpenWriteMode
   , CreationMode(..), showCreationMode
-  , InFilePath, OutFilePath
+  , InFilePath, OutFilePath(..), OutEffect(..)
   , Func(..), showFunc
   , IsDelayed(..)
   , Msg(..)
@@ -41,7 +41,21 @@ showCreationMode (Create x) = "(CREATE:" ++ showOct x "" ++ ")"
 {-# INLINE showCreationMode #-}
 
 type InFilePath = FilePath
-type OutFilePath = FilePath
+
+-- WARNING: The order of these constructors must match
+-- fs_override.c:enum out_effect (due to Enum instance)!
+data OutEffect
+  = OutEffectNothing
+  | OutEffectCreated
+  | OutEffectDeleted
+  | OutEffectChanged
+  | OutEffectUnknown
+  deriving (Eq, Ord, Show, Enum)
+
+data OutFilePath = OutFilePath
+  { outPath :: FilePath
+  , outEffect :: OutEffect
+  } deriving (Eq, Ord, Show)
 
 data Func
   = OpenR InFilePath
@@ -119,8 +133,11 @@ getPath = getNullTerminated mAX_PATH
 getInPath :: Get InFilePath
 getInPath = getPath
 
+getOutEffect :: Get OutEffect
+getOutEffect = toEnum . fromIntegral <$> getWord32le
+
 getOutPath :: Get OutFilePath
-getOutPath = getPath
+getOutPath = OutFilePath <$> getPath <*> getOutEffect
 
 fLAG_ALSO_READ :: Word32
 fLAG_ALSO_READ = 1
@@ -204,4 +221,4 @@ parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloPrefix #-}
 helloPrefix :: ByteString
-helloPrefix = "PROTOCOL3: HELLO, I AM: "
+helloPrefix = "PROTOCOL4: HELLO, I AM: "

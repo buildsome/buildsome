@@ -583,14 +583,26 @@ data RunCmdResults = RunCmdResults
   , rcrSlaveStats :: Slave.Stats
   }
 
-outputHasEffect :: FSHook.Output -> IO Bool
-outputHasEffect (FSHook.Output behavior path) = do
+-- TODO: The *Effect functions here will have to return whether or not
+-- the file is safe to delete later (i.e: If it was
+-- truncated/created/deleted during build)
+outputWillHaveEffect :: FSHook.DelayedOutput -> IO Bool
+outputWillHaveEffect (FSHook.DelayedOutput behavior path) = do
   outputExists <- FilePath.exists path
   return $
     case (outputExists, behavior) of
     (True, OutputBehavior { behaviorWhenFileDoesExist = HasEffect }) -> True
     (False, OutputBehavior { behaviorWhenFileDoesNotExist = HasEffect }) -> True
     _ -> False
+
+outputHadEffect :: FSHook.OutFilePath -> Bool
+outputHadEffect (FSHook.OutFilePath _ effect) =
+  case effect of
+  FSHook.OutEffectNothing -> False
+  FSHook.OutEffectCreated -> True
+  FSHook.OutEffectDeleted -> True
+  FSHook.OutEffectChanged -> True
+  FSHook.OutEffectUnknown -> True -- conservatively assume yes
 
 recordInput ::
   IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
@@ -634,35 +646,41 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       mappendSlaveStats . mappend parentSlaveStats =<<
         waitForSlaves Parallelism.PriorityHigh btePrinter parCell bteBuildsome
         slaves
-    outputIgnored = MagicFiles.outputIgnored . FSHook.outputPath
     inputIgnored recordedOutputs (FSHook.Input _ path) =
       MagicFiles.inputIgnored path ||
       path `M.member` recordedOutputs ||
       path `S.member` targetOutputsSet
-    fsAccessHandler isDelayed accessDoc rawInputs rawOutputs = do
+
+    commonAccessHandler accessDoc rawInputs rawOutputs getOutPath handler = do
       recordedOutputs <- readIORef outputsRef
-      let outputs = filter (not . outputIgnored) rawOutputs
+      let outputs = filter (not . MagicFiles.outputIgnored . getOutPath) rawOutputs
           inputs = filter (not . inputIgnored recordedOutputs) rawInputs
-      filteredOutputs <-
-        case isDelayed of
-        FSHook.NotDelayed ->
-          -- We'd like to filter those with no effect, but due to
-          -- undelayed fs access, we really can't
-          return outputs
-        FSHook.Delayed -> do
-          makeInputs accessDoc inputs outputs
-          filterM outputHasEffect outputs
-      -- After makeInputs, we know the current FS state will determine
-      -- output's actual behavior.
+      filteredOutputs <- handler inputs outputs
       recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet $
-        S.fromList $ map FSHook.outputPath filteredOutputs
+        S.fromList $ map getOutPath $ filteredOutputs
       mapM_ (recordInput inputsRef accessDoc) $
         filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
+
+    fsUndelayedAccessHandler accessDoc rawInputs rawOutputs = do
+      commonAccessHandler accessDoc rawInputs rawOutputs FSHook.outPath $
+        \_ outputs -> return $ filter outputHadEffect outputs
+
+    fsDelayedAccessHandler accessDoc rawInputs rawOutputs = do
+      commonAccessHandler accessDoc rawInputs rawOutputs FSHook.outputPath $
+        \inputs outputs -> do
+          makeInputs accessDoc inputs outputs
+          -- After makeInputs, we know the current FS state will
+          -- determine output's actual behavior.
+          filterM outputWillHaveEffect outputs
+
   (time, stdOutputs) <-
     FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
     (shellCmdVerify colors target ["HOME", "PATH"])
     (ColorText.render (cTarget (show (targetOutputs target))))
-    fsAccessHandler
+    FSHook.FSAccessHandlers
+    { delayedFSAccessHandler = fsDelayedAccessHandler
+    , undelayedFSAccessHandler = fsUndelayedAccessHandler
+    }
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
   slaveStats <- readIORef slaveStatsRef

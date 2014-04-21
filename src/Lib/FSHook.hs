@@ -5,10 +5,10 @@ module Lib.FSHook
   , with
 
   , HasEffect(..), OutputBehavior(..)
-  , Input(..), Output(..)
-
-  , IsDelayed(..)
-  , FSAccessHandler
+  , Input(..)
+  , DelayedOutput(..), UndelayedOutput
+  , Protocol.OutFilePath(..), Protocol.OutEffect(..)
+  , FSAccessHandlers(..)
 
   , AccessType(..), AccessDoc
 
@@ -23,6 +23,7 @@ import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
+import Data.Maybe (maybeToList)
 import Data.Monoid ((<>))
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
@@ -60,12 +61,18 @@ data Input = Input
   , inputPath :: FilePath
   }
 
-data Output = Output
+data DelayedOutput = DelayedOutput
+-- TODO: Rename to delayedOutput...
   { outputBehavior :: OutputBehavior
   , outputPath :: FilePath
   }
 
-type FSAccessHandler = IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
+type UndelayedOutput = Protocol.OutFilePath
+
+data FSAccessHandlers = FSAccessHandlers
+  { delayedFSAccessHandler   :: AccessDoc -> [Input] -> [DelayedOutput] -> IO ()
+  , undelayedFSAccessHandler :: AccessDoc -> [Input] -> [UndelayedOutput] -> IO ()
+  }
 
 type JobLabel = ByteString
 
@@ -74,7 +81,7 @@ data RunningJob = RunningJob
   , jobActiveConnections :: IORef (Map Int (ThreadId, MVar ()))
   , jobFreshConnIds :: Fresh Int
   , jobThreadId :: ThreadId
-  , jobFSAccessHandler :: FSAccessHandler
+  , jobFSAccessHandlers :: FSAccessHandlers
   , jobRootFilter :: FilePath
   }
 
@@ -171,17 +178,17 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     -- report them as inputs
 
     -- outputs
-    Protocol.OpenW path _openWMode _creationMode
-                             -> handleOutputs [Output fileChanger path]
-    Protocol.Creat path _    -> handleOutputs [Output fileChanger path]
-    Protocol.Rename a b      -> handleOutputs [Output existingFileChanger a, Output fileChanger b]
-    Protocol.Unlink path     -> handleOutputs [Output existingFileChanger path]
-    Protocol.Truncate path _ -> handleOutputs [Output existingFileChanger path]
-    Protocol.Chmod path _    -> handleOutputs [Output existingFileChanger path]
-    Protocol.Chown path _ _  -> handleOutputs [Output existingFileChanger path]
-    Protocol.MkNod path _ _  -> handleOutputs [Output nonExistingFileChanger path] -- TODO: Special mkNod handling?
-    Protocol.MkDir path _    -> handleOutputs [Output nonExistingFileChanger path]
-    Protocol.RmDir path      -> handleOutputs [Output existingFileChanger path]
+    Protocol.OpenW outPath _openWMode _creationMode
+                                -> handleOutputs [(fileChanger, outPath)]
+    Protocol.Creat outPath _    -> handleOutputs [(fileChanger, outPath)]
+    Protocol.Rename a b         -> handleOutputs [(existingFileChanger, a), (fileChanger, b)]
+    Protocol.Unlink outPath     -> handleOutputs [(existingFileChanger, outPath)]
+    Protocol.Truncate outPath _ -> handleOutputs [(existingFileChanger, outPath)]
+    Protocol.Chmod outPath _    -> handleOutputs [(existingFileChanger, outPath)]
+    Protocol.Chown outPath _ _  -> handleOutputs [(existingFileChanger, outPath)]
+    Protocol.MkNod outPath _ _  -> handleOutputs [(nonExistingFileChanger, outPath)] -- TODO: Special mkNod handling?
+    Protocol.MkDir outPath _    -> handleOutputs [(nonExistingFileChanger, outPath)]
+    Protocol.RmDir outPath      -> handleOutputs [(existingFileChanger, outPath)]
 
     -- I/O
     Protocol.SymLink target linkPath ->
@@ -189,8 +196,8 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
       -- handle symlinks correctly yet, so better be false-positive
       -- than false-negative
       handle
-        [Input AccessTypeFull target, Input AccessTypeModeOnly linkPath]
-        [Output nonExistingFileChanger linkPath]
+        [ Input AccessTypeFull target ]
+        [ (nonExistingFileChanger, linkPath) ]
     Protocol.Link src dest -> error $ unwords ["Hard links not supported:", show src, "->", show dest]
 
     -- inputs
@@ -201,25 +208,37 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     Protocol.OpenDir path          -> handleInput AccessTypeFull path
     Protocol.ReadLink path         -> handleInput AccessTypeFull path
     Protocol.Exec path             -> handleInput AccessTypeFull path
-    Protocol.ExecP mPath attempted -> handleAccess isDelayed actDesc inputs []
-      where
-        inputs =
-          [Input AccessTypeFull path | Just path <- [mPath]] ++
-          map (Input AccessTypeModeOnly) attempted
+    Protocol.ExecP mPath attempted ->
+      handleInputs $
+      map (Input AccessTypeFull) (maybeToList mPath) ++
+      map (Input AccessTypeModeOnly) attempted
   where
-    handleAccess = jobHandleAccess job conn
-    handle = handleAccess isDelayed actDesc
+    handlers = jobFSAccessHandlers job
+    handleDelayed   inputs outputs = wrap $ delayedFSAccessHandler handlers actDesc inputs outputs
+    handleUndelayed inputs outputs = wrap $ undelayedFSAccessHandler handlers actDesc inputs outputs
+    wrap = wrapHandler job conn isDelayed
     actDesc = BS8.pack (Protocol.showFunc func) <> " done by " <> jobLabel job
-    handleInput accessType path = handle [Input accessType path] []
-    handleOutputs outputs =
-      handle
-      (map (Input AccessTypeModeOnly . outputPath) outputs) -- the outputs are also mode-only inputs
-      outputs
+    handleInput accessType path = handleInputs [Input accessType path]
+    handleInputs inputs =
+      case isDelayed of
+      NotDelayed -> handleUndelayed inputs []
+      Delayed    -> handleDelayed   inputs []
+    inputOfOutputPair (_behavior, Protocol.OutFilePath path _effect) =
+      Input AccessTypeModeOnly path
+    mkDelayedOutput ( behavior, Protocol.OutFilePath path _effect) =
+      DelayedOutput behavior path
+    handleOutputs = handle []
+    handle inputs outputPairs =
+      case isDelayed of
+      NotDelayed -> handleUndelayed allInputs $ map snd outputPairs
+      Delayed -> handleDelayed allInputs $ map mkDelayedOutput outputPairs
+      where
+        allInputs = inputs ++ map inputOfOutputPair outputPairs
 
-jobHandleAccess :: RunningJob -> Socket -> IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
-jobHandleAccess job conn isDelayed desc inputs outputs =
+wrapHandler :: RunningJob -> Socket -> IsDelayed -> IO () -> IO ()
+wrapHandler job conn isDelayed handler =
   forwardExceptions $ do
-    jobFSAccessHandler job isDelayed desc inputs outputs
+    handler
     -- Intentionally avoid sendGo if jobFSAccessHandler failed. It
     -- means we disallow the effect.
     case isDelayed of
@@ -261,8 +280,9 @@ mkEnvVars fsHook rootFilter jobId =
 
 timedRunCommand ::
   FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString ->
-  FSAccessHandler -> IO (NominalDiffTime, r)
-timedRunCommand fsHook rootFilter cmd label fsAccessHandler = do
+  FSAccessHandlers ->
+  IO (NominalDiffTime, r)
+timedRunCommand fsHook rootFilter cmd label fsAccessHandlers = do
   pauseTimeRef <- newIORef 0
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTimeRef (+delta)
@@ -270,14 +290,21 @@ timedRunCommand fsHook rootFilter cmd label fsAccessHandler = do
       (time, res) <- timeIt act
       addPauseTime time
       return res
-    wrappedFsAccessHandler isDelayed accessDoc inputs outputs = do
-      let act = fsAccessHandler isDelayed accessDoc inputs outputs
+    wrappedFsAccessHandler isDelayed handler accessDoc inputs outputs = do
+      let act = handler accessDoc inputs outputs
       case isDelayed of
         Delayed -> measurePauseTime act
         NotDelayed -> act
-  (time, res) <- runCommand fsHook rootFilter (timeIt . cmd) label wrappedFsAccessHandler
+    wrappedFsAccessHandlers =
+      FSAccessHandlers
+        (wrappedFsAccessHandler Delayed delayed)
+        (wrappedFsAccessHandler NotDelayed undelayed)
+  (time, res) <-
+    runCommand fsHook rootFilter (timeIt . cmd) label wrappedFsAccessHandlers
   subtractedTime <- (time-) <$> readIORef pauseTimeRef
   return (subtractedTime, res)
+  where
+    FSAccessHandlers delayed undelayed = fsAccessHandlers
 
 withRunningJob :: FSHook -> JobId -> RunningJob -> IO r -> IO r
 withRunningJob fsHook jobId job body = do
@@ -290,8 +317,8 @@ withRunningJob fsHook jobId job body = do
 
 runCommand ::
   FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString ->
-  FSAccessHandler -> IO r
-runCommand fsHook rootFilter cmd label fsAccessHandler = do
+  FSAccessHandlers -> IO r
+runCommand fsHook rootFilter cmd label fsAccessHandlers = do
   activeConnections <- newIORef M.empty
   freshConnIds <- Fresh.new 0
   jobIdNum <- Fresh.next $ fsHookFreshJobIds fsHook
@@ -304,7 +331,7 @@ runCommand fsHook rootFilter cmd label fsAccessHandler = do
             , jobFreshConnIds = freshConnIds
             , jobThreadId = tid
             , jobRootFilter = rootFilter
-            , jobFSAccessHandler = fsAccessHandler
+            , jobFSAccessHandlers = fsAccessHandlers
             }
   -- Don't leak connections still running our handlers once we leave!
   let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
