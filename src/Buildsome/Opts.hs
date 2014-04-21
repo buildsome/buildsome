@@ -27,6 +27,7 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                , optKeepGoing :: KeepGoing
                , optChartsPath :: Maybe FilePath
+               , optFsOverrideLdPreloadPath :: Maybe FilePath
                }
 
 data Opts = GetVersion | Opts Opt
@@ -91,4 +92,7 @@ get = execParser opts
           <*> strOpt (long "charts" <>
                       metavar "charts-file" <>
                       help "File to write charts to")
+          <*> strOpt (long "fs-override" <>
+                      metavar "path" <>
+                      help "Path for fs_override.so")
     opts = info (helper <*> parser) (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")

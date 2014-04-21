@@ -771,45 +771,46 @@ mkFastKillBuild Opts.DieQuickly = do
   return (fastKillBuild, disableFastKillBuild)
 
 with :: FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
-with makefilePath makefile opt@Opt{..} body =
-  FSHook.with $ \fsHook ->
-  Db.with (buildDbFilename makefilePath) $ \db -> do
-    slaveMapByTargetRep <- newIORef M.empty
-    parallelism <- Parallelism.new $ fromMaybe 1 optParallelism
-    freshPrinterIds <- Fresh.new 1
-    buildId <- BuildId.new
-    rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
-    (fastKillBuild, disableFastKillBuild) <- mkFastKillBuild optKeepGoing
-    let
-      buildsome =
-        Buildsome
-        { bsOpts = opt
-        , bsMakefile = makefile
-        , bsBuildId = buildId
-        , bsRootPath = rootPath
-        , bsBuildMaps = BuildMaps.make makefile
-        , bsDb = db
-        , bsFsHook = fsHook
-        , bsSlaveByTargetRep = slaveMapByTargetRep
-        , bsParallelism = parallelism
-        , bsFreshPrinterIds = freshPrinterIds
-        , bsFastKillBuild = fastKillBuild
-        }
-    deleteRemovedOutputs buildsome
-    body buildsome
-      -- We must not leak running slaves as we're not allowed to
-      -- access fsHook, db, etc after leaving here:
-      `E.onException` putStrLn "Shutting down"
-      `finally` disableFastKillBuild
-      `finally` (cancelAllSlaves buildsome `disallowExceptions` "BUG: Exception thrown at cancelAllSlaves: ")
-      -- Must update gitIgnore after all the slaves finished updating
-      -- the registered output lists:
-      `finally` maybeUpdateGitIgnore buildsome
-    where
-      maybeUpdateGitIgnore buildsome =
-        case optUpdateGitIgnore of
-        Opts.UpdateGitIgnore -> updateGitIgnore buildsome makefilePath
-        Opts.DontUpdateGitIgnore -> return ()
+with makefilePath makefile opt@Opt{..} body = do
+  ldPreloadPath <- FSHook.getLdPreloadPath optFsOverrideLdPreloadPath
+  FSHook.with ldPreloadPath $ \fsHook ->
+    Db.with (buildDbFilename makefilePath) $ \db -> do
+      slaveMapByTargetRep <- newIORef M.empty
+      parallelism <- Parallelism.new $ fromMaybe 1 optParallelism
+      freshPrinterIds <- Fresh.new 1
+      buildId <- BuildId.new
+      rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
+      (fastKillBuild, disableFastKillBuild) <- mkFastKillBuild optKeepGoing
+      let
+        buildsome =
+          Buildsome
+          { bsOpts = opt
+          , bsMakefile = makefile
+          , bsBuildId = buildId
+          , bsRootPath = rootPath
+          , bsBuildMaps = BuildMaps.make makefile
+          , bsDb = db
+          , bsFsHook = fsHook
+          , bsSlaveByTargetRep = slaveMapByTargetRep
+          , bsParallelism = parallelism
+          , bsFreshPrinterIds = freshPrinterIds
+          , bsFastKillBuild = fastKillBuild
+          }
+      deleteRemovedOutputs buildsome
+      body buildsome
+        -- We must not leak running slaves as we're not allowed to
+        -- access fsHook, db, etc after leaving here:
+        `E.onException` putStrLn "Shutting down"
+        `finally` disableFastKillBuild
+        `finally` (cancelAllSlaves buildsome `disallowExceptions` "BUG: Exception thrown at cancelAllSlaves: ")
+        -- Must update gitIgnore after all the slaves finished updating
+        -- the registered output lists:
+        `finally` maybeUpdateGitIgnore buildsome
+  where
+    maybeUpdateGitIgnore buildsome =
+      case optUpdateGitIgnore of
+      Opts.UpdateGitIgnore -> updateGitIgnore buildsome makefilePath
+      Opts.DontUpdateGitIgnore -> return ()
 
 clean :: Buildsome -> IO ()
 clean buildsome = do

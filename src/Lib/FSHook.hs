@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable, OverloadedStrings #-}
 module Lib.FSHook
-  ( FSHook
+  ( getLdPreloadPath
+  , FSHook
   , with
 
   , HasEffect(..), OutputBehavior(..)
@@ -29,7 +30,7 @@ import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.FSHook.AccessType (AccessType(..))
 import Lib.FSHook.Protocol (IsDelayed(..))
-import Lib.FilePath (FilePath, (</>), takeDirectory)
+import Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
@@ -154,9 +155,8 @@ printRethrowExceptions msg =
       _ -> hPutStrLn stderr $ msg ++ show e
     E.throwIO e
 
-with :: (FSHook -> IO a) -> IO a
-with body = do
-  ldPreloadPath <- getLdPreloadPath
+with :: FilePath -> (FSHook -> IO a) -> IO a
+with ldPreloadPath body = do
   pid <- Posix.getProcessID
   freshJobIds <- Fresh.new 0
   let serverFilename = "/tmp/fshook-" <> BS8.pack (show pid)
@@ -337,8 +337,17 @@ runCommand fsHook rootFilter cmd label fsAccessHandler = do
 data CannotFindOverrideSharedObject = CannotFindOverrideSharedObject deriving (Show, Typeable)
 instance E.Exception CannotFindOverrideSharedObject
 
-getLdPreloadPath :: IO FilePath
-getLdPreloadPath = do
+assertLdPreloadPathExists :: FilePath -> IO ()
+assertLdPreloadPathExists path = do
+  e <- Posix.fileExist path
+  unless e $ E.throwIO CannotFindOverrideSharedObject
+
+getLdPreloadPath :: Maybe FilePath -> IO FilePath
+getLdPreloadPath (Just path) = do
+  ldPreloadPath <- canonicalizePath path
+  assertLdPreloadPathExists ldPreloadPath
+  return ldPreloadPath
+getLdPreloadPath Nothing = do
   installedFilePath <- BS8.pack <$> (getDataFileName . BS8.unpack) fileName
   installedExists <- Posix.fileExist installedFilePath
   if installedExists
@@ -346,9 +355,7 @@ getLdPreloadPath = do
     else do
       argv0 <- getArgv0
       let nearExecPath = takeDirectory argv0 </> fileName
-      nearExecExists <- Posix.fileExist nearExecPath
-      if nearExecExists
-        then return nearExecPath
-        else E.throwIO CannotFindOverrideSharedObject
+      assertLdPreloadPathExists nearExecPath
+      return nearExecPath
   where
     fileName = "cbits/fs_override.so"
