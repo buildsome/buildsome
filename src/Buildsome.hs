@@ -268,7 +268,7 @@ verifyTargetInputs buildsome inputs target
   | all (`S.member` phoniesSet buildsome)
     (targetOutputs target) = return () -- Phony target doesn't need real inputs
   | otherwise =
-    warnOverSpecified "inputs" (S.fromList (targetAllInputs target))
+    warnOverSpecified "inputs" "" (S.fromList (targetAllInputs target))
     (inputs `S.union` phoniesSet buildsome) (targetPos target)
 
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
@@ -291,7 +291,7 @@ verifyTargetOutputs buildsome outputs target = do
     -- mapM_ removeFileOrDirectory existingIllegalOutputs
 
     E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
-  warnOverSpecified "outputs" specified (outputs `S.union` phoniesSet buildsome) (targetPos target)
+  warnOverSpecified "outputs" " (consider adding a .PHONY declaration)" specified (outputs `S.union` phoniesSet buildsome) (targetPos target)
   where
     (unspecifiedOutputs, illegalOutputs) =
       partition MagicFiles.allowedUnspecifiedOutput allUnspecified
@@ -299,11 +299,11 @@ verifyTargetOutputs buildsome outputs target = do
     specified = S.fromList $ targetOutputs target
 
 warnOverSpecified ::
-  ColorText -> Set FilePath -> Set FilePath -> SourcePos -> IO ()
-warnOverSpecified str specified used pos =
+  ColorText -> ColorText -> Set FilePath -> Set FilePath -> SourcePos -> IO ()
+warnOverSpecified str suffix specified used pos =
   unless (S.null unused) $
   Print.warn pos $ mconcat
-  ["Over-specified ", str, ": ", targetShow (S.toList unused)]
+  ["Over-specified ", str, ": ", targetShow (S.toList unused), suffix]
   where
     unused = specified `S.difference` used
 
