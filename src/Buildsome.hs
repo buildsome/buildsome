@@ -40,6 +40,7 @@ import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
 import Lib.Parallelism (Parallelism)
+import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
@@ -176,12 +177,13 @@ instance Show MissingRule where
     renderStr $ Color.error $ mconcat
     ["ERROR: No rule to build ", targetShow path, " (", fromBytestring8 reason, ")"]
 
-data TargetNotCreated = TargetNotCreated FilePath deriving (Typeable)
+data TargetNotCreated = TargetNotCreated FilePath Target deriving (Typeable)
 instance E.Exception TargetNotCreated
 instance Show TargetNotCreated where
-  show (TargetNotCreated path) =
+  show (TargetNotCreated path target) =
     renderStr $ Color.error $ mconcat
-    [ targetShow path
+    [ (fromString . showPos . targetPos) target
+    , targetShow path
     , " explicitly demanded but was not created by its target rule" ]
 
 mkSlavesDirectAccess :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
@@ -192,16 +194,16 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
   Nothing -> do
     when (explicitness == Explicit) $ assertExists path $ MissingRule path bteReason
     return []
-  Just tgt -> do
+  Just tgt@(_, target) -> do
     slave <- getSlaveForTarget bte tgt
     (: []) <$> case explicitness of
       Implicit -> return slave
       Explicit -> verifyFileGetsCreated slave
-  where
-    verifyFileGetsCreated slave
-      | path `elem` makefilePhonies (bsMakefile bteBuildsome) = return slave
-      | otherwise =
-        Slave.wrap (<* assertExists path (TargetNotCreated path)) slave
+      where
+        verifyFileGetsCreated slave
+          | path `elem` makefilePhonies (bsMakefile bteBuildsome) = return slave
+          | otherwise =
+            Slave.wrap (<* assertExists path (TargetNotCreated path target)) slave
 
 makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
 makeChildSlaves bte@BuildTargetEnv{..} path
