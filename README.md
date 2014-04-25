@@ -104,8 +104,3 @@ locally, avoiding false negatives relating to system-wide changes,
 too. These hooks are also used to auto-detect dependencies and delay
 dependent executions, rather than just verify explicitly specified
 dependencies.
-
-The internal structure of the build system is inspired by
-[Shake](https://github.com/ndmitchell/shake). Hopefully, Shake's
-excellent reporting facilities can be integrated with buildsome, as
-well.
