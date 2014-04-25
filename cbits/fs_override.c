@@ -409,6 +409,20 @@ DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *mode))
     return SILENT_CALL_REAL(FILE *, fopen64, path, mode);
 }
 
+DEFINE_WRAPPER(FILE *, freopen, (const char *path, const char *mode, FILE *stream))
+{
+    if(!fopen_common(path, mode)) return PERM_ERROR(NULL, "freopen \"%s\" \"%s\"", path, mode);
+    /* fopen_common handles the reporting */
+    return SILENT_CALL_REAL(FILE *, freopen, path, mode, stream);
+}
+
+DEFINE_WRAPPER(FILE *, freopen64, (const char *path, const char *mode, FILE *stream))
+{
+    if(!fopen_common(path, mode)) return PERM_ERROR(NULL, "freopen \"%s\" \"%s\"", path, mode);
+    /* fopen_common handles the reporting */
+    return SILENT_CALL_REAL(FILE *, freopen64, path, mode, stream);
+}
+
 /* Ditto open(W) */
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
