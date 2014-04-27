@@ -8,8 +8,8 @@ description:         An automatic dependency discovery build system
                      with a no-false-negative guarantee, speculative
                      parallelism, and distributed caching of build
                      outputs
-license:             AllRightsReserved
-license-file:        LICENSE
+license:             GPL-2
+license-file:        LICENSE.txt
 author:              Eyal Lotem
 maintainer:          eyal.lotem@gmail.com
 copyright:           Elastifile (2014)
