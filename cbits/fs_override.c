@@ -60,7 +60,7 @@ static int connect_master(void)
         return -1;
     }
 
-    char hello[strlen(PROTOCOL_HELLO) + strlen(env_job_id) + 16];
+    char hello[strlen(PROTOCOL_HELLO) + strlen(env_job_id) + 16]; /* TODO: Avoid magic 16 */
     hello[sizeof hello-1] = 0;
     int len = snprintf(hello, sizeof hello-1, PROTOCOL_HELLO "%d:%d:%s", getpid(), gettid(), env_job_id);
     ssize_t send_rc = send(fd, hello, len, 0);
@@ -83,7 +83,7 @@ static struct {
 } process_state = {-1U, "", -1U, ""};
 
 static __thread struct {
-    pid_t pid;
+    pid_t pid;                  /* TODO: Document that this identifies fork()ed threads */
     int connection_fd;
 } thread_state = {-1, -1};
 
@@ -164,7 +164,7 @@ static bool send_connection_await(const char *buf, size_t size, bool is_delayed)
 enum func {
     func_openr     = 0x10000,
     func_openw     = 0x10001,
-    func_creat     = 0x10002,
+    func_creat     = 0x10002,   /* TODO: Merge creat into openw? */
     func_stat      = 0x10003,
     func_lstat     = 0x10004,
     func_opendir   = 0x10005,
@@ -184,7 +184,7 @@ enum func {
     func_execp     = 0x10013,
 };
 
-/* func_open.flags */
+/* func_openw.flags */
 #define FLAG_ALSO_READ 1
 #define FLAG_CREATE 2           /* func_open.mode is meaningful iff this flag */
 
@@ -257,21 +257,21 @@ static bool await_go(void)
     return 2 == rc && !strncmp(buf, "GO", 2);
 }
 
-#define PATH_COPY(needs_await, dest, src)                       \
-    do {                                                        \
-        char temp_path[MAX_PATH];                               \
-        struct writer w = { temp_path, sizeof temp_path };      \
-        if(src[0] != '/') {                                     \
-            writer_append_data(&w, process_state.cwd,           \
-                               process_state.cwd_length);       \
-        }                                                       \
-        writer_append_str(&w, src);                             \
-        struct writer dest_writer = { dest, sizeof dest };      \
-        canonize_abs_path(&dest_writer, temp_path);             \
-        bool in_root = try_chop_common_root(                    \
-            process_state.root_filter_length,                   \
-            process_state.root_filter, dest);                   \
-        needs_await = needs_await || in_root;                   \
+#define PATH_COPY(needs_await, dest, src)                               \
+    do {                                                                \
+        char temp_path[MAX_PATH];                                       \
+        struct writer temp_writer = { temp_path, sizeof temp_path };    \
+        if(src[0] != '/') {                                             \
+            writer_append_data(&temp_writer, process_state.cwd,         \
+                               process_state.cwd_length);               \
+        }                                                               \
+        writer_append_str(&temp_writer, src);                           \
+        struct writer dest_writer = { dest, sizeof dest };              \
+        canonize_abs_path(&dest_writer, temp_path);                     \
+        bool in_root = try_chop_common_root(                            \
+            process_state.root_filter_length,                           \
+            process_state.root_filter, dest);                           \
+        needs_await = needs_await || in_root;                           \
     } while(0)
 
 static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *canonized_path)
@@ -324,6 +324,7 @@ static bool open_common(const char *path, int flags, va_list args, mode_t *out_m
         return notify_openr_await(path);
     case O_RDWR:
         is_also_read = true;
+        /* fall-through */
     case O_WRONLY:
         return notify_openw(path, is_also_read, is_create, *out_mode);
     default:
@@ -732,6 +733,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 
 FILE *log_file(void)
 {
+    /* TODO: This is buggy for fork() */
     static FILE *f = NULL;
     if(!f) {
         FILE *(*fopen_real)(const char *path, const char *mode) =
