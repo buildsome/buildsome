@@ -599,14 +599,11 @@ DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
     return AWAIT_CALL_REAL(PERM_ERROR(-1, "chown \"%s\" %d:%d", path, owner, group), needs_await, msg, int, chown, path, owner, group);
 }
 
-int fchdir(int fd)
+DEFINE_WRAPPER(int, fchdir, (int fd))
 {
-    (void)fd;
-    /* TODO: We need to track open of files and directories to know
-     * the path here */
-    LOG("fchdir is not supported!");
-    ASSERT(0);
-    return -1;
+    int result = SILENT_CALL_REAL(int, fchdir, fd);
+    update_cwd();
+    return result;
 }
 
 DEFINE_WRAPPER(int, chdir, (const char *path))
