@@ -1,3 +1,5 @@
+* .pyc doesn't properly get auto-deleted.  Remember generator of .pyc, associate it with a command
+
 * Phonies should not be included in directory listing
 
 * Added partial support for out effect for undelayed operations, in C side.
