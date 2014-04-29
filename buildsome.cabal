@@ -21,6 +21,10 @@ cabal-version:       >=1.10
 data-files:          cbits/fs_override.so
 extra-source-files:  cbits/*.[ch]
 
+flag Charts
+  description: Enable Cairo charts support
+  default: True
+
 executable buildsome
   hs-source-dirs:    src/
   main-is:           Main.hs
@@ -43,7 +47,6 @@ executable buildsome
                ,     Lib.BuildId
                ,     Lib.BuildMaps
                ,     Lib.ByteString
-               ,     Lib.Chart
                ,     Lib.ColorText
                ,     Lib.Directory
                ,     Lib.Exception
@@ -103,8 +106,11 @@ executable buildsome
                ,     asynchronous-exceptions >= 1.1.0.1 && <1.2
                ,     directory == 1.2.*
                ,     ansi-terminal == 0.6.*
-               ,     Chart == 1.2.*
-               ,     Chart-cairo == 1.2.*
-               ,     data-default-class == 0.0.*
+  if flag(Charts)
+    ghc-options:       -D WITH_CHARTS_SUPPORT
+    other-modules:     Lib.Chart
+    build-depends:     Chart == 1.2.*
+                 ,     Chart-cairo == 1.2.*
+                 ,     data-default-class == 0.0.*
 
   default-language:    Haskell2010
