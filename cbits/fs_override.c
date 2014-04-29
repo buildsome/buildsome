@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/syscall.h>
+#include <pthread.h>
 
 #include <errno.h>
 
@@ -33,7 +34,11 @@
 
 static int gettid(void)
 {
-    return syscall(__NR_gettid);
+    #ifdef __APPLE__
+        return pthread_mach_thread_np(pthread_self());
+    #else
+        return syscall(__NR_gettid);
+    #endif
 }
 
 static int connect_master(void)
@@ -54,7 +59,7 @@ static int connect_master(void)
     strcpy(addr.sun_path, env_sockaddr);
 
     DEBUG("pid%d, tid%d: connecting \"%s\"", getpid(), gettid(), env_sockaddr);
-    int connect_rc = connect(fd, &addr, sizeof addr);
+    int connect_rc = connect(fd, (struct sockaddr*) &addr, sizeof addr);
     if(0 != connect_rc) {
         close(fd);
         return -1;
@@ -317,7 +322,7 @@ static bool open_common(const char *path, int flags, va_list args, mode_t *out_m
 {
     bool is_also_read = false;
     bool is_create = flags & CREATION_FLAGS;
-    *out_mode = is_create ? va_arg(args, mode_t) : 0;
+    *out_mode = is_create ? va_arg(args, int /* mode_t actually, va_arg rejects types smaller than int */) : 0;
 
     switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {
     case O_RDONLY:
@@ -638,15 +643,7 @@ int execlp(const char *file, const char *arg, ...)
     return rc;
 }
 
-int execvp(const char *file, char *const argv[])
-{
-    return execvpe(file, argv, environ);
-}
-
-int execv(const char *path, char *const argv[])
-{
-    return execve(path, argv, environ);
-}
+int execvpe_real(const char *file, char *const argv[], char *const envp[]);
 
 DEFINE_WRAPPER(int, execvpe, (const char *file, char *const argv[], char *const envp[]))
 {
@@ -682,7 +679,39 @@ DEFINE_WRAPPER(int, execvpe, (const char *file, char *const argv[], char *const 
         ASSERT(size <= sizeof msg.args.conf_str_CS_PATH); /* Value truncated */
     }
 
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "execvpe \"%s\"", file), true, msg, int, execvpe, file, argv, envp);
+    if (!SEND_MSG_AWAIT(true, msg))
+        return PERM_ERROR(-1, "execvpe \"%s\"", file);
+
+    return execvpe_real(file, argv, envp);
+}
+
+#ifdef __APPLE__
+extern char **environ;
+#endif
+
+int execvpe_real(const char *file, char *const argv[], char *const envp[])
+{
+#ifdef __APPLE__
+// See http://stackoverflow.com/a/7789795/40916 for reasoning about thread safety
+    char **saved = environ;
+    int rc;
+    environ = (char**) envp;
+    rc = execvp(file, argv);
+    environ = saved;
+    return rc;
+#else
+    return SILENT_CALL_REAL(int, execvpe, file, argv, envp);
+#endif
+}
+
+int execvp(const char *file, char *const argv[])
+{
+    return execvpe(file, argv, environ);
+}
+
+int execv(const char *path, char *const argv[])
+{
+    return execve(path, argv, environ);
 }
 
 /* The following exec* functions that do not have "v" in their name
@@ -742,7 +771,7 @@ FILE *log_file(void)
         int (*mkdir_real)(const char *pathname, mode_t mode) =
             dlsym(RTLD_NEXT, "mkdir");
         mkdir_real("/tmp/fs_override.so.log", 0777);
-        snprintf(PS(name), "/tmp/fs_override.so.log/pid.%d", getpid());
+        snprintf(name, sizeof name, "/tmp/fs_override.so.log/pid.%d", getpid());
         f = fopen_real(name, "w");
         ASSERT(f);
     }
