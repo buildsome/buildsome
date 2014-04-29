@@ -271,6 +271,8 @@ mkEnvVars :: FSHook -> FilePath -> JobId -> Process.Env
 mkEnvVars fsHook rootFilter jobId =
   (map . fmap) BS8.unpack
   [ ("LD_PRELOAD", fsHookLdPreloadPath fsHook)
+  , ("DYLD_FORCE_FLAT_NAMESPACE", "1")
+  , ("DYLD_INSERT_LIBRARIES", fsHookLdPreloadPath fsHook)
   , ("BUILDSOME_MASTER_UNIX_SOCKADDR", fsHookServerAddress fsHook)
   , ("BUILDSOME_JOB_ID", jobId)
   , ("BUILDSOME_ROOT_FILTER", rootFilter)
