@@ -210,9 +210,10 @@ makeChildSlaves bte@BuildTargetEnv{..} path
   | not (null childPatterns) =
     fail "UNSUPPORTED: Read directory on directory with patterns"
   | otherwise =
-    traverse (getSlaveForTarget bte)
-    childTargets
+    traverse (getSlaveForTarget bte) $
+    filter (not . isPhony . snd) childTargets
   where
+    isPhony = all (`S.member` phoniesSet bteBuildsome) . targetOutputs
     DirectoryBuildMap childTargets childPatterns =
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
 
