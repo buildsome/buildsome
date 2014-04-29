@@ -13,8 +13,6 @@ module Lib.FileDesc
 
 import Control.Applicative ((<$>))
 import Data.Binary (Binary(..))
-import Data.Binary.Get (getWord32le)
-import Data.Binary.Put (putWord32le)
 import Data.ByteString (ByteString)
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Typeable (Typeable)
@@ -73,8 +71,8 @@ data FileStatDesc
 instance Binary FileStatDesc
 
 instance Binary Posix.CMode where
-  get = Posix.CMode <$> getWord32le
-  put (Posix.CMode x) = putWord32le x
+  get = Posix.CMode <$> get
+  put (Posix.CMode x) = put x
 
 data UnsupportedFileTypeError = UnsupportedFileTypeError FilePath deriving (Show, Typeable)
 instance E.Exception UnsupportedFileTypeError

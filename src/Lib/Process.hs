@@ -27,7 +27,9 @@ getOutputs cmd inheritedEnvs envs = do
   oldEnvs <- forM inheritedEnvs $ \name -> do
     val <- getEnv name
     return (name, val)
-  withProcess CreateProcess
+  withProcess
+    -- A hacky way to get a default CreateProcess record for "process" package version compatability:
+    (shell "")
     { cwd = Nothing
     , cmdspec = cmd
     , env = Just (oldEnvs ++ envs)
