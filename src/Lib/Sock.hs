@@ -1,9 +1,12 @@
 module Lib.Sock
-  ( recvLoop_
-  , withUnixSeqPacketListener
+  ( recvAll, recvFrame, recvLoop_
+  , withUnixStreamListener
   ) where
 
-import Control.Monad (unless)
+import Control.Applicative ((<$>))
+import Data.Monoid
+import Data.Word (Word32)
+import Lib.Binary (decode)
 import Lib.FilePath (FilePath)
 import Network.Socket (Socket)
 import Prelude hiding (FilePath)
@@ -14,19 +17,37 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Posix.ByteString as Posix
 
+-- May not receive all if EOF encountered
+recvAll :: Socket -> Int -> IO BS.ByteString
+recvAll _ n | n < 0 = error "recvAll: negative length"
+recvAll _ 0 = return mempty
+recvAll sock n = do
+  dat <- SockBS.recv sock n
+  if BS.null dat then return dat
+  else (dat <>) <$> recvAll sock (n - BS.length dat)
+
+recvFrame :: Socket -> IO (Maybe BS.ByteString)
+recvFrame sock = do
+  frameSizeStr <- recvAll sock 4
+  if BS.null frameSizeStr
+    then return Nothing
+    else Just <$> recvAll sock (fromIntegral (decode frameSizeStr :: Word32))
+
 {-# INLINE recvLoop_ #-}
-recvLoop_ :: Int -> (BS.ByteString -> IO ()) -> Socket -> IO ()
-recvLoop_ maxFrameSize f sock = go
+recvLoop_ :: (BS.ByteString -> IO ()) -> Socket -> IO ()
+recvLoop_ f sock = go
   where
     go = do
-      frame <- SockBS.recv sock maxFrameSize
-      unless (BS.null frame) $ do
-        f frame
-        go
+      mFrame <- recvFrame sock
+      case mFrame of
+        Nothing -> return ()
+        Just frame -> do
+          f frame
+          go
 
-withUnixSeqPacketListener :: FilePath -> (Socket -> IO a) -> IO a
-withUnixSeqPacketListener path body =
-  E.bracket (Sock.socket Sock.AF_UNIX Sock.SeqPacket 0) Sock.close $ \sock ->
+withUnixStreamListener :: FilePath -> (Socket -> IO a) -> IO a
+withUnixStreamListener path body =
+  E.bracket (Sock.socket Sock.AF_UNIX Sock.Stream 0) Sock.close $ \sock ->
   E.bracket_ (Sock.bind sock (Sock.SockAddrUnix (BS8.unpack path))) (Posix.removeLink path) $ do
     Sock.listen sock 5
     body sock

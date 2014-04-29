@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.FSHook.Protocol
-  ( parseMsg, helloMsg
+  ( parseMsg, helloPrefix
   , OpenWriteMode(..), showOpenWriteMode
   , CreationMode(..), showCreationMode
   , Func(..), showFunc
@@ -192,6 +192,6 @@ strictToLazy x = BSL.fromChunks [x]
 parseMsg :: ByteString -> IO Msg
 parseMsg = parseMsgLazy . strictToLazy
 
-{-# INLINE helloMsg #-}
-helloMsg :: ByteString
-helloMsg = "PROTOCOL3: HELLO, I AM: "
+{-# INLINE helloPrefix #-}
+helloPrefix :: ByteString
+helloPrefix = "PROTOCOL3: HELLO, I AM: "

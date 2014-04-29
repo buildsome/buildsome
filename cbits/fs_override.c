@@ -1,22 +1,23 @@
 #include "c.h"
 #include "writer.h"
 #include "canonize_path.h"
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <fcntl.h>
-#include <dlfcn.h>
-#include <stdio.h>
-#include <stdarg.h>
+#include <arpa/inet.h>
 #include <dirent.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <sys/un.h>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
-#include <pthread.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 #include <errno.h>
 
@@ -41,9 +42,16 @@ static int gettid(void)
     #endif
 }
 
+static bool send_size(int fd, size_t size)
+{
+    uint32_t size32 = ntohl(size);
+    ssize_t send_rc = send(fd, PS(size32), 0);
+    return send_rc == sizeof size32;
+}
+
 static int connect_master(void)
 {
-    int fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     ASSERT(-1 != fd);
 
     char *env_sockaddr = getenv(ENVVARS_PREFIX "MASTER_UNIX_SOCKADDR");
@@ -68,6 +76,7 @@ static int connect_master(void)
     char hello[strlen(PROTOCOL_HELLO) + strlen(env_job_id) + 16]; /* TODO: Avoid magic 16 */
     hello[sizeof hello-1] = 0;
     int len = snprintf(hello, sizeof hello-1, PROTOCOL_HELLO "%d:%d:%s", getpid(), gettid(), env_job_id);
+    if(!send_size(fd, len)) return false;
     ssize_t send_rc = send(fd, hello, len, 0);
     if(send_rc != len) {
         close(fd);
@@ -153,6 +162,7 @@ static bool send_connection(const char *buf, size_t size)
     int fd = connection();
     if(-1 == fd) return false;
 
+    if(!send_size(fd, size)) return false;
     ssize_t rc = send(fd, buf, size, 0);
     return rc == (ssize_t)size;
 }
@@ -257,9 +267,9 @@ struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_va
 
 static bool await_go(void)
 {
-    char buf[16];
+    char buf[2];
     ssize_t rc = recv(assert_connection(), PS(buf), 0);
-    return 2 == rc && !strncmp(buf, "GO", 2);
+    return 2 == rc && !memcmp("GO", PS(buf));
 }
 
 #define PATH_COPY(needs_await, dest, src)                               \

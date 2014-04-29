@@ -33,7 +33,7 @@ import Lib.FSHook.Protocol (IsDelayed(..))
 import Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
-import Lib.Sock (recvLoop_, withUnixSeqPacketListener)
+import Lib.Sock (recvFrame, recvLoop_, withUnixStreamListener)
 import Lib.TimeIt (timeIt)
 import Network.Socket (Socket)
 import Paths_buildsome (getDataFileName)
@@ -118,33 +118,33 @@ instance Show ProtocolError where
 
 serve :: FSHook -> Socket -> IO ()
 serve fsHook conn = do
-  helloLine <- SockBS.recv conn 1024
-  case unprefixed Protocol.helloMsg helloLine of
-    Nothing ->
-      E.throwIO $ ProtocolError $ concat
-      [ "Bad hello message from connection: ", show helloLine, " expected: "
-      , show Protocol.helloMsg, " (check your fs_override.so installation)" ]
-    Just pidJobId -> do
-      runningJobs <- readIORef (fsHookRunningJobs fsHook)
-      case M.lookup jobId runningJobs of
-        Nothing -> do
-          let jobIds = M.keys runningJobs
-          E.throwIO $ ProtocolError $ concat ["Bad slave id: ", show jobId, " mismatches all: ", show jobIds]
-        Just (KillingJob _label) ->
-          -- New connection created in the process of killing connections, ignore it
-          return ()
-        Just (LiveJob job) -> handleJobConnection fullTidStr conn job
-        Just (CompletedJob label) ->
+  mHelloLine <- recvFrame conn
+  case mHelloLine of
+    Nothing -> E.throwIO $ ProtocolError "Unexpected EOF"
+    Just helloLine ->
+      case unprefixed Protocol.helloPrefix helloLine of
+        Nothing ->
           E.throwIO $ ProtocolError $ concat
-          -- Main/parent process completed, and leaked some subprocess
-          -- which connected again!
-          ["Job: ", BS8.unpack jobId, "(", BS8.unpack label, ") received new connections after formal completion!"]
-      where
-        fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
-        [pidStr, tidStr, jobId] = BS8.split ':' pidJobId
-
-maxMsgSize :: Int
-maxMsgSize = 65536
+          [ "Bad hello message from connection: ", show helloLine, " expected: "
+          , show Protocol.helloPrefix, " (check your fs_override.so installation)" ]
+        Just pidJobId -> do
+          runningJobs <- readIORef (fsHookRunningJobs fsHook)
+          case M.lookup jobId runningJobs of
+            Nothing -> do
+              let jobIds = M.keys runningJobs
+              E.throwIO $ ProtocolError $ concat ["Bad slave id: ", show jobId, " mismatches all: ", show jobIds]
+            Just (KillingJob _label) ->
+              -- New connection created in the process of killing connections, ignore it
+              return ()
+            Just (LiveJob job) -> handleJobConnection fullTidStr conn job
+            Just (CompletedJob label) ->
+              E.throwIO $ ProtocolError $ concat
+              -- Main/parent process completed, and leaked some subprocess
+              -- which connected again!
+              ["Job: ", BS8.unpack jobId, "(", BS8.unpack label, ") received new connections after formal completion!"]
+          where
+            fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
+            [pidStr, tidStr, jobId] = BS8.split ':' pidJobId
 
 -- Except thread killed
 printRethrowExceptions :: String -> IO a -> IO a
@@ -160,7 +160,7 @@ with ldPreloadPath body = do
   pid <- Posix.getProcessID
   freshJobIds <- Fresh.new 0
   let serverFilename = "/tmp/fshook-" <> BS8.pack (show pid)
-  withUnixSeqPacketListener serverFilename $ \listener -> do
+  withUnixStreamListener serverFilename $ \listener -> do
     runningJobsRef <- newIORef M.empty
     let
       fsHook = FSHook
@@ -265,8 +265,7 @@ handleJobConnection tidStr conn job = do
   (`E.finally` putMVar connFinishedMVar ()) $
     withRegistered (jobActiveConnections job) connId (tid, connFinishedMVar) $ do
       sendGo conn
-      recvLoop_ maxMsgSize
-        (handleJobMsg tidStr conn job <=< Protocol.parseMsg) conn
+      recvLoop_ (handleJobMsg tidStr conn job <=< Protocol.parseMsg) conn
 
 mkEnvVars :: FSHook -> FilePath -> JobId -> Process.Env
 mkEnvVars fsHook rootFilter jobId =
