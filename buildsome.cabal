@@ -107,7 +107,7 @@ executable buildsome
                ,     directory == 1.2.*
                ,     ansi-terminal == 0.6.*
   if flag(Charts)
-    ghc-options:       -D WITH_CHARTS_SUPPORT
+    cpp-options:       -DWITH_CHARTS_SUPPORT
     other-modules:     Lib.Chart
     build-depends:     Chart == 1.2.*
                  ,     Chart-cairo == 1.2.*

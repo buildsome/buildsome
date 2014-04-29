@@ -11,7 +11,6 @@ import qualified Lib.Slave as Slave
 
 import Control.Monad (void)
 import Data.Default.Class (def)
-import Lib.FilePath (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as M
 import qualified Graphics.Rendering.Chart as Chart
