@@ -2,8 +2,10 @@ module Buildsome.Color
   ( warning, error, target, path, timing, success, command, stdout, stderr
   ) where
 
+-- cannot hide specific Prelude names when not using any prelude names
+-- without getting a warning
+import Prelude()
 import Lib.ColorText (ColorText(..), withAttr)
-import Prelude hiding (error)
 import System.Console.ANSI (Color(..), ColorIntensity(..))
 import qualified System.Console.ANSI as Console
 
