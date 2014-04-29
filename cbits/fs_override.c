@@ -611,8 +611,9 @@ int fchdir(int fd)
 
 DEFINE_WRAPPER(int, chdir, (const char *path))
 {
+    int result = SILENT_CALL_REAL(int, chdir, path);
     update_cwd();
-    return SILENT_CALL_REAL(int, chdir, path);
+    return result;
 }
 
 static unsigned count_non_null_char_ptrs(va_list args)
