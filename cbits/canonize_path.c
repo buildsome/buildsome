@@ -14,6 +14,14 @@ enum copy_components_result {
     DONE,
 };
 
+#ifdef __APPLE__
+const char *strchrnul(const char *s, int c)
+{
+    const char *r = strchr(s, c);
+    return r ? r : s + strlen(s);
+}
+#endif
+
 static enum copy_components_result copy_components(struct writer *dest, const char **src, bool prepend_slash_to_dest)
 {
     if(!**src) {
