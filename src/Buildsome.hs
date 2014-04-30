@@ -129,11 +129,22 @@ updateGitIgnore buildsome makefilePath = do
   leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
   let dir = FilePath.takeDirectory makefilePath
       gitIgnorePath = dir </> ".gitignore"
+      gitIgnoreBasePath = dir </> gitignoreBaseName
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
   putStrLn "Updating .gitignore"
+  base <- Dir.catchDoesNotExist
+          (fmap BS8.lines $ BS8.readFile $  BS8.unpack gitIgnoreBasePath)
+          $ return []
   BS8.writeFile (BS8.unpack gitIgnorePath) $ BS8.unlines $
-    map (("/" <>) . FilePath.makeRelative dir) $
-    extraIgnored ++ S.toList (outputs <> leaked)
+     let generated =
+             map (("/" <>) . FilePath.makeRelative dir) $
+                 extraIgnored ++ S.toList (outputs <> leaked)
+     in header ++ generated ++ base
+  where
+    gitignoreBaseName = ".gitignore-base"
+    header = ["# AUTO GENERATED FILE - DO NOT EDIT",
+              BS8.concat
+             ["# If you need to ignore files not managed by buildsome, add to ", gitignoreBaseName]]
 
 data BuildTargetEnv = BuildTargetEnv
   { bteBuildsome :: Buildsome
