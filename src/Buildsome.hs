@@ -72,6 +72,7 @@ import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Slave as Slave
+import qualified Lib.StdOutputs as StdOutputs
 import qualified Lib.Timeout as Timeout
 import qualified Prelude
 import qualified System.IO as IO
@@ -320,12 +321,13 @@ warnOverSpecified str suffix specified used pos =
   where
     unused = specified `S.difference` used
 
--- Already verified that the execution log is a match
-applyExecutionLog ::
+printExecutionLog ::
   BuildTargetEnv -> Target ->
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
-applyExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
+printExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime
+  | StdOutputs.null stdOutputs = return ()
+  | otherwise =
   Print.targetWrap btePrinter bteReason target "REPLAY" $ do
     Print.cmd btePrinter target
     Print.targetStdOutputs target stdOutputs
@@ -373,7 +375,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
         verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
         verifyMDesc "output(content)" filePath (fileContentDescOfStat db filePath stat) oldMContentDesc
     liftIO $
-      applyExecutionLog bte target
+      printExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
     let selfStats = Slave.Stats $ M.singleton targetRep (Slave.FromCache, elSelfTime)
