@@ -19,7 +19,7 @@ import Lib.Show (show)
 import Lib.Sigint (installSigintHandler)
 import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
-import qualified Buildsome as Buildsome
+import qualified Buildsome
 import qualified Buildsome.Color as Color
 import qualified Buildsome.Opts as Opts
 import qualified Control.Exception as E

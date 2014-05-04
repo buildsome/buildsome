@@ -191,16 +191,16 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
 
     -- outputs
     Protocol.OpenW path _openWMode _creationMode
-                             -> handleOutputs [(Output fileChanger path)]
-    Protocol.Creat path _    -> handleOutputs [(Output fileChanger path)]
-    Protocol.Rename a b      -> handleOutputs [(Output existingFileChanger a), (Output fileChanger b)]
-    Protocol.Unlink path     -> handleOutputs [(Output existingFileChanger path)]
-    Protocol.Truncate path _ -> handleOutputs [(Output existingFileChanger path)]
-    Protocol.Chmod path _    -> handleOutputs [(Output existingFileChanger path)]
-    Protocol.Chown path _ _  -> handleOutputs [(Output existingFileChanger path)]
-    Protocol.MkNod path _ _  -> handleOutputs [(Output nonExistingFileChanger path)] -- TODO: Special mkNod handling?
-    Protocol.MkDir path _    -> handleOutputs [(Output nonExistingFileChanger path)]
-    Protocol.RmDir path      -> handleOutputs [(Output existingFileChanger path)]
+                             -> handleOutputs [Output fileChanger path]
+    Protocol.Creat path _    -> handleOutputs [Output fileChanger path]
+    Protocol.Rename a b      -> handleOutputs [Output existingFileChanger a, Output fileChanger b]
+    Protocol.Unlink path     -> handleOutputs [Output existingFileChanger path]
+    Protocol.Truncate path _ -> handleOutputs [Output existingFileChanger path]
+    Protocol.Chmod path _    -> handleOutputs [Output existingFileChanger path]
+    Protocol.Chown path _ _  -> handleOutputs [Output existingFileChanger path]
+    Protocol.MkNod path _ _  -> handleOutputs [Output nonExistingFileChanger path] -- TODO: Special mkNod handling?
+    Protocol.MkDir path _    -> handleOutputs [Output nonExistingFileChanger path]
+    Protocol.RmDir path      -> handleOutputs [Output existingFileChanger path]
 
     -- I/O
     Protocol.SymLink target linkPath ->
@@ -227,7 +227,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
           map (Input AccessTypeModeOnly) attempted
   where
     handleAccess = jobHandleAccess job conn
-    handle inputs outputs = handleAccess isDelayed actDesc inputs outputs
+    handle = handleAccess isDelayed actDesc
     actDesc = BS8.pack (Protocol.showFunc func) <> " done by " <> jobLabel job
     handleInput accessType path = handle [Input accessType path] []
     handleOutputs outputs =
@@ -236,7 +236,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
       outputs
 
 jobHandleAccess :: RunningJob -> Socket -> IsDelayed -> AccessDoc -> [Input] -> [Output] -> IO ()
-jobHandleAccess job conn isDelayed desc inputs outputs = do
+jobHandleAccess job conn isDelayed desc inputs outputs =
   forwardExceptions $ do
     jobFSAccessHandler job isDelayed desc inputs outputs
     -- Intentionally avoid sendGo if jobFSAccessHandler failed. It

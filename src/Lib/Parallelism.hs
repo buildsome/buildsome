@@ -80,7 +80,7 @@ withReleased cell parallelism body =
       case cellState of
       CellKilled -> CellKilled
       CellAllocating _ -> CellAlloced parId
-      _ -> error $ "Somebody touched the cell when it was in CellAllocating?!"
+      _ -> error "Somebody touched the cell when it was in CellAllocating?!"
     actualAlloc mvar =
       (PoolAlloc.alloc parallelism >>= setAlloced)
       `E.finally` putMVar mvar ()

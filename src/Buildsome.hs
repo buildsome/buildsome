@@ -300,7 +300,7 @@ verifyTargetOutputs buildsome outputs target = do
     Print.posMessage (targetPos target) $ Color.error $
       "Illegal output files created: " <> show existingIllegalOutputs
 
-    Print.warn (targetPos target) $ "leaving leaked unspecified output effects" -- Need to make sure we only record actual outputs, and not *attempted* outputs before we delete this
+    Print.warn (targetPos target) "leaving leaked unspecified output effects" -- Need to make sure we only record actual outputs, and not *attempted* outputs before we delete this
     -- mapM_ removeFileOrDirectory existingIllegalOutputs
 
     E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
@@ -368,7 +368,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
-    forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) -> do
+    forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) ->
       verifyFileDesc "output" filePath outputDesc $ \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
         verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
         verifyMDesc "output(content)" filePath (fileContentDescOfStat db filePath stat) oldMContentDesc
@@ -385,7 +385,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
       verifyDesc str filePath getDesc oldDesc
 
     verifyDesc str filePath getDesc oldDesc = do
-      newDesc <- liftIO $ getDesc
+      newDesc <- liftIO getDesc
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
 
 executionLogWaitForInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO Slave.Stats
@@ -393,7 +393,7 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
-  speculativeSlaves <- fmap concat $ mapM mkInputSlave (M.toList elInputsDescs)
+  speculativeSlaves <- concat <$> mapM mkInputSlave (M.toList elInputsDescs)
 
   let hintReason = ColorText.render $ "Hint from " <> (targetShow . targetOutputs) target
   hintedSlaves <-
