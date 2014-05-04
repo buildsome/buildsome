@@ -52,7 +52,10 @@ bytestr :: Monad m => String -> m ByteString
 bytestr = liftM BS8.pack . str
 
 get :: IO Opts
-get = execParser opts
+get =
+  execParser $
+  info (helper <*> parser)
+  (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")
   where
     parser = versionParser <|> (Opts <$> optsParser)
     versionParser = flag' GetVersion (long "version" <> help "Get buildsome's version")
@@ -95,4 +98,3 @@ get = execParser opts
           <*> strOpt (long "fs-override" <>
                       metavar "path" <>
                       help "Path for fs_override.so")
-    opts = info (helper <*> parser) (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")
