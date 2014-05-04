@@ -7,7 +7,8 @@ par_result: par_exec
 
 par_exec: par_exec.hs
 	ghc -threaded -o $@ $<
-	rm par_exec.{o,hi}
+	rm par_exec.o
+	rm par_exec.hi
 
 after_sleep.%:
 	sleep 0.5
