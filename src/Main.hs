@@ -120,8 +120,7 @@ instance Show MakefileScanFailed where
 
 handleOpts :: Opts -> IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
 handleOpts GetVersion = do
-  ver <- Version.get
-  BS8.putStrLn $ "buildsome " <> ver
+  BS8.putStrLn $ "buildsome " <> Version.version
   return Nothing
 handleOpts (Opts opt) = do
   origMakefilePath <-
