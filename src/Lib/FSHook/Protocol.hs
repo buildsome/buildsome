@@ -172,7 +172,7 @@ funcs =
 
 {-# INLINE parseMsgLazy #-}
 parseMsgLazy :: BSL.ByteString -> IO Msg
-parseMsgLazy bs = do
+parseMsgLazy bs =
   Msg isDelayed <$> mkFunc
   where
     (isDelayed, mkFunc) = (`runGet` bs) $ do

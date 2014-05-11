@@ -22,7 +22,7 @@ scanFileUpwards name = do
   res <- runEitherT $ mapM_ check candidates
   case res of
     Left found -> Just <$> FilePath.makeRelativeToCurrentDirectory found
-    Right () -> return $ Nothing
+    Right () -> return Nothing
   where
     check path = do
       exists <- liftIO $ Posix.fileExist path

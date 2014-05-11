@@ -3,6 +3,7 @@ module Buildsome.Opts
   , OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)
   , KeepGoing(..)
+  , VerbosityLevel(..)
   , Opt(..), Opts(..), get
   ) where
 
@@ -14,10 +15,12 @@ import Options.Applicative
 import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
+
 data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
 data UpdateGitIgnore = UpdateGitIgnore | DontUpdateGitIgnore
 data KeepGoing = KeepGoing | DieQuickly
+data VerbosityLevel = NotVerbose | Verbose deriving (Eq, Ord)
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
@@ -26,6 +29,7 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                , optKeepGoing :: KeepGoing
+               , optVerbosityLevel :: VerbosityLevel
                , optChartsPath :: Maybe FilePath
                , optFsOverrideLdPreloadPath :: Maybe FilePath
                }
@@ -52,7 +56,10 @@ bytestr :: Monad m => String -> m ByteString
 bytestr = liftM BS8.pack . str
 
 get :: IO Opts
-get = execParser opts
+get =
+  execParser $
+  info (helper <*> parser)
+  (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")
   where
     parser = versionParser <|> (Opts <$> optsParser)
     versionParser = flag' GetVersion (long "version" <> help "Get buildsome's version")
@@ -89,10 +96,13 @@ get = execParser opts
               (short 'k' <>
                long "keep-going" <>
                help "Continue as much as possible after an error.")
+          <*> flag NotVerbose Verbose
+              (short 'v' <>
+               long "verbose" <>
+               help "Run in verbose mode")
           <*> strOpt (long "charts" <>
                       metavar "charts-file" <>
                       help "File to write charts to")
           <*> strOpt (long "fs-override" <>
                       metavar "path" <>
                       help "Path for fs_override.so")
-    opts = info (helper <*> parser) (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")
