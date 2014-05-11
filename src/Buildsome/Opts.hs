@@ -3,6 +3,7 @@ module Buildsome.Opts
   , OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)
   , KeepGoing(..)
+  , VerbosityLevel(..)
   , Opt(..), Opts(..), get
   ) where
 
@@ -14,10 +15,12 @@ import Options.Applicative
 import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
+
 data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
 data UpdateGitIgnore = UpdateGitIgnore | DontUpdateGitIgnore
 data KeepGoing = KeepGoing | DieQuickly
+data VerbosityLevel = NotVerbose | Verbose deriving (Eq, Ord)
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
@@ -26,6 +29,7 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                , optKeepGoing :: KeepGoing
+               , optVerbosityLevel :: VerbosityLevel
                , optChartsPath :: Maybe FilePath
                , optFsOverrideLdPreloadPath :: Maybe FilePath
                }
@@ -92,6 +96,10 @@ get =
               (short 'k' <>
                long "keep-going" <>
                help "Continue as much as possible after an error.")
+          <*> flag NotVerbose Verbose
+              (short 'v' <>
+               long "verbose" <>
+               help "Run in verbose mode")
           <*> strOpt (long "charts" <>
                       metavar "charts-file" <>
                       help "File to write charts to")

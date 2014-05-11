@@ -326,7 +326,7 @@ printExecutionLog ::
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
 printExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime
-  | StdOutputs.null stdOutputs = return ()
+  | StdOutputs.null stdOutputs && optVerbosityLevel (bsOpts bteBuildsome) == Opts.NotVerbose = return()
   | otherwise =
   Print.targetWrap btePrinter bteReason target "REPLAY" $ do
     Print.cmd btePrinter target
