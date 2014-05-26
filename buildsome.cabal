@@ -106,7 +106,7 @@ executable buildsome
                ,     asynchronous-exceptions >= 1.1.0.1 && <1.2
                ,     directory == 1.2.*
                ,     ansi-terminal == 0.6.*
-               ,     template-haskell == 2.9.*
+               ,     template-haskell == 2.9.* || == 2.8.*
   if flag(Charts)
     cpp-options:       -DWITH_CHARTS_SUPPORT
     other-modules:     Lib.Chart
