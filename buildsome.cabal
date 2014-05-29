@@ -70,6 +70,7 @@ executable buildsome
                ,     Lib.Posix.Instances
                ,     Lib.Printer
                ,     Lib.Process
+               ,     Lib.Regex
                ,     Lib.ScanFileUpwards
                ,     Lib.Show
                ,     Lib.ShowBytes
@@ -107,6 +108,7 @@ executable buildsome
                ,     directory == 1.2.*
                ,     ansi-terminal == 0.6.*
                ,     template-haskell == 2.9.* || == 2.8.*
+               ,     regex-tdfa == 1.2.*
   if flag(Charts)
     cpp-options:       -DWITH_CHARTS_SUPPORT
     other-modules:     Lib.Chart

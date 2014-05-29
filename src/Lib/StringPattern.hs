@@ -9,12 +9,13 @@ import Control.Applicative
 import Data.ByteString (ByteString)
 import Data.Monoid ((<>))
 import Lib.ByteString (unprefixed, unsuffixed)
+import Lib.Regex (Regex)
 import qualified Data.ByteString.Char8 as BS8
+import qualified Lib.Regex as Regex
 
-data StringPattern = StringPattern
-  { stringPatternPrefix :: ByteString
-  , stringPatternSuffix :: ByteString
-  } deriving (Show)
+newtype StringPattern = StringPattern
+  { stringPattern :: Regex }
+  deriving (Show)
 
 newtype Match = Match
   { matchPlaceHolder :: ByteString -- which value % took in this match
@@ -28,6 +29,11 @@ plug :: Match -> StringPattern -> ByteString
 plug (Match component) (StringPattern prefix suffix) =
   prefix <> component <> suffix
 
+toRegex :: Char -> ByteString -> ByteString
+toRegex splitter = go
+  where
+    go 
+
 fromString :: Char -> ByteString -> Maybe StringPattern
 fromString splitter pattern =
   case BS8.split splitter pattern of
@@ -35,7 +41,6 @@ fromString splitter pattern =
   [_] -> Nothing
   [prefix, suffix] ->
     Just StringPattern
-      { stringPatternPrefix = prefix
-      , stringPatternSuffix = suffix
+      { stringPattern = Regex.defaultCompile $ toRegex splitter pattern
       }
   _ -> error $ "Too many % in pattern: " ++ show pattern
