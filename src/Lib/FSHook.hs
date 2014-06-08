@@ -174,7 +174,10 @@ with ldPreloadPath body = do
         AsyncContext.spawn ctx $ printRethrowExceptions "BUG: Listener loop threw exception: " $ forever $
         do
           (conn, _srcAddr) <- Sock.accept listener
-          AsyncContext.spawn ctx $ printRethrowExceptions "BUG: Job connection failed: " $ serve fsHook conn
+          AsyncContext.spawn ctx $
+            printRethrowExceptions "BUG: Job connection failed: " $
+            serve fsHook conn
+            `E.finally` Sock.close conn
       body fsHook
 
 {-# INLINE sendGo #-}
