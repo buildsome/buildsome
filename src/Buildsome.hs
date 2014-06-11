@@ -72,7 +72,6 @@ import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Slave as Slave
-import qualified Lib.StdOutputs as StdOutputs
 import qualified Lib.Timeout as Timeout
 import qualified Prelude
 import qualified System.IO as IO
@@ -321,21 +320,13 @@ warnOverSpecified str suffix specified used pos =
   where
     unused = specified `S.difference` used
 
-printExecutionLog ::
+replayExecutionLog ::
   BuildTargetEnv -> Target ->
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
-printExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime
-  | StdOutputs.null stdOutputs && optVerbosityLevel (bsOpts bteBuildsome) == Opts.NotVerbose =
-    replay
-  | otherwise =
-  Print.targetWrap btePrinter bteReason target "REPLAY" $ do
-    Print.cmd btePrinter target
-    Print.targetStdOutputs target stdOutputs
-    replay
-    Print.targetTiming btePrinter "originally" selfTime
-  where
-    replay = verifyTargetSpec bteBuildsome inputs outputs target
+replayExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
+  Print.replay btePrinter target stdOutputs (bsOpts bteBuildsome) selfTime $
+  verifyTargetSpec bteBuildsome inputs outputs target
 
 waitForSlaves :: Printer -> Parallelism.Cell -> Buildsome -> [Slave] -> IO Slave.Stats
 waitForSlaves _ _ _ [] = return mempty
@@ -377,7 +368,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
         verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
         verifyMDesc "output(content)" filePath (fileContentDescOfStat db filePath stat) oldMContentDesc
     liftIO $
-      printExecutionLog bte target
+      replayExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
     let selfStats = Slave.Stats $ M.singleton targetRep (Slave.FromCache, elSelfTime)

@@ -13,6 +13,7 @@ import Data.IORef
 import Data.Monoid
 import Data.String (IsString(..))
 import Lib.ColorText (ColorText)
+import Lib.Exception (onException)
 import Prelude hiding (putStrLn, lines)
 import Text.Printf (printf)
 import qualified Control.Exception as E
@@ -68,10 +69,6 @@ printStrLn (Printer pid indentRef) str = do
   indentLevel <- readIORef indentRef
   let prefix = idStr pid <> " " <> mconcat (replicate indentLevel "  ")
   putStrLn . intercalate "\n" . map (prefix <>) . lines $ str
-
-{-# INLINE onException #-}
-onException :: IO a -> (E.SomeException -> IO ()) -> IO a
-onException act f = act `E.catch` \e -> f e >> E.throwIO e
 
 exceptionTextAttrs :: [Console.SGR]
 exceptionTextAttrs = [Console.SetColor Console.Foreground Console.Vivid Console.Red]

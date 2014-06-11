@@ -1,5 +1,6 @@
 module Lib.Exception
   ( finally
+  , onException
   ) where
 
 import qualified Control.Exception as E
@@ -22,3 +23,7 @@ action `finally` cleanup =
       act `catch` \e -> do
       IO.hPutStrLn IO.stderr $ concat ["Finally clause error: ", show e, " ", suffix]
       E.throwIO e
+
+{-# INLINE onException #-}
+onException :: IO a -> (E.SomeException -> IO ()) -> IO a
+onException act f = act `E.catch` \e -> f e >> E.throwIO e

@@ -5,15 +5,18 @@ module Buildsome.Print
   , cmd, targetStdOutputs
   , delimitMultiline
   , outputsStr
+  , replay
   ) where
 
 import Buildsome.Db (Reason)
+import Buildsome.Opts (Opt(..))
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.Monoid
 import Data.String (IsString(..))
 import Lib.ByteString (chopTrailingNewline)
 import Lib.ColorText (ColorText)
+import Lib.Exception (onException)
 import Lib.Makefile (TargetType(..), Target)
 import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
@@ -22,6 +25,7 @@ import Lib.StdOutputs (StdOutputs(..))
 import Prelude hiding (show)
 import Text.Parsec (SourcePos)
 import qualified Buildsome.Color as Color
+import qualified Buildsome.Opts as Opts
 import qualified Data.ByteString.Char8 as BS8
 import qualified Lib.ColorText as ColorText
 import qualified Lib.Printer as Printer
@@ -81,3 +85,19 @@ delimitMultiline xs
   where
     x = chopTrailingNewline xs
     multilineDelimiter = "\"\"\""
+
+replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Opt -> a -> IO () -> IO ()
+replay printer target stdOutputs opts selfTime action = do
+  action `onException` \e -> do
+    printStrLn printer $ "REPLAY for target " <> targetShow (targetOutputs target)
+    cmd printer target
+    targetStdOutputs target stdOutputs
+    printStrLn printer $ Color.error $ "EXCEPTION: " <> show e
+  unless (StdOutputs.null stdOutputs && optVerbosityLevel opts == Opts.NotVerbose) $ do
+    printStrLn printer $ mconcat
+      [ "REPLAY for target ", targetShow (targetOutputs target), " "
+      , " STDOUT/STDERR follows" -- TODO: Use colorization and only show those with actual outputs
+      ]
+    cmd printer target
+    targetStdOutputs target stdOutputs
+    targetTiming printer "originally" selfTime
