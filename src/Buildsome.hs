@@ -326,14 +326,17 @@ printExecutionLog ::
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
 printExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime
-  | StdOutputs.null stdOutputs && optVerbosityLevel (bsOpts bteBuildsome) == Opts.NotVerbose = return()
+  | StdOutputs.null stdOutputs && optVerbosityLevel (bsOpts bteBuildsome) == Opts.NotVerbose =
+    replay
   | otherwise =
   Print.targetWrap btePrinter bteReason target "REPLAY" $ do
     Print.cmd btePrinter target
     Print.targetStdOutputs target stdOutputs
-    verifyTargetSpec bteBuildsome inputs outputs target
+    replay
     printStrLn btePrinter $ ColorText.render $
       "Build (originally) took " <> Color.timing (show selfTime <> " seconds")
+  where
+    replay = verifyTargetSpec bteBuildsome inputs outputs target
 
 waitForSlaves :: Printer -> Parallelism.Cell -> Buildsome -> [Slave] -> IO Slave.Stats
 waitForSlaves _ _ _ [] = return mempty
