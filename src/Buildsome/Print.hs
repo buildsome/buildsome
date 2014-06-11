@@ -51,7 +51,7 @@ targetWrap printer reason target str =
 
 targetTiming :: Show a => Printer -> ColorText -> a -> IO ()
 targetTiming printer str selfTime =
-  printStrLn printer $ ColorText.render $
+  printStrLn printer $
     "Build (" <> str <> ") took " <> Color.timing (show selfTime <> " seconds")
 
 colorStdOutputs :: StdOutputs ByteString -> StdOutputs ColorText
@@ -103,12 +103,12 @@ replay printer target stdOutputs verbosity selfTime action = do
     printStrLn printer $ Color.error $ "EXCEPTION: " <> show e
   when shouldPrint $ do
     printStrLn printer $ mconcat
-      [ "REPLAY for target ", targetShow (targetOutputs target), " "
+      [ "REPLAY for target ", targetShow (targetOutputs target)
+      , " (originally) took ", Color.timing (show selfTime <> " seconds")
       , outputsHeader
       ]
     replayCmd (verbosityCommands verbosity) printer target
     targetStdOutputs target stdOutputs
-    targetTiming printer "originally" selfTime
   where
     shouldPrint =
       case verbosityOutputs verbosity of
@@ -118,7 +118,7 @@ replay printer target stdOutputs verbosity selfTime action = do
     outputsHeader =
       case (BS8.null (StdOutputs.stdOut stdOutputs),
             BS8.null (StdOutputs.stdErr stdOutputs)) of
-      (False, False) -> "STDOUT/STDERR follow"
-      (False, True)  -> "STDOUT follows"
-      (True, False)  -> "STDERR follows"
+      (False, False) -> ", STDOUT/STDERR follow"
+      (False, True)  -> ", STDOUT follows"
+      (True, False)  -> ", STDERR follows"
       (True, True)   -> ""
