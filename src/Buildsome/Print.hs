@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Buildsome.Print
-  ( targetShow, targetWrap
+  ( targetShow, targetWrap, targetTiming
   , warn, posMessage
   , cmd, targetStdOutputs
   , delimitMultiline
@@ -45,6 +45,11 @@ targetWrap :: Printer -> Reason -> Target -> ColorText -> IO a -> IO a
 targetWrap printer reason target str =
   Printer.printWrap printer (targetShow (targetOutputs target)) $ mconcat
   [str, " (", fromBytestring8 reason, ")"]
+
+targetTiming :: Show a => Printer -> ColorText -> a -> IO ()
+targetTiming printer str selfTime =
+  printStrLn printer $ ColorText.render $
+    "Build (" <> str <> ") took " <> Color.timing (show selfTime <> " seconds")
 
 colorStdOutputs :: StdOutputs ByteString -> StdOutputs ColorText
 colorStdOutputs (StdOutputs out err) =

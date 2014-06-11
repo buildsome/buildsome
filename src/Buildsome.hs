@@ -333,8 +333,7 @@ printExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime
     Print.cmd btePrinter target
     Print.targetStdOutputs target stdOutputs
     replay
-    printStrLn btePrinter $ ColorText.render $
-      "Build (originally) took " <> Color.timing (show selfTime <> " seconds")
+    Print.targetTiming btePrinter "originally" selfTime
   where
     replay = verifyTargetSpec bteBuildsome inputs outputs target
 
@@ -725,8 +724,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
         verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.keysSet rcrOutputs) target
         saveExecutionLog bteBuildsome target rcr
 
-        printStrLn btePrinter $
-          "Build (now) took " <> Color.timing (show rcrSelfTime <> " seconds")
+        Print.targetTiming btePrinter "now" rcrSelfTime
         let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
         return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
 
