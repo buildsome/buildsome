@@ -63,13 +63,12 @@ colorStdOutputs (StdOutputs out err) =
   where
     colorize f = f . fromBytestring8 . chopTrailingNewline
 
-outputsStr :: ColorText -> StdOutputs ByteString -> Maybe ColorText
-outputsStr label = StdOutputs.str label . colorStdOutputs
+outputsStr :: StdOutputs ByteString -> Maybe ColorText
+outputsStr = StdOutputs.str . colorStdOutputs
 
 targetStdOutputs :: Target -> StdOutputs ByteString -> IO ()
-targetStdOutputs target stdOutputs =
-  maybe (return ()) ColorText.putStrLn $
-  outputsStr (targetShow (targetOutputs target)) stdOutputs
+targetStdOutputs _target stdOutputs =
+  maybe (return ()) ColorText.putStrLn $ outputsStr stdOutputs
 
 cmd :: Printer -> Target -> IO ()
 cmd printer target =
@@ -93,11 +92,16 @@ replay printer target stdOutputs opts selfTime action = do
     cmd printer target
     targetStdOutputs target stdOutputs
     printStrLn printer $ Color.error $ "EXCEPTION: " <> show e
-  unless (StdOutputs.null stdOutputs && optVerbosityLevel opts == Opts.NotVerbose) $ do
+  when (haveOutputs || isVerbose) $ do
     printStrLn printer $ mconcat
       [ "REPLAY for target ", targetShow (targetOutputs target), " "
-      , " STDOUT/STDERR follows" -- TODO: Use colorization and only show those with actual outputs
+      , if haveOutputs
+        then " STDOUT/STDERR follows" -- TODO: Use colorization and only show those with actual outputs
+        else ""
       ]
     cmd printer target
     targetStdOutputs target stdOutputs
     targetTiming printer "originally" selfTime
+  where
+    isVerbose = optVerbosityLevel opts == Opts.Verbose
+    haveOutputs = not (StdOutputs.null stdOutputs)

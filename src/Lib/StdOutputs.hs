@@ -19,15 +19,14 @@ instance Binary a => Binary (StdOutputs a)
 null :: (Eq a, Monoid a) => StdOutputs a -> Bool
 null (StdOutputs out err) = mempty == out && mempty == err
 
-str :: (Eq a, Monoid a, IsString a) => a -> StdOutputs a -> Maybe a
-str strLabel (StdOutputs stdout stderr)
+str :: (Eq a, Monoid a, IsString a) => StdOutputs a -> Maybe a
+str (StdOutputs stdout stderr)
   | mempty == stdout && mempty == stderr = Nothing
   | otherwise = Just $ mconcat
-  [ strLabel
-  , showOutput "STDOUT" stdout
-  , showOutput "STDERR" stderr
+  [ showOutput stdout
+  , showOutput stderr
   ]
   where
-    showOutput name bs
+    showOutput bs
       | mempty == bs = ""
-      | otherwise = mconcat ["\n", name, ":\n", bs]
+      | otherwise = bs
