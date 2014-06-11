@@ -325,7 +325,8 @@ replayExecutionLog ::
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
 replayExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
-  Print.replay btePrinter target stdOutputs (bsOpts bteBuildsome) selfTime $
+  Print.replay btePrinter target stdOutputs
+  (optVerbosity (bsOpts bteBuildsome)) selfTime $
   verifyTargetSpec bteBuildsome inputs outputs target
 
 waitForSlaves :: Printer -> Parallelism.Cell -> Buildsome -> [Slave] -> IO Slave.Stats
@@ -708,7 +709,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
             } Explicit $ targetAllInputs target
         hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
 
-        Print.cmd btePrinter target
+        Print.executionCmd verbosityCommands btePrinter target
 
         rcr@RunCmdResults{..} <- runCmd bte parCell target
 
@@ -718,6 +719,9 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
         Print.targetTiming btePrinter "now" rcrSelfTime
         let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
         return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
+  where
+    verbosityCommands = Opts.verbosityCommands verbosity
+    verbosity = optVerbosity (bsOpts bteBuildsome)
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =

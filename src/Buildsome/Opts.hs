@@ -3,8 +3,10 @@ module Buildsome.Opts
   , OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)
   , KeepGoing(..)
-  , VerbosityLevel(..)
   , Opt(..), Opts(..), get
+  , PrintCommands(..)
+  , PrintByOutputs(..)
+  , Verbosity(..)
   ) where
 
 import Control.Monad (liftM)
@@ -20,7 +22,43 @@ data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecified
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
 data UpdateGitIgnore = UpdateGitIgnore | DontUpdateGitIgnore
 data KeepGoing = KeepGoing | DieQuickly
-data VerbosityLevel = NotVerbose | Verbose deriving (Eq, Ord)
+
+data PrintCommands
+  = DontPrintCommands
+  | PrintCommandsForExecution {-default-}
+  | PrintCommandsForAll
+
+data PrintByOutputs
+  = PrintAnyway -- TODO: Rename
+  | PrintIfStderrOrStdout
+  | PrintIfStderr {-default-}
+
+data Verbosity = Verbosity
+  { verbosityCommands :: PrintCommands
+  , verbosityOutputs :: PrintByOutputs
+  }
+
+verbosityAll :: Verbosity
+verbosityAll = Verbosity
+  { verbosityCommands = PrintCommandsForAll
+  , verbosityOutputs = PrintAnyway
+  }
+
+parseVerbosity :: Parser Verbosity
+parseVerbosity =
+  flag' verbosityAll
+    (short 'v' <>
+     long "verbose" <>
+     help "Run in verbose mode")
+  <|>
+  ( Verbosity
+    <$> flag DontPrintCommands PrintCommandsForAll
+        (long "verbose-cmds" <>
+         help "Show commands (executed and replayed)")
+    <*> flag PrintIfStderr PrintIfStderrOrStdout
+        (long "verbose-stdouts" <>
+         help "Replay stdouts and not just stderrs")
+  )
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
@@ -29,9 +67,10 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                , optKeepGoing :: KeepGoing
-               , optVerbosityLevel :: VerbosityLevel
                , optChartsPath :: Maybe FilePath
                , optFsOverrideLdPreloadPath :: Maybe FilePath
+
+               , optVerbosity :: Verbosity
                }
 
 data Opts = GetVersion | Opts Opt
@@ -96,13 +135,10 @@ get =
               (short 'k' <>
                long "keep-going" <>
                help "Continue as much as possible after an error.")
-          <*> flag NotVerbose Verbose
-              (short 'v' <>
-               long "verbose" <>
-               help "Run in verbose mode")
           <*> strOpt (long "charts" <>
                       metavar "charts-file" <>
                       help "File to write charts to")
           <*> strOpt (long "fs-override" <>
                       metavar "path" <>
                       help "Path for fs_override.so")
+          <*> parseVerbosity

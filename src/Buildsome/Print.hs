@@ -2,14 +2,14 @@
 module Buildsome.Print
   ( targetShow, targetWrap, targetTiming
   , warn, posMessage
-  , cmd, targetStdOutputs
+  , replayCmd, executionCmd, targetStdOutputs
   , delimitMultiline
   , outputsStr
   , replay
   ) where
 
 import Buildsome.Db (Reason)
-import Buildsome.Opts (Opt(..))
+import Buildsome.Opts (Verbosity(..), PrintByOutputs(..), PrintCommands(..))
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.Monoid
@@ -25,7 +25,6 @@ import Lib.StdOutputs (StdOutputs(..))
 import Prelude hiding (show)
 import Text.Parsec (SourcePos)
 import qualified Buildsome.Color as Color
-import qualified Buildsome.Opts as Opts
 import qualified Data.ByteString.Char8 as BS8
 import qualified Lib.ColorText as ColorText
 import qualified Lib.Printer as Printer
@@ -77,6 +76,16 @@ cmd printer target =
   where
     cmds = targetCmds target
 
+replayCmd :: PrintCommands -> Printer -> Target -> IO ()
+replayCmd PrintCommandsForAll printer target = cmd printer target
+replayCmd PrintCommandsForExecution _ _ = return ()
+replayCmd DontPrintCommands _ _ = return ()
+
+executionCmd :: PrintCommands -> Printer -> Target -> IO ()
+executionCmd PrintCommandsForAll printer target = cmd printer target
+executionCmd PrintCommandsForExecution printer target = cmd printer target
+executionCmd DontPrintCommands _ _ = return ()
+
 delimitMultiline :: ByteString -> ByteString
 delimitMultiline xs
   | '\n' `BS8.notElem` x = x
@@ -85,23 +94,31 @@ delimitMultiline xs
     x = chopTrailingNewline xs
     multilineDelimiter = "\"\"\""
 
-replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Opt -> a -> IO () -> IO ()
-replay printer target stdOutputs opts selfTime action = do
+replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Verbosity -> a -> IO () -> IO ()
+replay printer target stdOutputs verbosity selfTime action = do
   action `onException` \e -> do
     printStrLn printer $ "REPLAY for target " <> targetShow (targetOutputs target)
     cmd printer target
     targetStdOutputs target stdOutputs
     printStrLn printer $ Color.error $ "EXCEPTION: " <> show e
-  when (haveOutputs || isVerbose) $ do
+  when shouldPrint $ do
     printStrLn printer $ mconcat
       [ "REPLAY for target ", targetShow (targetOutputs target), " "
-      , if haveOutputs
-        then " STDOUT/STDERR follows" -- TODO: Use colorization and only show those with actual outputs
-        else ""
+      , outputsHeader
       ]
-    cmd printer target
+    replayCmd (verbosityCommands verbosity) printer target
     targetStdOutputs target stdOutputs
     targetTiming printer "originally" selfTime
   where
-    isVerbose = optVerbosityLevel opts == Opts.Verbose
-    haveOutputs = not (StdOutputs.null stdOutputs)
+    shouldPrint =
+      case verbosityOutputs verbosity of
+      PrintAnyway -> True
+      PrintIfStderrOrStdout -> not (StdOutputs.null stdOutputs)
+      PrintIfStderr -> not (BS8.null (StdOutputs.stdErr stdOutputs))
+    outputsHeader =
+      case (BS8.null (StdOutputs.stdOut stdOutputs),
+            BS8.null (StdOutputs.stdErr stdOutputs)) of
+      (False, False) -> "STDOUT/STDERR follow"
+      (False, True)  -> "STDOUT follows"
+      (True, False)  -> "STDERR follows"
+      (True, True)   -> ""

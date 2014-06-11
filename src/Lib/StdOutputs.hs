@@ -11,8 +11,8 @@ import GHC.Generics (Generic)
 import Prelude hiding (null)
 
 data StdOutputs a = StdOutputs
-  { _stdOut :: a
-  , _stdErr :: a
+  { stdOut :: a
+  , stdErr :: a
   } deriving (Generic, Show)
 instance Binary a => Binary (StdOutputs a)
 
@@ -20,11 +20,11 @@ null :: (Eq a, Monoid a) => StdOutputs a -> Bool
 null (StdOutputs out err) = mempty == out && mempty == err
 
 str :: (Eq a, Monoid a, IsString a) => StdOutputs a -> Maybe a
-str (StdOutputs stdout stderr)
-  | mempty == stdout && mempty == stderr = Nothing
+str (StdOutputs out err)
+  | mempty == out && mempty == err = Nothing
   | otherwise = Just $ mconcat
-  [ showOutput stdout
-  , showOutput stderr
+  [ showOutput out
+  , showOutput err
   ]
   where
     showOutput bs
