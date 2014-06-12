@@ -748,7 +748,7 @@ instance Show TargetCommandFailed where
   show (TargetCommandFailed target exitCode stdOutputs) =
     renderStr $ Color.error $ mconcat
     [ fromBytestring8 (Print.delimitMultiline cmd), " failed: ", show exitCode
-    , fromMaybe "" $ Print.outputsStr stdOutputs ]
+    , maybe "" ("\n" <>) $ Print.outputsStr stdOutputs ]
     where
       cmd = targetCmds target
 
