@@ -1,5 +1,5 @@
 module Buildsome.Color
-  ( warning, error, target, path, timing, success, command, stdout, stderr
+  ( Scheme(..), defaultScheme
   ) where
 
 -- cannot hide specific Prelude names when not using any prelude names
@@ -15,29 +15,27 @@ fgColor = Console.SetColor Console.Foreground
 -- bgColor :: ColorIntensity -> Color -> Console.SGR
 -- bgColor = Console.SetColor Console.Background
 
-warning :: ColorText -> ColorText
-warning = withAttr [fgColor Vivid Yellow]
+data Scheme = Scheme
+  { cWarning :: ColorText -> ColorText
+  , cError :: ColorText -> ColorText
+  , cTarget :: ColorText -> ColorText
+  , cPath :: ColorText -> ColorText
+  , cTiming :: ColorText -> ColorText
+  , cSuccess :: ColorText -> ColorText
+  , cCommand :: ColorText -> ColorText
+  , cStdout :: ColorText -> ColorText
+  , cStderr :: ColorText -> ColorText
+  }
 
-error :: ColorText -> ColorText
-error = withAttr [fgColor Vivid Red]
-
-target :: ColorText -> ColorText
-target = withAttr [fgColor Vivid Cyan]
-
-path :: ColorText -> ColorText
-path = withAttr [fgColor Dull Cyan]
-
-timing :: ColorText -> ColorText
-timing = withAttr [fgColor Vivid Blue]
-
-success :: ColorText -> ColorText
-success = withAttr [fgColor Vivid Green]
-
-command :: ColorText -> ColorText
-command = withAttr [fgColor Dull White]
-
-stdout :: ColorText -> ColorText
-stdout = withAttr [fgColor Dull Green]
-
-stderr :: ColorText -> ColorText
-stderr = withAttr [fgColor Dull Red]
+defaultScheme :: Scheme
+defaultScheme = Scheme
+  { cWarning = withAttr [fgColor Vivid Yellow]
+  , cError = withAttr [fgColor Vivid Red]
+  , cTarget = withAttr [fgColor Vivid Cyan]
+  , cPath = withAttr [fgColor Dull Cyan]
+  , cTiming = withAttr [fgColor Vivid Blue]
+  , cSuccess = withAttr [fgColor Vivid Green]
+  , cCommand = withAttr [fgColor Dull White]
+  , cStdout = withAttr [fgColor Dull Green]
+  , cStderr = withAttr [fgColor Dull Red]
+  }

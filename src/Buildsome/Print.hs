@@ -1,6 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, RecordWildCards #-}
 module Buildsome.Print
-  ( targetShow, targetWrap, targetTiming
+  ( targetWrap, targetTiming
   , warn, posMessage
   , replayCmd, executionCmd, targetStdOutputs
   , delimitMultiline
@@ -33,58 +33,55 @@ import qualified Lib.StdOutputs as StdOutputs
 fromBytestring8 :: IsString str => ByteString -> str
 fromBytestring8 = fromString . BS8.unpack
 
-targetShow :: Show a => a -> ColorText
-targetShow = Color.target . show
-
 posMessage :: SourcePos -> ColorText -> IO ()
 posMessage pos msg =
   ColorText.putStrLn $ mconcat [fromString (showPos pos), ": ", msg]
 
-warn :: SourcePos -> ColorText -> IO ()
-warn pos str =
-  posMessage pos $ Color.warning $ "WARNING: " <> str
+warn :: Color.Scheme -> SourcePos -> ColorText -> IO ()
+warn Color.Scheme{..} pos str =
+  posMessage pos $ cWarning $ "WARNING: " <> str
 
-targetWrap :: Printer -> Reason -> Target -> ColorText -> IO a -> IO a
-targetWrap printer reason target str =
-  Printer.printWrap printer (targetShow (targetOutputs target)) $ mconcat
+targetWrap :: Color.Scheme -> Printer -> Reason -> Target -> ColorText -> IO a -> IO a
+targetWrap Color.Scheme{..} printer reason target str =
+  Printer.printWrap printer (cTarget (show (targetOutputs target))) $ mconcat
   [str, " (", fromBytestring8 reason, ")"]
 
-targetTiming :: Show a => Printer -> ColorText -> a -> IO ()
-targetTiming printer str selfTime =
+targetTiming :: Show a => Color.Scheme -> Printer -> ColorText -> a -> IO ()
+targetTiming Color.Scheme{..} printer str selfTime =
   printStrLn printer $
-    "Build (" <> str <> ") took " <> Color.timing (show selfTime <> " seconds")
+    "Build (" <> str <> ") took " <> cTiming (show selfTime <> " seconds")
 
-colorStdOutputs :: StdOutputs ByteString -> StdOutputs ColorText
-colorStdOutputs (StdOutputs out err) =
+colorStdOutputs :: Color.Scheme -> StdOutputs ByteString -> StdOutputs ColorText
+colorStdOutputs Color.Scheme{..} (StdOutputs out err) =
   StdOutputs
-  (colorize Color.stdout out)
-  (colorize Color.stderr err)
+  (colorize cStdout out)
+  (colorize cStderr err)
   where
     colorize f = f . fromBytestring8 . chopTrailingNewline
 
-outputsStr :: StdOutputs ByteString -> Maybe ColorText
-outputsStr = StdOutputs.str . colorStdOutputs
+outputsStr :: Color.Scheme -> StdOutputs ByteString -> Maybe ColorText
+outputsStr colors = StdOutputs.str . colorStdOutputs colors
 
-targetStdOutputs :: Target -> StdOutputs ByteString -> IO ()
-targetStdOutputs _target stdOutputs =
-  maybe (return ()) ColorText.putStrLn $ outputsStr stdOutputs
+targetStdOutputs :: Color.Scheme -> Target -> StdOutputs ByteString -> IO ()
+targetStdOutputs colors _target stdOutputs =
+  maybe (return ()) ColorText.putStrLn $ outputsStr colors stdOutputs
 
-cmd :: Printer -> Target -> IO ()
-cmd printer target =
+cmd :: Color.Scheme -> Printer -> Target -> IO ()
+cmd Color.Scheme{..} printer target =
   unless (BS8.null cmds) $ printStrLn printer $ delimitMultiline $
-  ColorText.render $ Color.command $ fromBytestring8 cmds
+  ColorText.render $ cCommand $ fromBytestring8 cmds
   where
     cmds = targetCmds target
 
-replayCmd :: PrintCommands -> Printer -> Target -> IO ()
-replayCmd PrintCommandsForAll printer target = cmd printer target
-replayCmd PrintCommandsForExecution _ _ = return ()
-replayCmd DontPrintCommands _ _ = return ()
+replayCmd :: Color.Scheme -> PrintCommands -> Printer -> Target -> IO ()
+replayCmd colors PrintCommandsForAll printer target = cmd colors printer target
+replayCmd _      PrintCommandsForExecution _ _ = return ()
+replayCmd _      DontPrintCommands _ _ = return ()
 
-executionCmd :: PrintCommands -> Printer -> Target -> IO ()
-executionCmd PrintCommandsForAll printer target = cmd printer target
-executionCmd PrintCommandsForExecution printer target = cmd printer target
-executionCmd DontPrintCommands _ _ = return ()
+executionCmd :: Color.Scheme -> PrintCommands -> Printer -> Target -> IO ()
+executionCmd colors PrintCommandsForAll printer target = cmd colors printer target
+executionCmd colors PrintCommandsForExecution printer target = cmd colors printer target
+executionCmd _      DontPrintCommands _ _ = return ()
 
 delimitMultiline :: ByteString -> ByteString
 delimitMultiline xs
@@ -94,21 +91,21 @@ delimitMultiline xs
     x = chopTrailingNewline xs
     multilineDelimiter = "\"\"\""
 
-replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Verbosity -> a -> IO () -> IO ()
-replay printer target stdOutputs verbosity selfTime action = do
+replay :: Show a => Color.Scheme -> Printer -> Target -> StdOutputs ByteString -> Verbosity -> a -> IO () -> IO ()
+replay colors@Color.Scheme{..} printer target stdOutputs verbosity selfTime action = do
   action `onException` \e -> do
-    printStrLn printer $ "REPLAY for target " <> targetShow (targetOutputs target)
-    cmd printer target
-    targetStdOutputs target stdOutputs
-    printStrLn printer $ Color.error $ "EXCEPTION: " <> show e
+    printStrLn printer $ "REPLAY for target " <> cTarget (show (targetOutputs target))
+    cmd colors printer target
+    targetStdOutputs colors target stdOutputs
+    printStrLn printer $ cError $ "EXCEPTION: " <> show e
   when shouldPrint $ do
     printStrLn printer $ mconcat
-      [ "REPLAY for target ", targetShow (targetOutputs target)
-      , " (originally) took ", Color.timing (show selfTime <> " seconds")
+      [ "REPLAY for target ", cTarget (show (targetOutputs target))
+      , " (originally) took ", cTiming (show selfTime <> " seconds")
       , outputsHeader
       ]
-    replayCmd (verbosityCommands verbosity) printer target
-    targetStdOutputs target stdOutputs
+    replayCmd colors (verbosityCommands verbosity) printer target
+    targetStdOutputs colors target stdOutputs
   where
     shouldPrint =
       case verbosityOutputs verbosity of

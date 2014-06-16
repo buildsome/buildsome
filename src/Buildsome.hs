@@ -8,7 +8,6 @@ import Buildsome.Db (Db, IRef(..), Reason)
 import Buildsome.FileContentDescCache (fileContentDescOfStat)
 import Buildsome.Meddling (assertSameMTime)
 import Buildsome.Opts (Opt(..))
-import Buildsome.Print (targetShow)
 import Control.Applicative ((<$>), Applicative(..))
 import Control.Concurrent (myThreadId)
 import Control.Concurrent.MVar
@@ -96,11 +95,13 @@ data Buildsome = Buildsome
   , bsParallelism :: Parallelism
   , bsFreshPrinterIds :: Fresh Printer.Id
   , bsFastKillBuild :: E.SomeException -> IO ()
+  , bsColors :: Color.Scheme
   }
 
 cancelAllSlaves :: Buildsome -> IO ()
 cancelAllSlaves bs = go 0
   where
+    Color.Scheme{..} = bsColors bs
     timeoutWarning time slave =
       Timeout.warning time $
       concat ["Slave ", Slave.str slave, " did not cancel in ", show time, "!"]
@@ -111,7 +112,7 @@ cancelAllSlaves bs = go 0
         \(targetRep, mvar) ->
         Timeout.warning (Timeout.millis 100)
         (renderStr
-         ("Slave MVar for " <> targetShow targetRep <> " not populated in 100 millis!")) $
+         ("Slave MVar for " <> cTarget (show targetRep) <> " not populated in 100 millis!")) $
         readMVar mvar
       let count = length slaves
       unless (alreadyCancelled >= count) $ do
@@ -160,7 +161,7 @@ mkSlavesForPaths bte explicitness = fmap concat . mapM (mkSlaves bte explicitnes
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO Slave.Stats
 want printer buildsome reason paths = do
   printStrLn printer $
-    "Building: " <> ColorText.intercalate ", " (map targetShow paths)
+    "Building: " <> ColorText.intercalate ", " (map (cTarget . show) paths)
   (buildTime, slaveStats) <- timeIt $
     fmap mconcat . mapM Slave.wait =<<
     mkSlavesForPaths BuildTargetEnv
@@ -170,9 +171,11 @@ want printer buildsome reason paths = do
     , bteParents = []
     } Explicit paths
   printStrLn printer $ mconcat
-    [ Color.success "Build Successful", ": "
-    , Color.timing (show buildTime <> " seconds"), " total." ]
+    [ cSuccess "Build Successful", ": "
+    , cTiming (show buildTime <> " seconds"), " total." ]
   return slaveStats
+  where
+    Color.Scheme{..} = bsColors buildsome
 
 assertExists :: E.Exception e => FilePath -> e -> IO ()
 assertExists path err = do
@@ -182,20 +185,20 @@ assertExists path err = do
 fromBytestring8 :: IsString str => ByteString -> str
 fromBytestring8 = fromString . BS8.unpack
 
-data MissingRule = MissingRule FilePath Reason deriving (Typeable)
+data MissingRule = MissingRule Color.Scheme FilePath Reason deriving (Typeable)
 instance E.Exception MissingRule
 instance Show MissingRule where
-  show (MissingRule path reason) =
-    renderStr $ Color.error $ mconcat
-    ["ERROR: No rule to build ", targetShow path, " (", fromBytestring8 reason, ")"]
+  show (MissingRule Color.Scheme{..} path reason) =
+    renderStr $ cError $ mconcat
+    ["ERROR: No rule to build ", cTarget (show path), " (", fromBytestring8 reason, ")"]
 
-data TargetNotCreated = TargetNotCreated FilePath Target deriving (Typeable)
+data TargetNotCreated = TargetNotCreated Color.Scheme FilePath Target deriving (Typeable)
 instance E.Exception TargetNotCreated
 instance Show TargetNotCreated where
-  show (TargetNotCreated path target) =
-    renderStr $ Color.error $ mconcat
+  show (TargetNotCreated Color.Scheme {..} path target) =
+    renderStr $ cError $ mconcat
     [ (fromString . showPos . targetPos) target
-    , targetShow path
+    , cTarget (show path)
     , " explicitly demanded but was not created by its target rule" ]
 
 mkSlavesDirectAccess :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
@@ -204,7 +207,7 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
   | otherwise =
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing -> do
-    when (explicitness == Explicit) $ assertExists path $ MissingRule path bteReason
+    when (explicitness == Explicit) $ assertExists path $ MissingRule (bsColors bteBuildsome) path bteReason
     return []
   Just tgt@(_, target) -> do
     slave <- getSlaveForTarget bte tgt
@@ -215,7 +218,7 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
         verifyFileGetsCreated slave
           | path `elem` makefilePhonies (bsMakefile bteBuildsome) = return slave
           | otherwise =
-            Slave.wrap (<* assertExists path (TargetNotCreated path target)) slave
+            Slave.wrap (<* assertExists path (TargetNotCreated (bsColors bteBuildsome) path target)) slave
 
 makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
 makeChildSlaves bte@BuildTargetEnv{..} path
@@ -250,7 +253,7 @@ handleLegalUnspecifiedOutputs :: Buildsome -> Target -> [FilePath] -> IO ()
 handleLegalUnspecifiedOutputs buildsome target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
   -- creating job
-  unless (null paths) $ Print.warn (targetPos target) $
+  unless (null paths) $ Print.warn (bsColors buildsome) (targetPos target) $
     mconcat ["Leaked unspecified outputs: ", show paths, ", ", actionDesc]
   action
   where
@@ -259,12 +262,12 @@ handleLegalUnspecifiedOutputs buildsome target paths = do
       Opts.DeleteUnspecifiedOutputs -> ("deleting", mapM_ removeFileOrDirectoryOrNothing paths)
       Opts.DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs buildsome (S.fromList paths))
 
-data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs Target [FilePath] deriving (Typeable)
+data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs Color.Scheme Target [FilePath] deriving (Typeable)
 instance E.Exception IllegalUnspecifiedOutputs
 instance Show IllegalUnspecifiedOutputs where
-  show (IllegalUnspecifiedOutputs target illegalOutputs) =
-    renderStr $ Color.error $ mconcat
-    [ "Target: ", targetShow (targetOutputs target)
+  show (IllegalUnspecifiedOutputs Color.Scheme{..} target illegalOutputs) =
+    renderStr $ cError $ mconcat
+    [ "Target: ", cTarget (show (targetOutputs target))
     , " wrote to unspecified output files: ", show illegalOutputs ]
 
 -- Verify output of whole of slave/execution log
@@ -281,7 +284,8 @@ verifyTargetInputs buildsome inputs target
   | all (`S.member` phoniesSet buildsome)
     (targetOutputs target) = return () -- Phony target doesn't need real inputs
   | otherwise =
-    warnOverSpecified "inputs" "" (S.fromList (targetAllInputs target))
+    warnOverSpecified buildsome
+    "inputs" "" (S.fromList (targetAllInputs target))
     (inputs `S.union` phoniesSet buildsome) (targetPos target)
 
 verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
@@ -297,27 +301,29 @@ verifyTargetOutputs buildsome outputs target = do
   -- Illegal unspecified that do exist are a problem:
   existingIllegalOutputs <- filterM FilePath.exists illegalOutputs
   unless (null existingIllegalOutputs) $ do
-    Print.posMessage (targetPos target) $ Color.error $
+    Print.posMessage (targetPos target) $ cError $
       "Illegal output files created: " <> show existingIllegalOutputs
 
-    Print.warn (targetPos target) "leaving leaked unspecified output effects" -- Need to make sure we only record actual outputs, and not *attempted* outputs before we delete this
+    Print.warn colors (targetPos target) "leaving leaked unspecified output effects" -- Need to make sure we only record actual outputs, and not *attempted* outputs before we delete this
     -- mapM_ removeFileOrDirectory existingIllegalOutputs
 
-    E.throwIO $ IllegalUnspecifiedOutputs target existingIllegalOutputs
-  warnOverSpecified "outputs" " (consider adding a .PHONY declaration)" specified (outputs `S.union` phoniesSet buildsome) (targetPos target)
+    E.throwIO $ IllegalUnspecifiedOutputs colors target existingIllegalOutputs
+  warnOverSpecified buildsome "outputs" " (consider adding a .PHONY declaration)" specified (outputs `S.union` phoniesSet buildsome) (targetPos target)
   where
+    colors@Color.Scheme{..} = bsColors buildsome
     (unspecifiedOutputs, illegalOutputs) =
       partition MagicFiles.allowedUnspecifiedOutput allUnspecified
     allUnspecified = S.toList $ outputs `S.difference` specified
     specified = S.fromList $ targetOutputs target
 
 warnOverSpecified ::
-  ColorText -> ColorText -> Set FilePath -> Set FilePath -> SourcePos -> IO ()
-warnOverSpecified str suffix specified used pos =
+  Buildsome -> ColorText -> ColorText -> Set FilePath -> Set FilePath -> SourcePos -> IO ()
+warnOverSpecified buildsome str suffix specified used pos =
   unless (S.null unused) $
-  Print.warn pos $ mconcat
-  ["Over-specified ", str, ": ", targetShow (S.toList unused), suffix]
+  Print.warn colors pos $ mconcat
+  ["Over-specified ", str, ": ", cTarget (show (S.toList unused)), suffix]
   where
+    colors@Color.Scheme{..} = bsColors buildsome
     unused = specified `S.difference` used
 
 replayExecutionLog ::
@@ -325,7 +331,7 @@ replayExecutionLog ::
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
 replayExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
-  Print.replay btePrinter target stdOutputs
+  Print.replay (bsColors bteBuildsome) btePrinter target stdOutputs
   (optVerbosity (bsOpts bteBuildsome)) selfTime $
   verifyTargetSpec bteBuildsome inputs outputs target
 
@@ -391,7 +397,7 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlave (M.toList elInputsDescs)
 
-  let hintReason = ColorText.render $ "Hint from " <> (targetShow . targetOutputs) target
+  let hintReason = ColorText.render $ "Hint from " <> (cTarget . show . targetOutputs) target
   hintedSlaves <-
     mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
 
@@ -401,6 +407,7 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
   mappend targetParentsStats <$>
     waitForSlaves btePrinter parCell bteBuildsome allSlaves
   where
+    Color.Scheme{..} = bsColors bteBuildsome
     hinted = S.fromList $ targetAllInputs target
     mkInputSlave (inputPath, desc)
       | inputPath `S.member` hinted = return []
@@ -419,10 +426,11 @@ buildParentDirectories bte@BuildTargetEnv{..} parCell explicitness =
   waitForSlaves btePrinter parCell bteBuildsome . concat <=<
   mapM mkParentSlaves . filter (`notElem` ["", "/"])
   where
+    Color.Scheme{..} = bsColors bteBuildsome
     mkParentSlaves path =
       mkSlavesDirectAccess bte
       { bteReason =
-        ColorText.render $ "Container directory of: " <> targetShow path
+        ColorText.render $ "Container directory of: " <> cTarget (show path)
       } explicitness (FilePath.takeDirectory path)
 
 -- TODO: Remember the order of input files' access so can iterate here
@@ -438,40 +446,42 @@ findApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target = do
       case res of
         Left (str, filePath) -> do
           printStrLn btePrinter $ ColorText.render $ mconcat
-            [ "Execution log of ", targetShow (targetOutputs target)
+            [ "Execution log of ", cTarget (show (targetOutputs target))
             , " did not match because ", fromBytestring8 str, ": "
-            , Color.path (show filePath)
+            , cPath (show filePath)
             ]
           return Nothing
         Right stats -> return (Just stats)
+  where
+    Color.Scheme{..} = bsColors bteBuildsome
 
-showParents :: Parents -> ByteString
-showParents = ColorText.render . mconcat . map showParent
+showParents :: Color.Scheme -> Parents -> ByteString
+showParents Color.Scheme{..} = ColorText.render . mconcat . map showParent
   where
     showParent (targetRep, reason) =
-      mconcat ["\n-> ", targetShow targetRep, " (", fromBytestring8 reason, ")"]
+      mconcat ["\n-> ", cTarget (show targetRep), " (", fromBytestring8 reason, ")"]
 
-data TargetDependencyLoop = TargetDependencyLoop Parents deriving (Typeable)
+data TargetDependencyLoop = TargetDependencyLoop Color.Scheme Parents deriving (Typeable)
 instance E.Exception TargetDependencyLoop
 instance Show TargetDependencyLoop where
-  show (TargetDependencyLoop parents) =
-    renderStr $ Color.error $ fromBytestring8 $ "Target loop: " <> showParents parents
+  show (TargetDependencyLoop colors@Color.Scheme{..} parents) =
+    renderStr $ cError $ fromBytestring8 $ "Target loop: " <> showParents colors parents
 
-data PanicError = PanicError String deriving (Typeable)
+data PanicError = PanicError Color.Scheme String deriving (Typeable)
 instance E.Exception PanicError
 instance Show PanicError where
-  show (PanicError msg) =
-    renderStr $ Color.error $ fromString $ "PANIC: " ++ msg
+  show (PanicError Color.Scheme{..} msg) =
+    renderStr $ cError $ fromString $ "PANIC: " ++ msg
 
-panic :: String -> IO a
-panic msg = do
+panic :: Color.Scheme -> String -> IO a
+panic colors msg = do
   IO.hPutStrLn IO.stderr msg
-  E.throwIO $ PanicError msg
+  E.throwIO $ PanicError colors msg
 
 -- Find existing slave for target, or spawn a new one
 getSlaveForTarget :: BuildTargetEnv -> (TargetRep, Target) -> IO Slave
 getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
-  | any ((== targetRep) . fst) bteParents = E.throwIO $ TargetDependencyLoop newParents
+  | any ((== targetRep) . fst) bteParents = E.throwIO $ TargetDependencyLoop colors newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
     E.mask $ \restoreMask -> join $
@@ -488,11 +498,12 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
             buildTarget newBte parCell targetRep target
         )
     where
+      colors@Color.Scheme{..} = bsColors bteBuildsome
       annotate =
         annotateException $ renderStr $
-        "build failure of " <> targetShow (targetOutputs target) <> ":\n"
+        "build failure of " <> cTarget (show (targetOutputs target)) <> ":\n"
       newParents = (targetRep, bteReason) : bteParents
-      panicHandler e@E.SomeException {} = panic $ "FAILED during making of slave: " ++ show e
+      panicHandler e@E.SomeException {} = panic colors $ "FAILED during making of slave: " ++ show e
       mkSlave mvar action = do
         slave <-
           E.handle panicHandler $ do
@@ -503,23 +514,25 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
         putMVar mvar slave
         return slave
 
-data UnregisteredOutputFileExists = UnregisteredOutputFileExists FilePath deriving (Typeable)
+data UnregisteredOutputFileExists = UnregisteredOutputFileExists Color.Scheme FilePath deriving (Typeable)
 instance E.Exception UnregisteredOutputFileExists
 instance Show UnregisteredOutputFileExists where
-  show (UnregisteredOutputFileExists path) =
-    renderStr $ Color.error $ mconcat
-    [ targetShow path, " specified as output but exists as a file that "
+  show (UnregisteredOutputFileExists Color.Scheme{..} path) =
+    renderStr $ cError $ mconcat
+    [ cTarget (show path), " specified as output but exists as a file that "
     , "was not created by buildsome (use --overwrite to go ahead "
     , "anyway)" ]
 
 removeOldUnregisteredOutput :: Printer -> Buildsome -> FilePath -> IO ()
 removeOldUnregisteredOutput printer buildsome path =
   case optOverwriteUnregisteredOutputs (bsOpts buildsome) of
-  Opts.DontOverwriteUnregisteredOutputs -> E.throwIO $ UnregisteredOutputFileExists path
+  Opts.DontOverwriteUnregisteredOutputs -> E.throwIO $ UnregisteredOutputFileExists colors path
   Opts.OverwriteUnregisteredOutputs -> do
     printStrLn printer $ ColorText.render $
-      "Overwriting " <> targetShow path <> " (due to --overwrite)"
+      "Overwriting " <> cTarget (show path) <> " (due to --overwrite)"
     removeFileOrDirectory path
+  where
+    colors@Color.Scheme{..} = bsColors buildsome
 
 removeOldOutput :: Printer -> Buildsome -> Set FilePath -> FilePath -> IO ()
 removeOldOutput printer buildsome registeredOutputs path = do
@@ -611,8 +624,8 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
         filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
   (time, stdOutputs) <-
     FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
-    (shellCmdVerify target ["HOME", "PATH"])
-    (ColorText.render (targetShow (targetOutputs target)))
+    (shellCmdVerify colors target ["HOME", "PATH"])
+    (ColorText.render (cTarget (show (targetOutputs target))))
     fsAccessHandler
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
@@ -629,6 +642,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     , rcrSlaveStats = slaveStats
     }
   where
+    colors@Color.Scheme{..} = bsColors bteBuildsome
     targetOutputsSet = S.fromList $ targetOutputs target
 
 saveExecutionLog :: Buildsome -> Target -> RunCmdResults -> IO ()
@@ -697,7 +711,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
     mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
     case mSlaveStats of
       Just slaveStats -> return slaveStats
-      Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
+      Nothing -> Print.targetWrap colors btePrinter bteReason target "BUILDING" $ do
         targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
 
         registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
@@ -705,21 +719,22 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
 
         slaves <-
           mkSlavesForPaths bte
-            { bteReason = ColorText.render $ "Hint from " <> targetShow (targetOutputs target)
+            { bteReason = ColorText.render $ "Hint from " <> cTarget (show (targetOutputs target))
             } Explicit $ targetAllInputs target
         hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
 
-        Print.executionCmd verbosityCommands btePrinter target
+        Print.executionCmd colors verbosityCommands btePrinter target
 
         rcr@RunCmdResults{..} <- runCmd bte parCell target
 
         verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.keysSet rcrOutputs) target
         saveExecutionLog bteBuildsome target rcr
 
-        Print.targetTiming btePrinter "now" rcrSelfTime
+        Print.targetTiming colors btePrinter "now" rcrSelfTime
         let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
         return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
   where
+    colors@Color.Scheme{..} = bsColors bteBuildsome
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
 
@@ -739,28 +754,30 @@ deleteRemovedOutputs buildsome = do
     atomicModifyIORef' (Db.registeredOutputsRef (bsDb buildsome)) $
     S.partition (isJust . BuildMaps.find (bsBuildMaps buildsome))
   forM_ (S.toList toDelete) $ \path -> do
-    ColorText.putStrLn $ "Removing old output: " <> Color.path (show path)
+    ColorText.putStrLn $ "Removing old output: " <> cPath (show path)
     removeFileOrDirectoryOrNothing path
+  where
+    Color.Scheme{..} = bsColors buildsome
 
-data TargetCommandFailed = TargetCommandFailed Target ExitCode (StdOutputs ByteString) deriving (Typeable)
+data TargetCommandFailed = TargetCommandFailed Color.Scheme Target ExitCode (StdOutputs ByteString) deriving (Typeable)
 instance E.Exception TargetCommandFailed
 instance Show TargetCommandFailed where
-  show (TargetCommandFailed target exitCode stdOutputs) =
-    renderStr $ Color.error $ mconcat
+  show (TargetCommandFailed colors@Color.Scheme{..} target exitCode stdOutputs) =
+    renderStr $ cError $ mconcat
     [ fromBytestring8 (Print.delimitMultiline cmd), " failed: ", show exitCode
-    , maybe "" ("\n" <>) $ Print.outputsStr stdOutputs ]
+    , maybe "" ("\n" <>) $ Print.outputsStr colors stdOutputs ]
     where
       cmd = targetCmds target
 
-shellCmdVerify :: Target -> [String] -> Process.Env -> IO (StdOutputs ByteString)
-shellCmdVerify target inheritEnvs newEnvs = do
+shellCmdVerify :: Color.Scheme -> Target -> [String] -> Process.Env -> IO (StdOutputs ByteString)
+shellCmdVerify colors target inheritEnvs newEnvs = do
   (exitCode, stdout, stderr) <-
     Process.getOutputs (ShellCommand (BS8.unpack (targetCmds target))) inheritEnvs newEnvs
   let stdOutputs = StdOutputs stdout stderr
   case exitCode of
-    ExitFailure {} -> E.throwIO $ TargetCommandFailed target exitCode stdOutputs
+    ExitFailure {} -> E.throwIO $ TargetCommandFailed colors target exitCode stdOutputs
     _ -> return ()
-  Print.targetStdOutputs target stdOutputs
+  Print.targetStdOutputs colors  target stdOutputs
   return stdOutputs
 
 buildDbFilename :: FilePath -> FilePath
@@ -808,6 +825,7 @@ with makefilePath makefile opt@Opt{..} body = do
           , bsParallelism = parallelism
           , bsFreshPrinterIds = freshPrinterIds
           , bsFastKillBuild = fastKillBuild
+          , bsColors = Color.defaultScheme
           }
       deleteRemovedOutputs buildsome
       body buildsome
@@ -834,7 +852,9 @@ clean buildsome = do
   writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
   writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
   ColorText.putStrLn $ mconcat
-    [ Color.success "Clean Successful", ": Cleaned "
+    [ cSuccess "Clean Successful", ": Cleaned "
     , show count, " files freeing an estimated "
     , showBytes (fromIntegral totalSpace)
     ]
+  where
+    Color.Scheme{..} = bsColors buildsome

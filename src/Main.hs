@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable, OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, RecordWildCards #-}
 module Main (main) where
 
 import Buildsome (Buildsome)
@@ -38,18 +38,18 @@ import qualified System.Posix.ByteString as Posix
 standardMakeFilename :: FilePath
 standardMakeFilename = "Buildsome.mk"
 
-data SpecifiedInexistentMakefilePath = SpecifiedInexistentMakefilePath FilePath deriving (Typeable)
+data SpecifiedInexistentMakefilePath = SpecifiedInexistentMakefilePath Color.Scheme FilePath deriving (Typeable)
 instance Show SpecifiedInexistentMakefilePath where
-  show (SpecifiedInexistentMakefilePath path) =
-    ColorText.renderStr $ Color.error $ mconcat
-    ["Specified makefile path: ", Color.path (show path), " does not exist"]
+  show (SpecifiedInexistentMakefilePath Color.Scheme{..} path) =
+    ColorText.renderStr $ cError $ mconcat
+    ["Specified makefile path: ", cPath (show path), " does not exist"]
 instance E.Exception SpecifiedInexistentMakefilePath
 
-specifiedMakefile :: FilePath -> IO FilePath
-specifiedMakefile path = do
+specifiedMakefile :: Color.Scheme -> FilePath -> IO FilePath
+specifiedMakefile colors path = do
   mStat <- getMFileStatus path
   case mStat of
-    Nothing -> E.throwIO $ SpecifiedInexistentMakefilePath path
+    Nothing -> E.throwIO $ SpecifiedInexistentMakefilePath colors path
     Just stat
       | Posix.isDirectory stat -> return $ path </> standardMakeFilename
       | otherwise -> return path
@@ -62,21 +62,21 @@ data TargetsRequest = TargetsRequest
 
 data Requested = RequestedClean | RequestedTargets TargetsRequest
 
-data BadCommandLine = BadCommandLine String deriving (Typeable)
+data BadCommandLine = BadCommandLine Color.Scheme String deriving (Typeable)
 instance E.Exception BadCommandLine
 instance Show BadCommandLine where
-  show (BadCommandLine msg) =
-    ColorText.renderStr $ Color.error $ "Invalid command line options: " <> fromString msg
+  show (BadCommandLine Color.Scheme{..} msg) =
+    ColorText.renderStr $ cError $ "Invalid command line options: " <> fromString msg
 
-getRequestedTargets :: Maybe FilePath -> [ByteString] -> IO Requested
-getRequestedTargets (Just _) ["clean"] = E.throwIO $ BadCommandLine "Clean requested with charts"
-getRequestedTargets Nothing ["clean"] = return RequestedClean
-getRequestedTargets mChartPath [] = return $ RequestedTargets TargetsRequest
+getRequestedTargets :: Color.Scheme -> Maybe FilePath -> [ByteString] -> IO Requested
+getRequestedTargets colors (Just _) ["clean"] = E.throwIO $ BadCommandLine colors "Clean requested with charts"
+getRequestedTargets _ Nothing ["clean"] = return RequestedClean
+getRequestedTargets _ mChartPath [] = return $ RequestedTargets TargetsRequest
   { targetsRequestPaths = ["default"]
   , targetsRequestReason = "implicit 'default' target"
   , targetsRequestChartPath = mChartPath }
-getRequestedTargets mChartPath ts
-  | "clean" `elem` ts = E.throwIO $ BadCommandLine "Clean must be requested exclusively"
+getRequestedTargets colors mChartPath ts
+  | "clean" `elem` ts = E.throwIO $ BadCommandLine colors "Clean must be requested exclusively"
   | otherwise = return $ RequestedTargets TargetsRequest
   { targetsRequestPaths = ts
   , targetsRequestReason = "explicit request from cmdline"
@@ -98,37 +98,37 @@ switchDirectory makefilePath = do
   where
     (cwd, file) = FilePath.splitFileName makefilePath
 
-parseMakefile :: FilePath -> FilePath -> IO Makefile
-parseMakefile origMakefilePath finalMakefilePath = do
+parseMakefile :: Color.Scheme -> FilePath -> FilePath -> IO Makefile
+parseMakefile Color.Scheme{..} origMakefilePath finalMakefilePath = do
   (parseTime, makefile) <- timeIt $ Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative =<< Makefile.parse finalMakefilePath
   ColorText.putStrLn $ mconcat
-    [ "Parsed makefile: ", Color.path (show origMakefilePath)
-    , " (took ", Color.timing (show parseTime <> "sec"), ")"]
+    [ "Parsed makefile: ", cPath (show origMakefilePath)
+    , " (took ", cTiming (show parseTime <> "sec"), ")"]
   return makefile
 
 type InOrigCwd = [FilePath] -> IO [FilePath]
 
-data MakefileScanFailed = MakefileScanFailed deriving (Typeable)
+data MakefileScanFailed = MakefileScanFailed Color.Scheme deriving (Typeable)
 instance E.Exception MakefileScanFailed
 instance Show MakefileScanFailed where
-  show MakefileScanFailed =
-    ColorText.renderStr $ Color.error $ mconcat
+  show (MakefileScanFailed Color.Scheme{..}) =
+    ColorText.renderStr $ cError $ mconcat
     [ "ERROR: Cannot find a file named "
-    , Color.path (show standardMakeFilename)
+    , cPath (show standardMakeFilename)
     , " in this directory or any of its parents"
     ]
 
-handleOpts :: Opts -> IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
-handleOpts GetVersion = do
+handleOpts :: Color.Scheme -> Opts -> IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
+handleOpts _ GetVersion = do
   BS8.putStrLn $ "buildsome " <> Version.version
   return Nothing
-handleOpts (Opts opt) = do
+handleOpts colors (Opts opt) = do
   origMakefilePath <-
     case optMakefilePath opt of
     Nothing ->
-      maybe (E.throwIO MakefileScanFailed) return =<<
+      maybe (E.throwIO (MakefileScanFailed colors)) return =<<
       scanFileUpwards standardMakeFilename
-    Just path -> specifiedMakefile path
+    Just path -> specifiedMakefile colors path
   mChartsPath <- traverse FilePath.canonicalizePath $ optChartsPath opt
   (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
   let inOrigCwd =
@@ -138,8 +138,8 @@ handleOpts (Opts opt) = do
         Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
         -- Otherwise: there's no useful original cwd:
         Just _ -> return
-  requested <- getRequestedTargets mChartsPath $ optRequestedTargets opt
-  makefile <- parseMakefile origMakefilePath finalMakefilePath
+  requested <- getRequestedTargets colors mChartsPath $ optRequestedTargets opt
+  makefile <- parseMakefile colors origMakefilePath finalMakefilePath
   return $ Just (opt, inOrigCwd, requested, finalMakefilePath, makefile)
 
 makeChart :: Slave.Stats -> FilePath -> IO ()
@@ -158,7 +158,7 @@ handleRequested buildsome _ _ RequestedClean = Buildsome.clean buildsome
 main :: IO ()
 main = do
   opts <- Opts.get
-  mRes <- handleOpts opts
+  mRes <- handleOpts Color.defaultScheme opts
   case mRes of
     Nothing -> return ()
     Just (opt, inOrigCwd, requested, finalMakefilePath, makefile) -> do
