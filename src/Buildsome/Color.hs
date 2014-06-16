@@ -1,12 +1,11 @@
 module Buildsome.Color
-  ( Scheme(..), defaultScheme
+  ( Scheme(..), defaultScheme, nonColorScheme, schemeForTerminal
   ) where
 
--- cannot hide specific Prelude names when not using any prelude names
--- without getting a warning
-import Prelude()
 import Lib.ColorText (ColorText(..), withAttr)
 import System.Console.ANSI (Color(..), ColorIntensity(..))
+import System.Posix.IO (stdOutput)
+import System.Posix.Terminal (queryTerminal)
 import qualified System.Console.ANSI as Console
 
 fgColor :: ColorIntensity -> Color -> Console.SGR
@@ -39,3 +38,24 @@ defaultScheme = Scheme
   , cStdout = withAttr [fgColor Dull Green]
   , cStderr = withAttr [fgColor Dull Red]
   }
+
+nonColorScheme :: Scheme
+nonColorScheme = Scheme
+  { cWarning = id
+  , cError = id
+  , cTarget = id
+  , cPath = id
+  , cTiming = id
+  , cSuccess = id
+  , cCommand = id
+  , cStdout = id
+  , cStderr = id
+  }
+
+schemeForTerminal :: IO Scheme
+schemeForTerminal = do
+  isTty <- queryTerminal stdOutput
+  return $
+    if isTty
+    then defaultScheme
+    else nonColorScheme

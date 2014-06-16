@@ -158,12 +158,13 @@ handleRequested buildsome _ _ RequestedClean = Buildsome.clean buildsome
 main :: IO ()
 main = do
   opts <- Opts.get
-  mRes <- handleOpts Color.defaultScheme opts
+  colors <- Color.schemeForTerminal
+  mRes <- handleOpts colors opts
   case mRes of
     Nothing -> return ()
     Just (opt, inOrigCwd, requested, finalMakefilePath, makefile) -> do
       installSigintHandler
       setBuffering
       printer <- Printer.new 0
-      Buildsome.with finalMakefilePath makefile opt $ \buildsome ->
+      Buildsome.with colors finalMakefilePath makefile opt $ \buildsome ->
         handleRequested buildsome printer inOrigCwd requested

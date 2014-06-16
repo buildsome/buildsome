@@ -800,8 +800,8 @@ mkFastKillBuild Opts.DieQuickly = do
       disableFastKillBuild = E.uninterruptibleMask_ $ void $ swapMVar killActionMVar (const (return ()))
   return (fastKillBuild, disableFastKillBuild)
 
-with :: FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
-with makefilePath makefile opt@Opt{..} body = do
+with :: Color.Scheme -> FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
+with colors makefilePath makefile opt@Opt{..} body = do
   ldPreloadPath <- FSHook.getLdPreloadPath optFsOverrideLdPreloadPath
   FSHook.with ldPreloadPath $ \fsHook ->
     Db.with (buildDbFilename makefilePath) $ \db -> do
@@ -825,7 +825,7 @@ with makefilePath makefile opt@Opt{..} body = do
           , bsParallelism = parallelism
           , bsFreshPrinterIds = freshPrinterIds
           , bsFastKillBuild = fastKillBuild
-          , bsColors = Color.defaultScheme
+          , bsColors = colors
           }
       deleteRemovedOutputs buildsome
       body buildsome
