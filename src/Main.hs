@@ -118,6 +118,14 @@ instance Show MakefileScanFailed where
     , " in this directory or any of its parents"
     ]
 
+getColors :: Opts -> IO Color.Scheme
+getColors GetVersion = return Color.nonColorScheme
+getColors (Opts opt) =
+  case optColor opt of
+  Opts.ColorDisable -> return Color.nonColorScheme
+  Opts.ColorEnable -> return Color.defaultScheme
+  Opts.ColorDefault -> Color.schemeForTerminal
+
 handleOpts :: Color.Scheme -> Opts -> IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
 handleOpts _ GetVersion = do
   BS8.putStrLn $ "buildsome " <> Version.version
@@ -158,7 +166,7 @@ handleRequested buildsome _ _ RequestedClean = Buildsome.clean buildsome
 main :: IO ()
 main = do
   opts <- Opts.get
-  colors <- Color.schemeForTerminal
+  colors <- getColors opts
   mRes <- handleOpts colors opts
   case mRes of
     Nothing -> return ()

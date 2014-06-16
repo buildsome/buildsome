@@ -3,6 +3,7 @@ module Buildsome.Opts
   , OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)
   , KeepGoing(..)
+  , Color(..)
   , Opt(..), Opts(..), get
   , PrintCommands(..)
   , PrintByOutputs(..)
@@ -17,11 +18,11 @@ import Options.Applicative
 import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
-
 data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
 data UpdateGitIgnore = UpdateGitIgnore | DontUpdateGitIgnore
 data KeepGoing = KeepGoing | DieQuickly
+data Color = ColorDisable | ColorEnable | ColorDefault
 
 data PrintCommands
   = DontPrintCommands
@@ -64,6 +65,7 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
                , optParallelism :: Maybe Int
                , optUpdateGitIgnore :: UpdateGitIgnore
+               , optColor :: Color
                , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                , optKeepGoing :: KeepGoing
@@ -123,6 +125,16 @@ get =
                  help "Do not touch the .gitignore file in the same directory as the Makefile")
                 <|>
                 pure UpdateGitIgnore
+              )
+          <*> ( flag' ColorDisable
+                (long "disable-color" <>
+                 help "Do not use color coded outputs")
+                <|>
+                flag' ColorEnable
+                (long "enable-color" <>
+                 help "Use color coded outputs")
+                <|>
+                pure ColorDefault
               )
           <*> flag DontDeleteUnspecifiedOutputs DeleteUnspecifiedOutputs
               (short 'D' <>
