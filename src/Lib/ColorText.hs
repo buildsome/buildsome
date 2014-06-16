@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings #-}
 module Lib.ColorText
   ( ColorText(..), normalize, simple
   , render, renderStr
@@ -49,11 +49,15 @@ renderStr :: ColorText -> String
 renderStr = BS8.unpack . render
 
 render :: ColorText -> ByteString
-render (ColorText pairs) = mconcat (map renderPair pairs) <> fromString (Console.setSGRCode [])
+render = go [] . colorTextPairs
   where
-    renderPair (sgrs, x)
-      | x == mempty = mempty
-      | otherwise = fromString (Console.setSGRCode sgrs) <> x
+    go [] [] = ""
+    go (_:_) [] = fromString (Console.setSGRCode [])
+    go curSgrs ((sgrs, x):rest) = colorCode <> x <> go sgrs rest
+      where
+        colorCode
+          | curSgrs /= sgrs = fromString (Console.setSGRCode sgrs)
+          | otherwise = ""
 
 intercalate :: Monoid m => m -> [m] -> m
 intercalate x = mconcat . List.intersperse x
