@@ -1,3 +1,7 @@
+* Add Exception type wrapper for all buildsome exceptions that has a
+  coloredText method: Color.Scheme -> ColorText.  "Show" should be the
+  default Show.
+
 * .pyc doesn't properly get auto-deleted.  Remember generator of .pyc, associate it with a command
 
 * Phonies should not be included in directory listing
