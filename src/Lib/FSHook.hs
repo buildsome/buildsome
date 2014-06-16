@@ -175,7 +175,9 @@ with ldPreloadPath body = do
         do
           (conn, _srcAddr) <- Sock.accept listener
           AsyncContext.spawn ctx $
-            printRethrowExceptions "BUG: Job connection failed: " $
+            -- Job connection may fail when the process is killed
+            -- during a send-message, which may cause a protocol error
+            printRethrowExceptions "Job connection failed: " $
             serve fsHook conn
             `E.finally` Sock.close conn
       body fsHook
