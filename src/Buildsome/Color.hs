@@ -6,6 +6,7 @@ import Lib.ColorText (ColorText(..), withAttr)
 import System.Console.ANSI (Color(..), ColorIntensity(..))
 import System.Posix.IO (stdOutput)
 import System.Posix.Terminal (queryTerminal)
+import qualified Lib.Printer as Printer
 import qualified System.Console.ANSI as Console
 
 fgColor :: ColorIntensity -> Color -> Console.SGR
@@ -24,19 +25,24 @@ data Scheme = Scheme
   , cCommand :: ColorText -> ColorText
   , cStdout :: ColorText -> ColorText
   , cStderr :: ColorText -> ColorText
+  , cPrinter :: Printer.ColorScheme
   }
 
 defaultScheme :: Scheme
 defaultScheme = Scheme
   { cWarning = withAttr [fgColor Vivid Yellow]
-  , cError = withAttr [fgColor Vivid Red]
-  , cTarget = withAttr [fgColor Vivid Cyan]
-  , cPath = withAttr [fgColor Dull Cyan]
-  , cTiming = withAttr [fgColor Vivid Blue]
+  , cError   = withAttr [fgColor Vivid Red]
+  , cTarget  = withAttr [fgColor Vivid Cyan]
+  , cPath    = withAttr [fgColor Dull  Cyan]
+  , cTiming  = withAttr [fgColor Vivid Blue]
   , cSuccess = withAttr [fgColor Vivid Green]
-  , cCommand = withAttr [fgColor Dull White]
-  , cStdout = withAttr [fgColor Dull Green]
-  , cStderr = withAttr [fgColor Dull Red]
+  , cCommand = withAttr [fgColor Dull  White]
+  , cStdout  = withAttr [fgColor Dull  Green]
+  , cStderr  = withAttr [fgColor Dull  Red]
+  , cPrinter = Printer.ColorScheme
+    { Printer.cException = withAttr [fgColor Vivid Red]
+    , Printer.cOk        = withAttr [fgColor Vivid Green]
+    }
   }
 
 nonColorScheme :: Scheme
@@ -50,6 +56,10 @@ nonColorScheme = Scheme
   , cCommand = id
   , cStdout = id
   , cStderr = id
+  , cPrinter = Printer.ColorScheme
+    { Printer.cException = id
+    , Printer.cOk = id
+    }
   }
 
 schemeForTerminal :: IO Scheme

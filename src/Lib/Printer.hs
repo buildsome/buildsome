@@ -1,10 +1,11 @@
-{-# LANGUAGE OverloadedStrings, FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings, FlexibleInstances, RecordWildCards #-}
 module Lib.Printer
   ( Id, idStr
   , Printable
   , Printer, new, newFrom
   , printStrLn
   , printWrap
+  , ColorScheme(..)
   ) where
 
 import Control.Applicative ((<$>))
@@ -21,7 +22,6 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.List as List
 import qualified Lib.ColorText as ColorText
 import qualified Prelude
-import qualified System.Console.ANSI as Console
 
 type Id = Int
 
@@ -70,23 +70,20 @@ printStrLn (Printer pid indentRef) str = do
   let prefix = idStr pid <> " " <> mconcat (replicate indentLevel "  ")
   putStrLn . intercalate "\n" . map (prefix <>) . lines $ str
 
-exceptionTextAttrs :: [Console.SGR]
-exceptionTextAttrs = [Console.SetColor Console.Foreground Console.Vivid Console.Red]
-
-okTextAttrs :: [Console.SGR]
-okTextAttrs = [Console.SetColor Console.Foreground Console.Vivid Console.Green]
+data ColorScheme = ColorScheme
+  { cException :: ColorText -> ColorText
+  , cOk :: ColorText -> ColorText
+  }
 
 {-# INLINE printWrap #-}
-printWrap :: Printer -> ColorText -> ColorText -> IO a -> IO a
-printWrap printer str entryMsg body = do
+printWrap :: ColorScheme -> Printer -> ColorText -> ColorText -> IO a -> IO a
+printWrap ColorScheme{..} printer str entryMsg body = do
   printStrLn printer before
   res <-
     wrappedBody `onException` \e ->
-    printStrLn printer $ after $
-    ColorText.withAttr exceptionTextAttrs $
+    printStrLn printer $ after $ cException $
     "EXCEPTION: " <> fromString ((concat . take 1 . lines . show) e)
-  printStrLn printer $ after $
-    ColorText.withAttr okTextAttrs "OK"
+  printStrLn printer $ after $ cOk "OK"
   return res
   where
     indentLevel  = printerIndentLevelRef printer

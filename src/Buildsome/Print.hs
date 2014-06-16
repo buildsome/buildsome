@@ -42,9 +42,10 @@ warn Color.Scheme{..} pos str =
   posMessage pos $ cWarning $ "WARNING: " <> str
 
 targetWrap :: Color.Scheme -> Printer -> Reason -> Target -> ColorText -> IO a -> IO a
-targetWrap Color.Scheme{..} printer reason target str =
-  Printer.printWrap printer (cTarget (show (targetOutputs target))) $ mconcat
-  [str, " (", fromBytestring8 reason, ")"]
+targetWrap colors@Color.Scheme{..} printer reason target str =
+  Printer.printWrap (Color.cPrinter colors) printer
+  (cTarget (show (targetOutputs target))) $
+  mconcat [str, " (", fromBytestring8 reason, ")"]
 
 targetTiming :: Show a => Color.Scheme -> Printer -> ColorText -> a -> IO ()
 targetTiming Color.Scheme{..} printer str selfTime =
