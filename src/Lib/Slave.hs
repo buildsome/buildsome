@@ -3,6 +3,7 @@ module Lib.Slave
   ( Slave, new
   , str
   , wait, waitCatch
+  , totalStdErrors
   , cancel
   , wrap
   , When(..), Stats(..)
@@ -21,12 +22,13 @@ import Prelude hiding (FilePath)
 import qualified Control.Concurrent.Async as Async
 import qualified Control.Exception as E
 import qualified Lib.Printer as Printer
+import qualified Data.Map as M
 
 -- TODO: Get this Stats business out of here and have "Slave a"?
 data When = FromCache | BuiltNow deriving Show
 
 newtype Stats = Stats
-  { statsSelfTime :: Map TargetRep (When, DiffTime)
+  { statsSelfTime :: Map TargetRep (When, DiffTime, Int)
   } deriving (Show, Monoid)
 
 data Slave = Slave
@@ -34,6 +36,9 @@ data Slave = Slave
   , slaveOutputPaths :: [FilePath]
   , slaveExecution :: Async Stats
   }
+
+totalStdErrors ::  Stats -> Int
+totalStdErrors (Stats m) = sum $ map (\(_,_,x)->x) $ M.elems m
 
 new :: Printer.Id -> [FilePath] -> IO Stats -> IO Slave
 new printerId outputPaths action =
