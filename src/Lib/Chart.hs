@@ -18,14 +18,14 @@ import qualified Graphics.Rendering.Chart.Backend.Cairo as ChartCairo
 import qualified Lib.BuildMaps as BuildMaps
 
 buildTimes :: Slave.Stats -> Chart.PieChart
-buildTimes (Slave.Stats stats) =
+buildTimes stats =
  def { Chart._pie_data = dataPoints }
  where
   dataPoints =
     let f (targetRep, (_when, count)) =
           def { Chart._pitem_label = BS8.unpack $ BuildMaps.targetRepPath targetRep
               , Chart._pitem_value = realToFrac count }
-    in map f $ M.toList stats
+    in map f $ M.toList $ Slave.statsSelfTime stats
 
 make :: Slave.Stats -> FilePath -> IO ()
 make stats filePath =

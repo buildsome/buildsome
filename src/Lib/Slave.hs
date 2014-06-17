@@ -12,6 +12,7 @@ import Control.Applicative ((<$>))
 import Control.Concurrent.Async (Async)
 import Data.Map (Map)
 import Data.Monoid
+import Data.Set (Set)
 import Data.String (IsString(..))
 import Data.Time (DiffTime)
 import Lib.BuildMaps (TargetRep)
@@ -25,9 +26,16 @@ import qualified Lib.Printer as Printer
 -- TODO: Get this Stats business out of here and have "Slave a"?
 data When = FromCache | BuiltNow deriving Show
 
-newtype Stats = Stats
+data Stats = Stats
   { statsSelfTime :: Map TargetRep (When, DiffTime)
-  } deriving (Show, Monoid)
+  , statsStdErr :: Set TargetRep
+  } deriving (Show)
+
+instance Monoid Stats where
+  mempty = Stats mempty mempty
+  mappend (Stats ax ay) (Stats bx by) = Stats
+    (ax `mappend` bx)
+    (ay `mappend` by)
 
 data Slave = Slave
   { slavePrinterId :: Printer.Id

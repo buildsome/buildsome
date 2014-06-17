@@ -176,8 +176,15 @@ want printer buildsome reason paths = do
     , bteReason = reason
     , bteParents = []
     } Explicit paths
+  let stdErrs = Slave.statsStdErr slaveStats
+      lastLinePrefix
+        | not (S.null stdErrs) =
+          cWarning $ "Build Successful, but with STDERR from: " <>
+          (cTarget . show . map BuildMaps.targetRepPath . S.toList) stdErrs
+        | otherwise =
+          cSuccess "Build Successful"
   printStrLn printer $ mconcat
-    [ cSuccess "Build Successful", ": "
+    [ lastLinePrefix, ": "
     , cTiming (show buildTime <> " seconds"), " total." ]
   return slaveStats
   where
@@ -360,6 +367,17 @@ verifyFileDesc str filePath fileDesc existingVerify = do
     (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
     (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
 
+mkStats :: (Eq a, Monoid a) => TargetRep -> Slave.When -> DiffTime -> StdOutputs a -> Slave.Stats
+mkStats targetRep execTime selfTime stdOutputs =
+  Slave.Stats
+  { Slave.statsSelfTime = M.singleton targetRep (execTime, selfTime)
+  , Slave.statsStdErr =
+    if mempty /= stdErr stdOutputs
+    then S.singleton targetRep
+    else S.empty
+  }
+
+
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Cell ->
   TargetRep -> Target -> Db.ExecutionLog ->
@@ -384,7 +402,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
       replayExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    let selfStats = Slave.Stats $ M.singleton targetRep (Slave.FromCache, elSelfTime)
+    let selfStats = mkStats targetRep Slave.FromCache elSelfTime elStdoutputs
     return $ mappend selfStats nestedSlaveStats
   where
     db = bsDb bteBuildsome
@@ -737,7 +755,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
         saveExecutionLog bteBuildsome target rcr
 
         Print.targetTiming colors btePrinter "now" rcrSelfTime
-        let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
+        let selfStats = mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs
         return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
   where
     colors@Color.Scheme{..} = bsColors bteBuildsome
