@@ -37,12 +37,14 @@ data PrintOutputs
 data Verbosity = Verbosity
   { verbosityCommands :: PrintCommands
   , verbosityOutputs :: PrintOutputs
+  , verbosityGeneral :: Bool
   }
 
 verbosityAll :: Verbosity
 verbosityAll = Verbosity
   { verbosityCommands = PrintCommandsForAll
   , verbosityOutputs = PrintOutputsAnyway
+  , verbosityGeneral = True
   }
 
 parseVerbosity :: Parser Verbosity
@@ -59,6 +61,9 @@ parseVerbosity =
     <*> flag PrintOutputsIfStderr PrintOutputsNonEmpty
         (long "verbose-stdouts" <>
          help "Replay stdouts and not just stderrs")
+    <*> switch
+        (long "verbose-general" <>
+         help "Show buildsome's own execution details")
   )
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
