@@ -43,7 +43,7 @@ import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
-import Lib.Slave (Slave)
+import Lib.Slave (Slave, totalStdErrors)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
@@ -175,8 +175,12 @@ want printer buildsome reason paths = do
     , bteReason = reason
     , bteParents = []
     } Explicit paths
+  let lastLinePrefix =
+       if totalStdErrors slaveStats > 0
+          then cWarning "Build Successful (but with STDERR)"
+          else cSuccess "Build Successful"
   printStrLn printer $ mconcat
-    [ cSuccess "Build Successful", ": "
+    [ lastLinePrefix, ": "
     , cTiming (show buildTime <> " seconds"), " total." ]
   return slaveStats
   where
@@ -383,7 +387,8 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
       replayExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    let selfStats = Slave.Stats $ M.singleton targetRep (Slave.FromCache, elSelfTime)
+    let selfStats = Slave.Stats $ M.singleton targetRep (Slave.FromCache, elSelfTime,
+                                            if (stdErr elStdoutputs /= "") then 1 else 0 )
     return $ mappend selfStats nestedSlaveStats
   where
     db = bsDb bteBuildsome
@@ -736,7 +741,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
         saveExecutionLog bteBuildsome target rcr
 
         Print.targetTiming colors btePrinter "now" rcrSelfTime
-        let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
+        let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime, 0)
         return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
   where
     colors@Color.Scheme{..} = bsColors bteBuildsome
