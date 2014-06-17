@@ -124,6 +124,11 @@ cancelAllSlaves bs = go 0
         -- created during cancellation
         go count
 
+verbosePutStrln :: Buildsome -> String -> IO ()
+verbosePutStrln buildsome str = do
+  let verbose = Opts.verbosityGeneral $ optVerbosity $ bsOpts buildsome
+  when verbose $ putStrLn str
+
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
   outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
@@ -132,7 +137,7 @@ updateGitIgnore buildsome makefilePath = do
       gitIgnorePath = dir </> ".gitignore"
       gitIgnoreBasePath = dir </> gitignoreBaseName
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
-  putStrLn "Updating .gitignore"
+  verbosePutStrln buildsome "Updating .gitignore"
   base <- Dir.catchDoesNotExist
           (fmap BS8.lines $ BS8.readFile $  BS8.unpack gitIgnoreBasePath)
           $ return []
