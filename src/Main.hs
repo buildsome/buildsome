@@ -31,6 +31,7 @@ import qualified Lib.Makefile as Makefile
 import qualified Lib.Printer as Printer
 import qualified Lib.Slave as Slave
 import qualified Lib.Version as Version
+import qualified Data.Map as M
 import qualified Prelude
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
@@ -98,9 +99,9 @@ switchDirectory makefilePath = do
   where
     (cwd, file) = FilePath.splitFileName makefilePath
 
-parseMakefile :: Color.Scheme -> FilePath -> FilePath -> IO Makefile
-parseMakefile Color.Scheme{..} origMakefilePath finalMakefilePath = do
-  (parseTime, makefile) <- timeIt $ Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative =<< Makefile.parse finalMakefilePath
+parseMakefile :: Color.Scheme -> FilePath -> FilePath -> Makefile.Vars -> IO Makefile
+parseMakefile Color.Scheme{..} origMakefilePath finalMakefilePath vars = do
+  (parseTime, makefile) <- timeIt $ Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative =<< Makefile.parse finalMakefilePath vars
   ColorText.putStrLn $ mconcat
     [ "Parsed makefile: ", cPath (show origMakefilePath)
     , " (took ", cTiming (show parseTime <> "sec"), ")"]
@@ -126,6 +127,13 @@ getColors (Opts opt) =
   Opts.ColorEnable -> return Color.defaultScheme
   Opts.ColorDefault -> Color.schemeForTerminal
 
+optVars :: Opt -> Makefile.Vars
+optVars opt = M.fromList $ withs ++ withouts
+  where
+    asVars val = map $ \name -> ("FLAG_" <> name, val)
+    withs = asVars "enable" $ optWiths opt
+    withouts = asVars "disable" $ optWithouts opt
+
 handleOpts :: Color.Scheme -> Opts -> IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
 handleOpts _ GetVersion = do
   BS8.putStrLn $ "buildsome " <> Version.version
@@ -147,7 +155,7 @@ handleOpts colors (Opts opt) = do
         -- Otherwise: there's no useful original cwd:
         Just _ -> return
   requested <- getRequestedTargets colors mChartsPath $ optRequestedTargets opt
-  makefile <- parseMakefile colors origMakefilePath finalMakefilePath
+  makefile <- parseMakefile colors origMakefilePath finalMakefilePath (optVars opt)
   return $ Just (opt, inOrigCwd, requested, finalMakefilePath, makefile)
 
 makeChart :: Slave.Stats -> FilePath -> IO ()

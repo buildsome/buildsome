@@ -76,6 +76,8 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optKeepGoing :: KeepGoing
                , optChartsPath :: Maybe FilePath
                , optFsOverrideLdPreloadPath :: Maybe FilePath
+               , optWiths :: [ByteString]
+               , optWithouts :: [ByteString]
 
                , optVerbosity :: Verbosity
                }
@@ -85,8 +87,11 @@ data Opts = GetVersion | Opts Opt
 opt :: Read a => Mod OptionFields a -> Parser (Maybe a)
 opt = optional . option
 
-strOpt :: Mod OptionFields String -> Parser (Maybe ByteString)
-strOpt = (fmap . fmap) BS8.pack . optional . strOption
+strOptional :: Mod OptionFields String -> Parser (Maybe ByteString)
+strOptional = (fmap . fmap) BS8.pack . optional . strOption
+
+strOpt :: Mod OptionFields String -> Parser ByteString
+strOpt = fmap BS8.pack . strOption
 
 desc :: String
 desc = intercalate "\n"
@@ -111,10 +116,10 @@ get =
     versionParser = flag' GetVersion (long "version" <> help "Get buildsome's version")
     optsParser =
       Opt <$> many (argument bytestr (metavar "targets"))
-          <*> strOpt (short 'f' <>
-                      long "file" <>
-                      metavar "file" <>
-                      help "Use file as a makefile.")
+          <*> strOptional (short 'f' <>
+                           long "file" <>
+                           metavar "file" <>
+                           help "Use file as a makefile.")
           <*> opt (short 'j' <>
                    long "parallelism" <>
                    help "How many commands to execute in parallel" <>
@@ -152,10 +157,14 @@ get =
               (short 'k' <>
                long "keep-going" <>
                help "Continue as much as possible after an error.")
-          <*> strOpt (long "charts" <>
-                      metavar "charts-file" <>
-                      help "File to write charts to")
-          <*> strOpt (long "fs-override" <>
-                      metavar "path" <>
-                      help "Path for fs_override.so")
+          <*> strOptional (long "charts" <>
+                           metavar "charts-file" <>
+                           help "File to write charts to")
+          <*> strOptional (long "fs-override" <>
+                           metavar "path" <>
+                           help "Path for fs_override.so")
+          <*> many (strOpt (metavar "flag" <> long "with" <>
+                            help "Enable flags that are disabled by default"))
+          <*> many (strOpt (metavar "flag" <> long "without" <>
+                            help "Disable flags that are enabled by default"))
           <*> parseVerbosity

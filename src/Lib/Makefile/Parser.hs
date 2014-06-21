@@ -1,6 +1,7 @@
 {-# LANGUAGE Rank2Types, OverloadedStrings, DeriveDataTypeable #-}
 module Lib.Makefile.Parser
   ( makefile, parse, interpolateCmds, metaVariable
+  , Vars, VarName, VarValue
   ) where
 
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
@@ -385,12 +386,23 @@ properEof = do
     [] -> return ()
     stack -> fail $ "EOF: unterminated locals: " ++ show stack
 
+data OverrideVar = OverrideVar | DontOverrideVar
+
 varAssignment :: Parser ()
 varAssignment = do
-  varName <- P.try $ ident <* P.char '='
+  (varName, overrideVar) <-
+      do x <- P.try $ ident
+         horizSpaces
+         y <-
+           (OverrideVar     <$ P.string "=") <|>
+           (DontOverrideVar <$ P.string "?=")
+         horizSpaces
+         return (x, y)
   value <- BS8.pack <$> P.many (unescapedChar <|> P.noneOf "#\n")
   skipLineSuffix
-  P.updateState $ atStateVars $ M.insert varName value
+  let f DontOverrideVar (Just old) = Just old
+      f _ _ = Just value
+  P.updateState $ atStateVars $ M.alter (f overrideVar) varName
 
 echoStatement :: Parser ()
 echoStatement = do
@@ -430,14 +442,14 @@ makefile =
     properEof
   )
 
-parse :: FilePath -> IO Makefile
-parse makefileName = do
+parse :: FilePath -> Vars -> IO Makefile
+parse makefileName vars = do
   res <-
     join $ parseFromFile makefile State
     { stateIncludeStack = []
     , stateLocalsStack = []
     , stateRootDir = FilePath.takeDirectory makefileName
-    , stateVars = M.empty
+    , stateVars = vars
     } makefileName
   case res of
     Right x -> return x
