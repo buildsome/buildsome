@@ -6,12 +6,13 @@ module Lib.Makefile.Parser
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IfElse (whenM)
 import Data.ByteString (ByteString)
 import Data.Char (isAlphaNum)
 import Data.Either (partitionEithers)
 import Data.List (partition)
 import Data.Map (Map)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import Data.Monoid ((<>))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
@@ -39,16 +40,17 @@ data State = State
   , stateLocalsStack :: [Vars]
   , stateRootDir :: FilePath
   , stateVars :: Vars
+  , stateConditional :: (Int, Int)
   }
 type Vars = Map VarName VarValue
 type Parser = P.ParsecT ByteString State IO
 type ParserG = P.ParsecT ByteString
 
 atStateVars :: (Vars -> Vars) -> State -> State
-atStateVars f (State i l r v) = State i l r (f v)
+atStateVars f (State i l r v s) = State i l r (f v) s
 
 atStateIncludeStack :: (IncludeStack -> IncludeStack) -> State -> State
-atStateIncludeStack f (State i l r v) = State (f i) l r v
+atStateIncludeStack f (State i l r v s) = State (f i) l r v s
 
 horizSpace :: Monad m => ParserG u m Char
 horizSpace = P.satisfy (`elem` " \t")
@@ -224,14 +226,14 @@ runInclude rawIncludedPath = do
 returnToIncluder :: Parser ()
 returnToIncluder =
   P.eof *> do
-    State includeStack localsStack rootDir vars <- P.getState
+    State includeStack localsStack rootDir vars cond <- P.getState
     case includeStack of
       [] -> fail "Don't steal eof"
       ((pos, input) : rest) -> do
         void $ P.setParserState P.State
           { P.statePos = pos
           , P.stateInput = input
-          , P.stateUser = State rest localsStack rootDir vars
+          , P.stateUser = State rest localsStack rootDir vars cond
           }
         -- "include" did not eat the end of line (if one existed) so lets
         -- read it here
@@ -331,7 +333,7 @@ targetSimple pos outputPaths inputPaths orderOnlyInputs = do
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
-target :: Parser (Either Pattern Target)
+target :: Parser (Maybe (Either Pattern Target))
 target = do
   pos <- P.getPosition
   outputPaths <- P.try $
@@ -345,16 +347,21 @@ target = do
     fmap (fromMaybe []) . P.optionMaybe $
     P.try (horizSpaces *> P.char '|') *> horizSpaces *> filepaths
   skipLineSuffix
-  if "%" `BS8.isInfixOf` (BS8.concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
-    then Left <$> targetPattern pos outputPaths inputPaths orderOnlyInputs
-    else Right <$> targetSimple pos outputPaths inputPaths orderOnlyInputs
+  e <- isConditionallyEnabled
+  case e of
+    True -> do
+      r <- if "%" `BS8.isInfixOf` (BS8.concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
+      then Left <$> targetPattern pos outputPaths inputPaths orderOnlyInputs
+      else Right <$> targetSimple pos outputPaths inputPaths orderOnlyInputs
+      return $ Just r
+    False -> return Nothing
 
 data PosError = PosError Pos.SourcePos ByteString deriving (Typeable)
 instance Show PosError where
   show (PosError pos msg) = concat [showPos pos, ": ", BS8.unpack msg]
 instance E.Exception PosError
 
-mkMakefile :: [Either Pattern Target] -> Makefile
+mkMakefile :: [Maybe (Either Pattern Target)] -> Makefile
 mkMakefile allTargets =
   either E.throw id $ do
     phonies <- concat <$> mapM getPhonyInputs phonyTargets
@@ -364,7 +371,7 @@ mkMakefile allTargets =
       , makefilePhonies = phonies
       }
   where
-    (targetPatterns, targets) = partitionEithers allTargets
+    (targetPatterns, targets) = partitionEithers $ catMaybes allTargets
     outputPathsSet = S.fromList (concatMap targetOutputs regularTargets)
     badPhony t str = Left $ PosError (targetPos t) $ ".PHONY target " <> str
     getPhonyInputs t@(Target [".PHONY"] inputs [] cmd _) =
@@ -395,20 +402,22 @@ varAssignment = do
          return (x, y)
   value <- BS8.pack <$> P.many (unescapedChar <|> P.noneOf "#\n")
   skipLineSuffix
-  let modify = P.updateState $ atStateVars $ M.insert varName value
-  if dontModify then do
-    varsEnv <- stateVars <$> P.getState
-    case M.lookup varName varsEnv of
-      Nothing -> modify
-      Just _ -> return ()
-  else
-    modify
+  whenM isConditionallyEnabled $ do
+    let modify = P.updateState $ atStateVars $ M.insert varName value
+    if dontModify then do
+      varsEnv <- stateVars <$> P.getState
+      case M.lookup varName varsEnv of
+        Nothing -> modify
+        Just _ -> return ()
+    else
+      modify
 
 echoStatement :: Parser ()
 echoStatement = do
   P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string "echo" *> horizSpaces1
   str <- interpolateVariables unescapedSequence "#\n" <* skipLineSuffix
-  liftIO $ BS8.putStrLn $ "ECHO: " <> str
+  whenM isConditionallyEnabled $
+     liftIO $ BS8.putStrLn $ "ECHO: " <> str
 
 localsOpen :: Parser ()
 localsOpen = void $ P.updateState $ \state -> state { stateLocalsStack = stateVars state : stateLocalsStack state }
@@ -424,6 +433,57 @@ localsClose = do
 localDirective :: Parser ()
 localDirective = P.try (P.string "local" *> horizSpaces1) *> ((P.char '{' *> localsOpen) <|> (P.char '}' *> localsClose))
 
+updateConditionals :: ((Int, Int) -> Parser (Int, Int)) -> Parser ()
+updateConditionals f = do
+  state <- P.getState
+  r <- f $ stateConditional state
+  P.putState $ state { stateConditional = r }
+
+isConditionallyEnabled :: Parser Bool
+isConditionallyEnabled = do
+  state <- P.getState
+  let (_, down) = stateConditional state
+  return $ down == 0
+
+ifeqDirective :: String -> Bool -> Parser ()
+ifeqDirective prefix isneq = do
+  void $ P.try $ P.optional (P.char ' ' *> horizSpaces) *>
+       P.string prefix *> horizSpaces *> P.char '('
+  value_a <- horizSpaces *> interpolateVariables unescapedSequence "," <* horizSpaces
+  void $ P.char ','
+  value_b <- horizSpaces *> interpolateVariables unescapedSequence ")" <* horizSpaces
+  void $ P.char ')'
+  let condResult = (not isneq && value_a == value_b) || (isneq && value_a /= value_b)
+  updateConditionals $ \(up, down) -> do
+    if (down == 0) then return $ if condResult then (up + 1, 0) else (up, 1)
+    else return $ (up, down + 1)
+
+endifDirective :: Parser ()
+endifDirective = do
+  void $ P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string "endif"
+  skipLineSuffix
+  updateConditionals $ \(up, down) -> do
+    if (down == 0) then if (up == 0) then fail "endif unmatched" else return (up - 1, 0)
+    else return $ (up, down - 1)
+
+elseDirective :: Parser ()
+elseDirective = do
+  void $ P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string "else"
+  skipLineSuffix
+  updateConditionals $ \(up, down) -> do
+    if (down > 1) then return (up, down - 1)
+    else if (down == 1) then return (up + 1, 0)
+    else if (up == 0) then fail "else unmatched"
+    else return $ (up - 1, down + 1)
+
+conditionalStatement :: Parser ()
+conditionalStatement = P.choice
+  [ ifeqDirective "ifeq" False
+  , ifeqDirective "ifneq" True
+  , elseDirective
+  , endifDirective
+  ]
+
 makefile :: Parser Makefile
 makefile =
   mkMakefile . concat <$>
@@ -432,6 +492,7 @@ makefile =
     ( P.choice
       [ [] <$ properEof
       , [] <$ echoStatement
+      , [] <$ conditionalStatement
       , ((: []) <$> target) <|>
         (   []  <$  localDirective)
       , [] <$ varAssignment
@@ -450,6 +511,7 @@ parse makefileName vars = do
     , stateLocalsStack = []
     , stateRootDir = FilePath.takeDirectory makefileName
     , stateVars = vars
+    , stateConditional = (0, 0)
     } makefileName
   case res of
     Right x -> return x
