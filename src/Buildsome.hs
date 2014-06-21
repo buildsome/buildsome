@@ -43,7 +43,7 @@ import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
-import Lib.Slave (Slave)
+import Lib.Slave (Slave, totalStdErrors)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
@@ -124,6 +124,11 @@ cancelAllSlaves bs = go 0
         -- created during cancellation
         go count
 
+verbosePutStrln :: Buildsome -> String -> IO ()
+verbosePutStrln buildsome str = do
+  let verbose = Opts.verbosityGeneral $ optVerbosity $ bsOpts buildsome
+  when verbose $ putStrLn str
+
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
   outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
@@ -132,7 +137,7 @@ updateGitIgnore buildsome makefilePath = do
       gitIgnorePath = dir </> ".gitignore"
       gitIgnoreBasePath = dir </> gitignoreBaseName
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
-  putStrLn "Updating .gitignore"
+  verbosePutStrln buildsome "Updating .gitignore"
   base <- Dir.catchDoesNotExist
           (fmap BS8.lines $ BS8.readFile $  BS8.unpack gitIgnoreBasePath)
           $ return []
@@ -170,8 +175,12 @@ want printer buildsome reason paths = do
     , bteReason = reason
     , bteParents = []
     } Explicit paths
+  let lastLinePrefix =
+       if totalStdErrors slaveStats > 0
+          then cWarning "Build Successful (but with STDERR)"
+          else cSuccess "Build Successful"
   printStrLn printer $ mconcat
-    [ cSuccess "Build Successful", ": "
+    [ lastLinePrefix, ": "
     , cTiming (show buildTime <> " seconds"), " total." ]
   return slaveStats
   where
@@ -378,7 +387,8 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
       replayExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    let selfStats = Slave.Stats $ M.singleton targetRep (Slave.FromCache, elSelfTime)
+    let selfStats = Slave.Stats $ M.singleton targetRep (Slave.FromCache, elSelfTime,
+                                            if (stdErr elStdoutputs /= "") then 1 else 0 )
     return $ mappend selfStats nestedSlaveStats
   where
     db = bsDb bteBuildsome
@@ -731,7 +741,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
         saveExecutionLog bteBuildsome target rcr
 
         Print.targetTiming colors btePrinter "now" rcrSelfTime
-        let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime)
+        let selfStats = Slave.Stats $ M.singleton targetRep (Slave.BuiltNow, rcrSelfTime, 0)
         return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
   where
     colors@Color.Scheme{..} = bsColors bteBuildsome
