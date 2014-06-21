@@ -6,7 +6,7 @@ module Buildsome.Opts
   , Color(..)
   , Opt(..), Opts(..), get
   , PrintCommands(..)
-  , PrintByOutputs(..)
+  , PrintOutputs(..)
   , Verbosity(..)
   ) where
 
@@ -25,24 +25,24 @@ data KeepGoing = KeepGoing | DieQuickly
 data Color = ColorDisable | ColorEnable | ColorDefault
 
 data PrintCommands
-  = DontPrintCommands
+  = PrintCommandsNever
   | PrintCommandsForExecution {-default-}
   | PrintCommandsForAll
 
-data PrintByOutputs
-  = PrintAnyway -- TODO: Rename
-  | PrintIfStderrOrStdout
-  | PrintIfStderr {-default-}
+data PrintOutputs
+  = PrintOutputsAnyway
+  | PrintOutputsNonEmpty
+  | PrintOutputsIfStderr {-default-}
 
 data Verbosity = Verbosity
   { verbosityCommands :: PrintCommands
-  , verbosityOutputs :: PrintByOutputs
+  , verbosityOutputs :: PrintOutputs
   }
 
 verbosityAll :: Verbosity
 verbosityAll = Verbosity
   { verbosityCommands = PrintCommandsForAll
-  , verbosityOutputs = PrintAnyway
+  , verbosityOutputs = PrintOutputsAnyway
   }
 
 parseVerbosity :: Parser Verbosity
@@ -53,10 +53,10 @@ parseVerbosity =
      help "Run in verbose mode")
   <|>
   ( Verbosity
-    <$> flag DontPrintCommands PrintCommandsForAll
+    <$> flag PrintCommandsNever PrintCommandsForAll
         (long "verbose-cmds" <>
          help "Show commands (executed and replayed)")
-    <*> flag PrintIfStderr PrintIfStderrOrStdout
+    <*> flag PrintOutputsIfStderr PrintOutputsNonEmpty
         (long "verbose-stdouts" <>
          help "Replay stdouts and not just stderrs")
   )

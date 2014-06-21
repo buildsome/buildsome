@@ -9,7 +9,7 @@ module Buildsome.Print
   ) where
 
 import Buildsome.Db (Reason)
-import Buildsome.Opts (Verbosity(..), PrintByOutputs(..), PrintCommands(..))
+import Buildsome.Opts (Verbosity(..), PrintOutputs(..), PrintCommands(..))
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.Monoid
@@ -77,12 +77,12 @@ cmd Color.Scheme{..} printer target =
 replayCmd :: Color.Scheme -> PrintCommands -> Printer -> Target -> IO ()
 replayCmd colors PrintCommandsForAll printer target = cmd colors printer target
 replayCmd _      PrintCommandsForExecution _ _ = return ()
-replayCmd _      DontPrintCommands _ _ = return ()
+replayCmd _      PrintCommandsNever _ _ = return ()
 
 executionCmd :: Color.Scheme -> PrintCommands -> Printer -> Target -> IO ()
 executionCmd colors PrintCommandsForAll printer target = cmd colors printer target
 executionCmd colors PrintCommandsForExecution printer target = cmd colors printer target
-executionCmd _      DontPrintCommands _ _ = return ()
+executionCmd _      PrintCommandsNever _ _ = return ()
 
 delimitMultiline :: ByteString -> ByteString
 delimitMultiline xs
@@ -110,9 +110,9 @@ replay colors@Color.Scheme{..} printer target stdOutputs verbosity selfTime acti
   where
     shouldPrint =
       case verbosityOutputs verbosity of
-      PrintAnyway -> True
-      PrintIfStderrOrStdout -> not (StdOutputs.null stdOutputs)
-      PrintIfStderr -> not (BS8.null (StdOutputs.stdErr stdOutputs))
+      PrintOutputsAnyway -> True
+      PrintOutputsNonEmpty -> not (StdOutputs.null stdOutputs)
+      PrintOutputsIfStderr -> not (BS8.null (StdOutputs.stdErr stdOutputs))
     outputsHeader =
       case (BS8.null (StdOutputs.stdOut stdOutputs),
             BS8.null (StdOutputs.stdErr stdOutputs)) of
