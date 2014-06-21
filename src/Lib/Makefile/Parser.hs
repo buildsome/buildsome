@@ -18,6 +18,7 @@ import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
 import Lib.FilePath (FilePath, (</>))
+import Lib.Makefile.CondState (CondState)
 import Lib.Makefile.Types
 import Lib.Parsec (parseFromFile, showErr, showPos)
 import Prelude hiding (FilePath)
@@ -28,6 +29,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Lib.FilePath as FilePath
+import qualified Lib.Makefile.CondState as CondState
 import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
@@ -35,21 +37,41 @@ import qualified Text.Parsec.Pos as Pos
 type VarName = ByteString
 type VarValue = ByteString
 type IncludeStack = [(Pos.SourcePos, ByteString)]
+
 data State = State
   { stateIncludeStack :: IncludeStack
   , stateLocalsStack :: [Vars]
   , stateRootDir :: FilePath
   , stateVars :: Vars
+  , stateCond :: CondState
   }
 type Vars = Map VarName VarValue
 type Parser = P.ParsecT ByteString State IO
 type ParserG = P.ParsecT ByteString
 
 atStateVars :: (Vars -> Vars) -> State -> State
-atStateVars f (State i l r v) = State i l r (f v)
+atStateVars f (State i l r v s) = State i l r (f v) s
 
 atStateIncludeStack :: (IncludeStack -> IncludeStack) -> State -> State
-atStateIncludeStack f (State i l r v) = State (f i) l r v
+atStateIncludeStack f (State i l r v s) = State (f i) l r v s
+
+updateConds ::
+  (CondState -> Either String CondState) -> Parser ()
+updateConds f = do
+  state <- P.getState
+  case f $ stateCond state of
+    Left err -> fail err
+    Right r -> P.putState $ state { stateCond = r }
+
+isCondTrue :: Parser Bool
+isCondTrue = CondState.isTrue . stateCond <$> P.getState
+
+whenCondTrue :: Parser () -> Parser ()
+whenCondTrue act = do
+  t <- isCondTrue
+  when t act
+
+-----------
 
 horizSpace :: Monad m => ParserG u m Char
 horizSpace = P.satisfy (`elem` " \t")
@@ -62,6 +84,11 @@ horizSpaces1 = P.skipMany1 horizSpace
 
 comment :: Monad m => ParserG u m ()
 comment = void $ P.char '#' *> P.many (P.satisfy (/= '\n'))
+
+newWord :: Monad m => ParserG u m ()
+newWord = P.lookAhead $ void $ P.satisfy p
+  where
+    p x = not (isAlphaNum x || '_' == x)
 
 skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
@@ -225,14 +252,14 @@ runInclude rawIncludedPath = do
 returnToIncluder :: Parser ()
 returnToIncluder =
   P.eof *> do
-    State includeStack localsStack rootDir vars <- P.getState
+    State includeStack localsStack rootDir vars cond <- P.getState
     case includeStack of
       [] -> fail "Don't steal eof"
       ((pos, input) : rest) -> do
         void $ P.setParserState P.State
           { P.statePos = pos
           , P.stateInput = input
-          , P.stateUser = State rest localsStack rootDir vars
+          , P.stateUser = State rest localsStack rootDir vars cond
           }
         -- "include" did not eat the end of line (if one existed) so lets
         -- read it here
@@ -332,7 +359,7 @@ targetSimple pos outputPaths inputPaths orderOnlyInputs = do
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
-target :: Parser (Either Pattern Target)
+target :: Parser [Either Pattern Target]
 target = do
   pos <- P.getPosition
   outputPaths <- P.try $
@@ -346,9 +373,12 @@ target = do
     fmap (fromMaybe []) . P.optionMaybe $
     P.try (horizSpaces *> P.char '|') *> horizSpaces *> filepaths
   skipLineSuffix
-  if "%" `BS8.isInfixOf` (BS8.concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
+  e <- isCondTrue
+  tgt <-
+    if "%" `BS8.isInfixOf` (BS8.concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
     then Left <$> targetPattern pos outputPaths inputPaths orderOnlyInputs
     else Right <$> targetSimple pos outputPaths inputPaths orderOnlyInputs
+  return [tgt | e]
 
 data PosError = PosError Pos.SourcePos ByteString deriving (Typeable)
 instance Show PosError where
@@ -402,13 +432,18 @@ varAssignment = do
   skipLineSuffix
   let f DontOverrideVar (Just old) = Just old
       f _ _ = Just value
-  P.updateState $ atStateVars $ M.alter (f overrideVar) varName
+  whenCondTrue $ P.updateState $ atStateVars $
+    M.alter (f overrideVar) varName
 
-echoStatement :: Parser ()
-echoStatement = do
-  P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string "echo" *> horizSpaces1
-  str <- interpolateVariables unescapedSequence "#\n" <* skipLineSuffix
-  liftIO $ BS8.putStrLn $ "ECHO: " <> str
+directive :: String -> Parser a -> Parser a
+directive str act = do
+  P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string str *> newWord
+  horizSpaces *> act <* skipLineSuffix
+
+echoDirective :: Parser ()
+echoDirective = directive "echo" $ do
+  str <- interpolateVariables unescapedSequence "#\n"
+  whenCondTrue $ liftIO $ BS8.putStrLn $ "ECHO: " <> str
 
 localsOpen :: Parser ()
 localsOpen = void $ P.updateState $ \state -> state { stateLocalsStack = stateVars state : stateLocalsStack state }
@@ -422,7 +457,44 @@ localsClose = do
       P.putState $ state { stateLocalsStack = rest, stateVars = oldVars }
 
 localDirective :: Parser ()
-localDirective = P.try (P.string "local" *> horizSpaces1) *> ((P.char '{' *> localsOpen) <|> (P.char '}' *> localsClose))
+localDirective = directive "local" $ do
+  P.choice
+    [ P.char '{' *> localsOpen
+    , P.char '}' *> localsClose
+    ]
+
+data IfType = IfEq | IfNeq
+
+ifeqDirective :: String -> IfType -> Parser ()
+ifeqDirective keyword ifType = directive keyword $ do
+  _ <- P.char '('
+  l <- readExp ','
+  r <- readExp ')'
+  updateConds $ return . CondState.nest (l `cmp` r)
+  where
+    readExp stopChar =
+      horizSpaces *>
+      interpolateVariables unescapedSequence [stopChar] <*
+      horizSpaces <* P.char stopChar
+    cmp = case ifType of
+      IfEq -> (==)
+      IfNeq -> (/=)
+
+endifDirective :: Parser ()
+endifDirective =
+  directive "endif" $ updateConds $ CondState.unnest "endif mismatched"
+
+elseDirective :: Parser ()
+elseDirective =
+  directive "else" $ updateConds (CondState.inverse "else mismatched")
+
+conditionalStatement :: Parser ()
+conditionalStatement = P.choice
+  [ ifeqDirective "ifeq" IfEq
+  , ifeqDirective "ifneq" IfNeq
+  , elseDirective
+  , endifDirective
+  ]
 
 makefile :: Parser Makefile
 makefile =
@@ -431,9 +503,10 @@ makefile =
     noiseLines *>
     ( P.choice
       [ [] <$ properEof
-      , [] <$ echoStatement
-      , ((: []) <$> target) <|>
-        (   []  <$  localDirective)
+      , [] <$ echoDirective
+      , [] <$ conditionalStatement
+      ,       target
+      , [] <$ localDirective
       , [] <$ varAssignment
       ]
       `P.sepBy` (newline *> noiseLines)
@@ -450,6 +523,7 @@ parse makefileName vars = do
     , stateLocalsStack = []
     , stateRootDir = FilePath.takeDirectory makefileName
     , stateVars = vars
+    , stateCond = CondState.empty
     } makefileName
   case res of
     Right x -> return x

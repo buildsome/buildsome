@@ -60,6 +60,7 @@ executable buildsome
                ,     Lib.IORef
                ,     Lib.List
                ,     Lib.Makefile
+               ,     Lib.Makefile.CondState
                ,     Lib.Makefile.InstantiatePattern
                ,     Lib.Makefile.Parser
                ,     Lib.Makefile.Types
