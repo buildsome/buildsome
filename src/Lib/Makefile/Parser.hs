@@ -1,6 +1,6 @@
 {-# LANGUAGE Rank2Types, OverloadedStrings, DeriveDataTypeable #-}
 module Lib.Makefile.Parser
-  ( makefile, parse, interpolateCmds, metaVariable
+  ( makefile, parse, interpolateCmds, metaVariable, Vars
   ) where
 
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
@@ -387,10 +387,22 @@ properEof = do
 
 varAssignment :: Parser ()
 varAssignment = do
-  varName <- P.try $ ident <* P.char '='
+  (varName, dontModify) <-
+      do x <- P.try $ ident
+         horizSpaces
+         y <- (P.choice [False <$ P.char '=', True <$ P.string "?="])
+         horizSpaces
+         return (x, y)
   value <- BS8.pack <$> P.many (unescapedChar <|> P.noneOf "#\n")
   skipLineSuffix
-  P.updateState $ atStateVars $ M.insert varName value
+  let modify = P.updateState $ atStateVars $ M.insert varName value
+  if dontModify then do
+    varsEnv <- stateVars <$> P.getState
+    case M.lookup varName varsEnv of
+      Nothing -> modify
+      Just _ -> return ()
+  else
+    modify
 
 echoStatement :: Parser ()
 echoStatement = do
@@ -430,14 +442,14 @@ makefile =
     properEof
   )
 
-parse :: FilePath -> IO Makefile
-parse makefileName = do
+parse :: FilePath -> Vars -> IO Makefile
+parse makefileName vars = do
   res <-
     join $ parseFromFile makefile State
     { stateIncludeStack = []
     , stateLocalsStack = []
     , stateRootDir = FilePath.takeDirectory makefileName
-    , stateVars = M.empty
+    , stateVars = vars
     } makefileName
   case res of
     Right x -> return x

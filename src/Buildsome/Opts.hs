@@ -76,6 +76,8 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optKeepGoing :: KeepGoing
                , optChartsPath :: Maybe FilePath
                , optFsOverrideLdPreloadPath :: Maybe FilePath
+               , optWiths :: [ByteString]
+               , optWithouts :: [ByteString]
 
                , optVerbosity :: Verbosity
                }
@@ -87,6 +89,9 @@ opt = optional . option
 
 strOpt :: Mod OptionFields String -> Parser (Maybe ByteString)
 strOpt = (fmap . fmap) BS8.pack . optional . strOption
+
+strNonOpt :: Mod OptionFields String -> Parser ByteString
+strNonOpt = (fmap ) BS8.pack . strOption
 
 desc :: String
 desc = intercalate "\n"
@@ -158,4 +163,10 @@ get =
           <*> strOpt (long "fs-override" <>
                       metavar "path" <>
                       help "Path for fs_override.so")
+          <*> many (strNonOpt (long "with" <>
+                               metavar "flag" <>
+                               help "Enable flags that are disabled by default"))
+          <*> many (strNonOpt (long "without" <>
+                            metavar "flag" <>
+                            help "Disable flags that are enabled by default"))
           <*> parseVerbosity
