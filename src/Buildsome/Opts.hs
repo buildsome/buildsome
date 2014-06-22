@@ -80,6 +80,8 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optWithouts :: [ByteString]
 
                , optVerbosity :: Verbosity
+               -- TODO: YUCK, this should be an exclusive mode of operation!
+               , optHelpFlags :: Bool
                }
 
 data Opts = GetVersion | Opts Opt
@@ -113,7 +115,7 @@ get =
   (fullDesc <> progDesc desc <> header "buildsome - build an awesome project")
   where
     parser = versionParser <|> (Opts <$> optsParser)
-    versionParser = flag' GetVersion (long "version" <> help "Get buildsome's version")
+    versionParser = flag' GetVersion $ long "version" <> help "Get buildsome's version"
     optsParser =
       Opt <$> many (argument bytestr (metavar "targets"))
           <*> strOptional (short 'f' <>
@@ -168,3 +170,4 @@ get =
           <*> many (strOpt (metavar "flag" <> long "without" <>
                             help "Disable flags that are enabled by default"))
           <*> parseVerbosity
+          <*> switch (long "help-flags" <> help "Get all flag variables assigned with ?=")

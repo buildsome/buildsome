@@ -34,18 +34,17 @@ import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 
-type VarName = ByteString
-type VarValue = ByteString
 type IncludeStack = [(Pos.SourcePos, ByteString)]
 
 data Writer = Writer
   { writerTargets :: [Target]
   , writerPatterns :: [Pattern]
+  , writerWeakVars :: Map VarName ByteString
   }
 instance Monoid Writer where
-  mempty = Writer mempty mempty
-  mappend (Writer ax ay) (Writer bx by) =
-    Writer (mappend ax bx) (mappend ay by)
+  mempty = Writer mempty mempty mempty
+  mappend (Writer ax ay az) (Writer bx by bz) =
+    Writer (mappend ax bx) (mappend ay by) (mappend az bz)
 
 data State = State
   { stateIncludeStack :: IncludeStack
@@ -55,7 +54,6 @@ data State = State
   , stateCond :: CondState
   , stateWriter :: Writer -- would have used WriterT, but Parsec isn't easily liftable
   }
-type Vars = Map VarName VarValue
 type Parser = P.ParsecT ByteString State IO
 type ParserG = P.ParsecT ByteString
 
@@ -76,6 +74,9 @@ tellTarget x = tell mempty { writerTargets = [x] }
 
 tellPattern :: Pattern -> Parser ()
 tellPattern x = tell mempty { writerPatterns = [x] }
+
+tellWeakVar :: VarName -> ByteString -> Parser ()
+tellWeakVar varName defaultVal = tell mempty { writerWeakVars = M.singleton varName defaultVal }
 
 updateConds ::
   (CondState -> Either String CondState) -> Parser ()
@@ -407,13 +408,14 @@ instance Show PosError where
 instance E.Exception PosError
 
 mkMakefile :: Writer -> Makefile
-mkMakefile (Writer targets targetPatterns) =
+mkMakefile (Writer targets targetPatterns weakVars) =
   either E.throw id $ do
     phonies <- concat <$> mapM getPhonyInputs phonyTargets
     return Makefile
       { makefileTargets = regularTargets
       , makefilePatterns = targetPatterns
       , makefilePhonies = phonies
+      , makefileWeakVars = weakVars
       }
   where
     outputPathsSet = S.fromList (concatMap targetOutputs regularTargets)
@@ -449,6 +451,9 @@ varAssignment = do
          horizSpaces
          return (x, y)
   value <- BS8.pack <$> P.many (unescapedChar <|> P.noneOf "#\n")
+  case overrideVar of
+    OverrideVar -> return ()
+    DontOverrideVar -> tellWeakVar varName value
   skipLineSuffix
   let f DontOverrideVar (Just old) = Just old
       f _ _ = Just value

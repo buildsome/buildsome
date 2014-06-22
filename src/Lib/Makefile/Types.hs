@@ -4,11 +4,13 @@ module Lib.Makefile.Types
   , InputPat(..), onInputPatPaths
   , Target, onTargetPaths
   , Pattern, onPatternPaths
+  , VarName, VarValue, Vars
   , Makefile(..), onMakefilePaths
   ) where
 
 import Control.Applicative (Applicative(..), (<$>))
 import Data.ByteString (ByteString)
+import Data.Map (Map)
 import Data.Traversable (traverse)
 import Lib.FilePath (FilePath)
 import Lib.StringPattern (StringPattern)
@@ -35,10 +37,15 @@ data InputPat = InputPath FilePath | InputPattern FilePattern
 
 type Pattern = TargetType FilePattern InputPat
 
+type VarName = ByteString
+type VarValue = ByteString
+type Vars = Map VarName VarValue
+
 data Makefile = Makefile
   { makefileTargets :: [Target]
   , makefilePatterns :: [Pattern]
   , makefilePhonies :: [FilePath]
+  , makefileWeakVars :: Vars
   } deriving (Show)
 
 targetAllInputs :: Target -> [FilePath]
@@ -73,8 +80,9 @@ onPatternPaths f (Target outputs inputs orderOnlyInputs cmds pos) =
   <*> pure pos
 
 onMakefilePaths :: Applicative f => (FilePath -> f FilePath) -> Makefile -> f Makefile
-onMakefilePaths f (Makefile targets patterns phonies) =
+onMakefilePaths f (Makefile targets patterns phonies weakVars) =
   Makefile
   <$> traverse (onTargetPaths f) targets
   <*> traverse (onPatternPaths f) patterns
   <*> traverse f phonies
+  <*> pure weakVars

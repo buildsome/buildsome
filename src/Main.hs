@@ -4,12 +4,16 @@ module Main (main) where
 import Buildsome (Buildsome)
 import Buildsome.Db (Reason)
 import Buildsome.Opts (Opts(..), Opt(..))
+import Control.Applicative ((<$))
 import Control.Monad
 import Data.ByteString (ByteString)
+import Data.List (foldl')
+import Data.Maybe (mapMaybe)
 import Data.Monoid
 import Data.String (IsString(..))
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
+import Lib.ByteString (unprefixed)
 import Lib.Directory (getMFileStatus)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile (Makefile)
@@ -24,6 +28,7 @@ import qualified Buildsome.Color as Color
 import qualified Buildsome.Opts as Opts
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.Map as M
 import qualified Lib.Chart as Chart
 import qualified Lib.ColorText as ColorText
 import qualified Lib.FilePath as FilePath
@@ -31,7 +36,6 @@ import qualified Lib.Makefile as Makefile
 import qualified Lib.Printer as Printer
 import qualified Lib.Slave as Slave
 import qualified Lib.Version as Version
-import qualified Data.Map as M
 import qualified Prelude
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
@@ -119,6 +123,8 @@ instance Show MakefileScanFailed where
     , " in this directory or any of its parents"
     ]
 
+-- TODO: Extract the --enable/disable colors outside of the
+-- version/etc separation.
 getColors :: Opts -> IO Color.Scheme
 getColors GetVersion = return Color.nonColorScheme
 getColors (Opts opt) =
@@ -127,14 +133,46 @@ getColors (Opts opt) =
   Opts.ColorEnable -> return Color.defaultScheme
   Opts.ColorDefault -> Color.schemeForTerminal
 
+flagPrefix :: ByteString
+flagPrefix = "FLAG_"
+
 optVars :: Opt -> Makefile.Vars
 optVars opt = M.fromList $ withs ++ withouts
   where
-    asVars val = map $ \name -> ("FLAG_" <> name, val)
+    asVars val = map $ \name -> (flagPrefix <> name, val)
     withs = asVars "enable" $ optWiths opt
     withouts = asVars "disable" $ optWithouts opt
 
-handleOpts :: Color.Scheme -> Opts -> IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
+flagsOfVars :: Makefile.Vars -> Makefile.Vars
+flagsOfVars = M.fromList . mapMaybe filterFlag . M.toList
+  where
+    filterFlag (key, value) =
+      fmap (flip (,) value) $ unprefixed flagPrefix key
+
+ljust :: Int -> ByteString -> ByteString
+ljust padding bs = bs <> BS8.replicate (padding - l) ' '
+  where
+    l = BS8.length bs
+
+showHelpFlags :: Makefile.Vars -> IO ()
+showHelpFlags flags = do
+  BS8.putStrLn $ "Available flags:"
+  -- TODO: Colors (depends on --enable/disbale color being outside)
+  let varNameWidth = 1 + (foldl' max 0 . map BS8.length . M.keys) flags
+  forM_ (M.toList flags) $ \(varName, defaultVal) ->
+    BS8.putStrLn $ mconcat
+      ["  ", ljust varNameWidth varName, "(default = ", show defaultVal, ")"]
+
+verifyValidFlags :: Makefile.Vars -> [ByteString] -> IO ()
+verifyValidFlags validFlags userFlags
+  | null invalidUserFlags = return ()
+  | otherwise = fail $ "Given non-existent flags: " ++ show invalidUserFlags
+  where
+    invalidUserFlags = filter (`M.notMember` validFlags) userFlags
+
+handleOpts ::
+  Color.Scheme -> Opts ->
+  IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
 handleOpts _ GetVersion = do
   BS8.putStrLn $ "buildsome " <> Version.version
   return Nothing
@@ -156,7 +194,12 @@ handleOpts colors (Opts opt) = do
         Just _ -> return
   requested <- getRequestedTargets colors mChartsPath $ optRequestedTargets opt
   makefile <- parseMakefile colors origMakefilePath finalMakefilePath (optVars opt)
-  return $ Just (opt, inOrigCwd, requested, finalMakefilePath, makefile)
+  let flags = flagsOfVars (Makefile.makefileWeakVars makefile)
+  if optHelpFlags opt
+    then Nothing <$ showHelpFlags flags
+    else do
+      verifyValidFlags flags (optWiths opt ++ optWithouts opt)
+      return $ Just (opt, inOrigCwd, requested, finalMakefilePath, makefile)
 
 makeChart :: Slave.Stats -> FilePath -> IO ()
 makeChart slaveStats filePath = do
