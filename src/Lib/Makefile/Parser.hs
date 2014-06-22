@@ -9,11 +9,11 @@ import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.Char (isAlphaNum)
-import Data.Either (partitionEithers)
 import Data.List (partition)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Monoid ((<>))
+import Data.Monoid (Monoid(..))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
@@ -38,22 +38,44 @@ type VarName = ByteString
 type VarValue = ByteString
 type IncludeStack = [(Pos.SourcePos, ByteString)]
 
+data Writer = Writer
+  { writerTargets :: [Target]
+  , writerPatterns :: [Pattern]
+  }
+instance Monoid Writer where
+  mempty = Writer mempty mempty
+  mappend (Writer ax ay) (Writer bx by) =
+    Writer (mappend ax bx) (mappend ay by)
+
 data State = State
   { stateIncludeStack :: IncludeStack
   , stateLocalsStack :: [Vars]
   , stateRootDir :: FilePath
   , stateVars :: Vars
   , stateCond :: CondState
+  , stateWriter :: Writer -- would have used WriterT, but Parsec isn't easily liftable
   }
 type Vars = Map VarName VarValue
 type Parser = P.ParsecT ByteString State IO
 type ParserG = P.ParsecT ByteString
 
 atStateVars :: (Vars -> Vars) -> State -> State
-atStateVars f (State i l r v s) = State i l r (f v) s
+atStateVars f state = state { stateVars = f (stateVars state) }
 
 atStateIncludeStack :: (IncludeStack -> IncludeStack) -> State -> State
-atStateIncludeStack f (State i l r v s) = State (f i) l r v s
+atStateIncludeStack f state = state { stateIncludeStack = f (stateIncludeStack state) }
+
+atStateWriter :: (Writer -> Writer) -> State -> State
+atStateWriter f state = state { stateWriter = f (stateWriter state) }
+
+tell :: Writer -> Parser ()
+tell w = P.updateState $ atStateWriter $ mappend w
+
+tellTarget :: Target -> Parser ()
+tellTarget x = tell mempty { writerTargets = [x] }
+
+tellPattern :: Pattern -> Parser ()
+tellPattern x = tell mempty { writerPatterns = [x] }
 
 updateConds ::
   (CondState -> Either String CondState) -> Parser ()
@@ -252,14 +274,14 @@ runInclude rawIncludedPath = do
 returnToIncluder :: Parser ()
 returnToIncluder =
   P.eof *> do
-    State includeStack localsStack rootDir vars cond <- P.getState
+    State includeStack localsStack rootDir vars cond writer <- P.getState
     case includeStack of
       [] -> fail "Don't steal eof"
       ((pos, input) : rest) -> do
         void $ P.setParserState P.State
           { P.statePos = pos
           , P.stateInput = input
-          , P.stateUser = State rest localsStack rootDir vars cond
+          , P.stateUser = State rest localsStack rootDir vars cond writer
           }
         -- "include" did not eat the end of line (if one existed) so lets
         -- read it here
@@ -309,12 +331,12 @@ mkFilePattern path
   where
     (dir, file) = FilePath.splitFileName path
 
-targetPattern :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser Pattern
+targetPattern :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser ()
 targetPattern pos outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
   cmdLines <- BS8.intercalate "\n" <$> P.many cmdLine
-  return Target
+  whenCondTrue $ tellPattern $ Target
     { targetOutputs = map mkOutputPattern outputPaths
     , targetInputs = inputPats
     , targetOrderOnlyInputs = orderOnlyInputPats
@@ -346,11 +368,11 @@ interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds pos) =
       (metaVariable outputs inputs ooInputs mStem)
       <* skipLineSuffix
 
-targetSimple :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser Target
+targetSimple :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser ()
 targetSimple pos outputPaths inputPaths orderOnlyInputs = do
   cmdLines <- P.many cmdLine
   -- Immediately interpolate cmdLine metaVars (after having expanded ordinary vars):
-  return $ interpolateCmds Nothing Target
+  whenCondTrue $ tellTarget $ interpolateCmds Nothing Target
     { targetOutputs = outputPaths
     , targetInputs = inputPaths
     , targetOrderOnlyInputs = orderOnlyInputs
@@ -359,7 +381,7 @@ targetSimple pos outputPaths inputPaths orderOnlyInputs = do
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
-target :: Parser [Either Pattern Target]
+target :: Parser ()
 target = do
   pos <- P.getPosition
   outputPaths <- P.try $
@@ -373,20 +395,19 @@ target = do
     fmap (fromMaybe []) . P.optionMaybe $
     P.try (horizSpaces *> P.char '|') *> horizSpaces *> filepaths
   skipLineSuffix
-  e <- isCondTrue
-  tgt <-
-    if "%" `BS8.isInfixOf` (BS8.concat . concat) [outputPaths, inputPaths, orderOnlyInputs]
-    then Left <$> targetPattern pos outputPaths inputPaths orderOnlyInputs
-    else Right <$> targetSimple pos outputPaths inputPaths orderOnlyInputs
-  return [tgt | e]
+  let targetParser
+        | "%" `BS8.isInfixOf` (BS8.concat . concat) [outputPaths, inputPaths, orderOnlyInputs] =
+          targetPattern
+        | otherwise = targetSimple
+  targetParser pos outputPaths inputPaths orderOnlyInputs
 
 data PosError = PosError Pos.SourcePos ByteString deriving (Typeable)
 instance Show PosError where
   show (PosError pos msg) = concat [showPos pos, ": ", BS8.unpack msg]
 instance E.Exception PosError
 
-mkMakefile :: [Either Pattern Target] -> Makefile
-mkMakefile allTargets =
+mkMakefile :: Writer -> Makefile
+mkMakefile (Writer targets targetPatterns) =
   either E.throw id $ do
     phonies <- concat <$> mapM getPhonyInputs phonyTargets
     return Makefile
@@ -395,7 +416,6 @@ mkMakefile allTargets =
       , makefilePhonies = phonies
       }
   where
-    (targetPatterns, targets) = partitionEithers allTargets
     outputPathsSet = S.fromList (concatMap targetOutputs regularTargets)
     badPhony t str = Left $ PosError (targetPos t) $ ".PHONY target " <> str
     getPhonyInputs t@(Target [".PHONY"] inputs [] cmd _) =
@@ -498,22 +518,23 @@ conditionalStatement = P.choice
 
 makefile :: Parser Makefile
 makefile =
-  mkMakefile . concat <$>
-  ( beginningOfLine *> -- due to beginning of file
-    noiseLines *>
-    ( P.choice
-      [ [] <$ properEof
-      , [] <$ echoDirective
-      , [] <$ conditionalStatement
-      ,       target
-      , [] <$ localDirective
-      , [] <$ varAssignment
-      ]
-      `P.sepBy` (newline *> noiseLines)
-    ) <*
-    P.optional (newline *> noiseLines) <*
+  mkMakefile <$> do
+    beginningOfLine -- due to beginning of file
+    noiseLines
+    -- TODO: Unnecessary buildup of empty tuple list here
+    _ <- P.choice
+      [ properEof
+      , echoDirective
+      , conditionalStatement
+      , target
+      , localDirective
+      , varAssignment
+      ] `P.sepBy` sepLines
+    P.optional sepLines
     properEof
-  )
+    stateWriter <$> P.getState
+  where
+    sepLines = newline *> noiseLines
 
 parse :: FilePath -> Vars -> IO Makefile
 parse makefileName vars = do
@@ -524,6 +545,7 @@ parse makefileName vars = do
     , stateRootDir = FilePath.takeDirectory makefileName
     , stateVars = vars
     , stateCond = CondState.empty
+    , stateWriter = mempty
     } makefileName
   case res of
     Right x -> return x
