@@ -49,7 +49,7 @@ release (PoolAlloc stateRef) x =
     f (PoolState [] waiters) =
       case PriorityQueue.dequeue waiters of
       Nothing -> (PoolState [x] waiters, return ())
-      Just (newWaiters, waiter) -> (PoolState [] newWaiters, putMVar waiter x)
+      Just (newWaiters, (_priority, waiter)) -> (PoolState [] newWaiters, putMVar waiter x)
     f (PoolState xs@(_:_) waiters)
       | PriorityQueue.null waiters = (PoolState (x:xs) waiters, return ())
       | otherwise = error "Invariant broken: waiters exist when free elements exist (release)"
