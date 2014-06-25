@@ -5,7 +5,6 @@ module Lib.StringPattern
   , Match(..), match, plug
   ) where
 
-import Control.Applicative
 import Data.ByteString (ByteString)
 import Data.Monoid ((<>))
 import Lib.ByteString (unprefixed, unsuffixedWildCard)
