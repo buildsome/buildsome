@@ -12,8 +12,7 @@ import Data.Char (isAlphaNum)
 import Data.List (partition)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Data.Monoid ((<>))
-import Data.Monoid (Monoid(..))
+import Data.Monoid (Monoid(..), (<>))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
@@ -337,7 +336,7 @@ targetPattern pos outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
   cmdLines <- BS8.intercalate "\n" <$> P.many cmdLine
-  whenCondTrue $ tellPattern $ Target
+  whenCondTrue $ tellPattern Target
     { targetOutputs = map mkOutputPattern outputPaths
     , targetInputs = inputPats
     , targetOrderOnlyInputs = orderOnlyInputPats
@@ -443,7 +442,7 @@ data OverrideVar = OverrideVar | DontOverrideVar
 varAssignment :: Parser ()
 varAssignment = do
   (varName, overrideVar) <-
-      do x <- P.try $ ident
+      do x <- P.try ident
          horizSpaces
          y <-
            (OverrideVar     <$ P.string "=") <|>
@@ -482,7 +481,8 @@ localsClose = do
       P.putState $ state { stateLocalsStack = rest, stateVars = oldVars }
 
 localDirective :: Parser ()
-localDirective = directive "local" $ do
+localDirective =
+  directive "local" $
   P.choice
     [ P.char '{' *> localsOpen
     , P.char '}' *> localsClose

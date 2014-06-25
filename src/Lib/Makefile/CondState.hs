@@ -36,7 +36,7 @@ nest _ condState@CondState{..} =
 
 unnest :: String -> CondState -> Either String CondState
 unnest errMsg condState@CondState {..} =
-  validate errMsg $ unnested
+  validate errMsg unnested
   where
     unnested
       | isTrue condState = condState { trueNesting  = trueNesting  - 1 }

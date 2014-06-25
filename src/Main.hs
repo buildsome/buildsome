@@ -156,7 +156,7 @@ ljust padding bs = bs <> BS8.replicate (padding - l) ' '
 
 showHelpFlags :: Makefile.Vars -> IO ()
 showHelpFlags flags = do
-  BS8.putStrLn $ "Available flags:"
+  BS8.putStrLn "Available flags:"
   -- TODO: Colors (depends on --enable/disbale color being outside)
   let varNameWidth = 1 + (foldl' max 0 . map BS8.length . M.keys) flags
   forM_ (M.toList flags) $ \(varName, defaultVal) ->
