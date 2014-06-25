@@ -70,6 +70,7 @@ executable buildsome
                ,     Lib.Posix.FileType
                ,     Lib.Posix.Instances
                ,     Lib.Printer
+               ,     Lib.PriorityQueue
                ,     Lib.Process
                ,     Lib.ScanFileUpwards
                ,     Lib.Show

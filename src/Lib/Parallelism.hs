@@ -2,6 +2,7 @@ module Lib.Parallelism
   ( ParId
   , Parallelism, new
   , Cell
+  , Priority(..)
   , startAlloc
   , withReleased
   ) where
@@ -11,7 +12,7 @@ import Control.Exception.Async (catchSync, isAsynchronous)
 import Control.Monad
 import Data.IORef
 import Lib.IORef (atomicModifyIORef_)
-import Lib.PoolAlloc (PoolAlloc)
+import Lib.PoolAlloc (PoolAlloc, Priority(..))
 import qualified Control.Exception as E
 import qualified Lib.PoolAlloc as PoolAlloc
 
@@ -38,9 +39,9 @@ type Parallelism = PoolAlloc ParId
 new :: ParId -> IO Parallelism
 new n = PoolAlloc.new [1..n]
 
-startAlloc :: Parallelism -> IO ((Cell -> IO r) -> IO r)
-startAlloc parallelism = do
-  alloc <- PoolAlloc.startAlloc parallelism
+startAlloc :: Priority -> Parallelism -> IO ((Cell -> IO r) -> IO r)
+startAlloc priority parallelism = do
+  alloc <- PoolAlloc.startAlloc priority parallelism
   return $ E.bracket (newIORef . CellAlloced =<< alloc) (release parallelism)
 
 release :: Parallelism -> Cell -> IO ()
@@ -67,8 +68,8 @@ onAsyncException body handler =
 
 -- | Release the currently held item, run given action, then regain
 -- new item instead
-withReleased :: Cell -> Parallelism -> IO a -> IO a
-withReleased cell parallelism body =
+withReleased :: Priority -> Cell -> Parallelism -> IO a -> IO a
+withReleased priority cell parallelism body =
   E.mask $ \restore -> do
     release parallelism cell
     res <- protectAsync (restore body `onSyncException` realloc)
@@ -82,7 +83,7 @@ withReleased cell parallelism body =
       CellAllocating _ -> CellAlloced parId
       _ -> error "Somebody touched the cell when it was in CellAllocating?!"
     actualAlloc mvar =
-      (PoolAlloc.alloc parallelism >>= setAlloced)
+      (PoolAlloc.alloc priority parallelism >>= setAlloced)
       `E.finally` putMVar mvar ()
     realloc =
       join $ atomicModifyIORef cell $ \cellState ->

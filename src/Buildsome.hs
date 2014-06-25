@@ -348,10 +348,12 @@ replayExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime 
   (optVerbosity (bsOpts bteBuildsome)) selfTime $
   verifyTargetSpec bteBuildsome inputs outputs target
 
-waitForSlaves :: Printer -> Parallelism.Cell -> Buildsome -> [Slave] -> IO Slave.Stats
-waitForSlaves _ _ _ [] = return mempty
-waitForSlaves _printer parCell buildsome slaves =
-  Parallelism.withReleased parCell (bsParallelism buildsome) $
+waitForSlaves ::
+  Parallelism.Priority -> Printer -> Parallelism.Cell -> Buildsome ->
+  [Slave] -> IO Slave.Stats
+waitForSlaves _ _ _ _ [] = return mempty
+waitForSlaves priority _printer parCell buildsome slaves =
+  Parallelism.withReleased priority parCell (bsParallelism buildsome) $
   mconcat <$> mapM Slave.wait slaves
 
 verifyFileDesc ::
@@ -425,11 +427,13 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
   hintedSlaves <-
     mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
 
-  targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
+  targetParentsStats <-
+    buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
+    targetOutputs target
 
   let allSlaves = speculativeSlaves ++ hintedSlaves
   mappend targetParentsStats <$>
-    waitForSlaves btePrinter parCell bteBuildsome allSlaves
+    waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome allSlaves
   where
     Color.Scheme{..} = bsColors bteBuildsome
     hinted = S.fromList $ targetAllInputs target
@@ -445,9 +449,11 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
       Db.InputDesc { Db.idModeAccess = Just (depReason, _) } -> mkSlavesDirectAccess bte { bteReason = depReason }
       Db.InputDesc Nothing Nothing Nothing -> const $ const $ return []
 
-buildParentDirectories :: BuildTargetEnv -> Parallelism.Cell -> Explicitness -> [FilePath] -> IO Slave.Stats
-buildParentDirectories bte@BuildTargetEnv{..} parCell explicitness =
-  waitForSlaves btePrinter parCell bteBuildsome . concat <=<
+buildParentDirectories ::
+  Parallelism.Priority -> BuildTargetEnv -> Parallelism.Cell -> Explicitness ->
+  [FilePath] -> IO Slave.Stats
+buildParentDirectories priority bte@BuildTargetEnv{..} parCell explicitness =
+  waitForSlaves priority btePrinter parCell bteBuildsome . concat <=<
   mapM mkParentSlaves . filter (`notElem` ["", "/"])
   where
     Color.Scheme{..} = bsColors bteBuildsome
@@ -531,7 +537,9 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
       mkSlave mvar action = do
         slave <-
           E.handle panicHandler $ do
-            allocParCell <- Parallelism.startAlloc $ bsParallelism bteBuildsome
+            allocParCell <-
+              Parallelism.startAlloc Parallelism.PriorityLow $
+              bsParallelism bteBuildsome
             depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
             depPrinter <- Printer.newFrom btePrinter depPrinterId
             Slave.new depPrinterId (targetOutputs target) $ annotate $ action depPrinter allocParCell
@@ -617,11 +625,15 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     mappendSlaveStats stats = atomicModifyIORef_ slaveStatsRef (mappend stats)
     makeInputs accessDoc inputs outputs = do
       let allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
-      parentSlaveStats <- buildParentDirectories bte parCell Implicit allPaths
+      parentSlaveStats <-
+        buildParentDirectories Parallelism.PriorityHigh bte parCell Implicit
+        allPaths
       slaves <-
         fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
         mkSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
-      mappendSlaveStats . mappend parentSlaveStats =<< waitForSlaves btePrinter parCell bteBuildsome slaves
+      mappendSlaveStats . mappend parentSlaveStats =<<
+        waitForSlaves Parallelism.PriorityHigh btePrinter parCell bteBuildsome
+        slaves
     outputIgnored = MagicFiles.outputIgnored . FSHook.outputPath
     inputIgnored recordedOutputs (FSHook.Input _ path) =
       MagicFiles.inputIgnored path ||
@@ -736,7 +748,9 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
     case mSlaveStats of
       Just slaveStats -> return slaveStats
       Nothing -> Print.targetWrap colors btePrinter bteReason target "BUILDING" $ do
-        targetParentsStats <- buildParentDirectories bte parCell Explicit $ targetOutputs target
+        targetParentsStats <-
+          buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
+          targetOutputs target
 
         registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
         mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
@@ -745,7 +759,9 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
           mkSlavesForPaths bte
             { bteReason = ColorText.render $ "Hint from " <> cTarget (show (targetOutputs target))
             } Explicit $ targetAllInputs target
-        hintedStats <- waitForSlaves btePrinter parCell bteBuildsome slaves
+        hintedStats <-
+          waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome
+          slaves
 
         Print.executionCmd colors verbosityCommands btePrinter target
 
