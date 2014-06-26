@@ -348,6 +348,8 @@ static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *can
         }                                                               \
         result;                                                         \
     })
+#define OUT_EFFECT_IF_NOT_ERROR(err_val, effect)        \
+            ((err_val) == result) ? OUT_EFFECT_NOTHING : (effect)
 
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
@@ -363,7 +365,7 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
             /* May actually truncate file, rather than create it, but
              * the new content is created now: */
             msg.args.path.out_effect =
-                (-1 == result) ? OUT_EFFECT_NOTHING : OUT_EFFECT_CREATED;
+                OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
         });
 }
 
@@ -416,9 +418,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
         int, (truncate, path, length),
         {
             msg.args.path.out_effect =
-                (-1 == result)
-                ? OUT_EFFECT_NOTHING
-                : (length == 0 ? OUT_EFFECT_CREATED : OUT_EFFECT_CHANGED);
+                OUT_EFFECT_IF_NOT_ERROR(-1, length == 0 ? OUT_EFFECT_CREATED : OUT_EFFECT_CHANGED);
         });
 }
 
@@ -432,10 +432,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
         msg, needs_await, PERM_ERROR(-1, "unlink \"%s\"", path),
         int, (unlink, path),
         {
-            msg.args.path.out_effect =
-                (-1 == result)
-                ? OUT_EFFECT_NOTHING
-                : OUT_EFFECT_DELETED;
+            msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
         });
 }
 
@@ -450,10 +447,9 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
         msg, needs_await, PERM_ERROR(-1, "rename \"%s\" -> \"%s\"", oldpath, newpath),
         int, (rename, oldpath, newpath),
         {
-            msg.args.oldpath.out_effect =
-                (-1 == result) ? OUT_EFFECT_NOTHING : OUT_EFFECT_DELETED;
-            msg.args.newpath.out_effect =
-                (-1 == result) ? OUT_EFFECT_NOTHING : OUT_EFFECT_CREATED;
+            msg.args.oldpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
+            /* not CREATED because it has a useful existing content from old file: */
+            msg.args.newpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED);
         });
 }
 
@@ -464,7 +460,12 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
     DEFINE_MSG(msg, chmod);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "chmod \"%s\"", path), needs_await, msg, chmod, path, mode);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "chmod \"%s\"", path),
+        int, (chmod, path, mode),
+        {
+            msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED);
+        });
 }
 
 /* Depends on the full direct path */
@@ -473,7 +474,9 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
     bool needs_await = false;
     DEFINE_MSG(msg, readlink);
     IN_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "readlink \"%s\"", path), needs_await, msg, readlink, path, buf, bufsiz);
+    return AWAIT_CALL_REAL(
+        PERM_ERROR(-1, "readlink \"%s\"", path),
+        needs_await, msg, readlink, path, buf, bufsiz);
 }
 
 /* Outputs the full path, must be deleted aftewards? */
@@ -484,7 +487,12 @@ DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     msg.args.dev = dev;
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "mknod \"%s\"", path), needs_await, msg, mknod, path, mode, dev);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "mknod \"%s\"", path),
+        int, (mknod, path, mode, dev),
+        {
+            msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
+        });
 }
 
 /* Outputs the full path */
@@ -494,7 +502,12 @@ DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
     DEFINE_MSG(msg, mkdir);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "mkdir \"%s\"", path), needs_await, msg, mkdir, path, mode);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "mkdir \"%s\"", path),
+        int, (mkdir, path, mode),
+        {
+            msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
+        });
 }
 
 /* Outputs the full path */
@@ -503,7 +516,12 @@ DEFINE_WRAPPER(int, rmdir, (const char *path))
     bool needs_await = false;
     DEFINE_MSG(msg, rmdir);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "rmdir \"%s\"", path), needs_await, msg, rmdir, path);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "rmdir \"%s\"", path),
+        int, (rmdir, path),
+        {
+            msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
+        });
 }
 
 /* Outputs the full linkpath, input the target (to make the symlink,
@@ -516,19 +534,27 @@ DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
     DEFINE_MSG(msg, symlink);
     IN_PATH_COPY(needs_await, msg.args.target, target);
     OUT_PATH_COPY(needs_await, msg.args.linkpath, linkpath);
-    /* TODO: Maybe not AWAIT here, and handle it properly? */
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "symlink \"%s\" -> \"%s\"", linkpath, target), needs_await, msg, symlink, linkpath, target);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "symlink \"%s\" -> \"%s\"", linkpath, target),
+        int, (symlink, linkpath, target),
+        {
+            msg.args.linkpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
+        });
 }
 
-/* Inputs the full oldpath, outputs the full newpath (treated like a
- * read/write copy) */
 DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
 {
     bool needs_await = false;
     DEFINE_MSG(msg, link);
     OUT_PATH_COPY(needs_await, msg.args.oldpath, oldpath);
     OUT_PATH_COPY(needs_await, msg.args.newpath, newpath);
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "link \"%s\" -> \"%s\"", newpath, oldpath), needs_await, msg, link, oldpath, newpath);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "link \"%s\" -> \"%s\"", newpath, oldpath),
+        int, (link, oldpath, newpath),
+        {
+            msg.args.oldpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED); // stat/refcount changed
+            msg.args.newpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
+        });
 }
 
 /* Outputs the full path */
@@ -539,7 +565,12 @@ DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.owner = owner;
     msg.args.group = group;
-    return AWAIT_CALL_REAL(PERM_ERROR(-1, "chown \"%s\" %d:%d", path, owner, group), needs_await, msg, chown, path, owner, group);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await, PERM_ERROR(-1, "chown \"%s\" %d:%d", path, owner, group),
+        int, (chown, path, owner, group),
+        {
+            msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED);
+        });
 }
 
 DEFINE_WRAPPER(int, fchdir, (int fd))
@@ -707,55 +738,50 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 
 /****************** open ********************/
 
-static bool notify_openw(const char *path, bool is_also_read, bool is_create, bool is_truncate, mode_t mode) __attribute__((warn_unused_result));
-static bool notify_openw(const char *path, bool is_also_read, bool is_create, bool is_truncate, mode_t mode)
-{
-    bool needs_await = false;
-    DEFINE_MSG(msg, openw);
-    OUT_PATH_COPY(needs_await, msg.args.path, path);
-    if(is_also_read) msg.args.flags |= FLAG_ALSO_READ;
-    if(is_create)    msg.args.flags |= FLAG_CREATE;
-    if(is_truncate)  msg.args.flags |= FLAG_TRUNCATE;
-    msg.args.mode = mode;
-    return SEND_MSG_AWAIT(needs_await, msg);
-}
-
-static bool notify_openr(const char *path) __attribute__((warn_unused_result));
-static bool notify_openr(const char *path)
-{
-    bool needs_await = false;
-    DEFINE_MSG(msg, openr);
-    IN_PATH_COPY(needs_await, msg.args.path, path);
-    return SEND_MSG_AWAIT(needs_await, msg);
-}
-
-typedef int open_func(const char *path, int flags, ...);
-
-static int open_common(const char *open_func_name, const char *path, int flags, va_list args)
-{
-    bool is_also_read = false;
-    bool is_create = flags & CREATION_FLAGS;
-    bool is_truncate = flags & O_TRUNC;
-    mode_t mode = is_create ? va_arg(args, mode_t) : 0;
-    switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {
-    case O_RDONLY:
-        /* TODO: Remove ASSERT and correctly handle O_CREAT, O_TRUNCATE */
-        ASSERT(!(flags & CREATION_FLAGS));
-        if(!notify_openr(path)) return PERM_ERROR(-1, "openr \"%s\"", path);
-        break;
-    case O_RDWR:
-        is_also_read = true;
-    case O_WRONLY:
-        if(!notify_openw(path, is_also_read, is_create, is_truncate, mode)) return PERM_ERROR(-1, "openw \"%s\" (0x%X)", path, flags);
-        break;
-    default:
-        LOG("invalid open mode?!");
-        ASSERT(0);
-        return -1;
-    }
-    open_func *real = dlsym(RTLD_NEXT, open_func_name);
-    return real(path, flags, mode);
-}
+#define OPEN_HANDLER(name, path, flags)                                 \
+    do {                                                                \
+        bool is_also_read = false;                                      \
+        bool is_create = flags & CREATION_FLAGS;                        \
+        bool is_truncate = flags & O_TRUNC;                             \
+        va_list args;                                                   \
+        va_start(args, flags);                                          \
+        mode_t mode = is_create ? va_arg(args, mode_t) : 0;             \
+        va_end(args);                                                   \
+        switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {                \
+        case O_RDONLY: {                                                \
+            /* TODO: Remove ASSERT and correctly handle O_CREAT, O_TRUNCATE */ \
+            ASSERT(!(flags & CREATION_FLAGS));                          \
+            bool needs_await = false;                                   \
+            DEFINE_MSG(msg, openr);                                     \
+            IN_PATH_COPY(needs_await, msg.args.path, path);             \
+            return AWAIT_CALL_REAL(                                     \
+                PERM_ERROR(-1, #name "r \"%s\"", path),                 \
+                needs_await, msg, name, path, flags);                   \
+        }                                                               \
+        case O_RDWR:                                                    \
+            is_also_read = true;                                        \
+        case O_WRONLY: {                                                \
+            bool needs_await = false;                                   \
+            DEFINE_MSG(msg, openw);                                     \
+            OUT_PATH_COPY(needs_await, msg.args.path, path);            \
+            if(is_also_read) msg.args.flags |= FLAG_ALSO_READ;          \
+            if(is_create)    msg.args.flags |= FLAG_CREATE;             \
+            if(is_truncate)  msg.args.flags |= FLAG_TRUNCATE;           \
+            msg.args.mode = mode;                                       \
+            return CALL_WITH_OUTPUTS(                                   \
+                msg, needs_await, PERM_ERROR(-1, #name "w \"%s\" (0x%X)", path, flags), \
+                int, (name, path, flags, mode),                         \
+                {                                                       \
+                    msg.args.path.out_effect =                          \
+                        OUT_EFFECT_IF_NOT_ERROR(                        \
+                            -1, is_truncate ? OUT_EFFECT_CREATED : OUT_EFFECT_CHANGED); \
+                });                                                     \
+        }                                                               \
+        }                                                               \
+        LOG("invalid open mode?!");                                     \
+        ASSERT(0);                                                      \
+        return -1;                                                      \
+    } while(0)
 
 /* Full direct path refers to both the [in]existence of a file, its stat and
  * content */
@@ -767,89 +793,102 @@ static int open_common(const char *open_func_name, const char *path, int flags, 
 
 /* For read: Depends on the full path */
 /* For write: Outputs the full path */
-open_func open;
-int open(const char *path, int flags, ...)
+DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
 {
-    va_list args;
-    va_start(args, flags);
-    int rc = open_common("open", path, flags, args);
-    va_end(args);
-    return rc;
+    OPEN_HANDLER(open, path, flags);
 }
 
 /* Ditto open */
-open_func open64;
-int open64(const char *path, int flags, ...)
+DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
 {
-    va_list args;
-    va_start(args, flags);
-    int rc = open_common("open64", path, flags, args);
-    va_end(args);
-    return rc;
+    OPEN_HANDLER(open64, path, flags);
 }
 
-static bool fopen_notify(const char *path, const char *modestr) __attribute__((warn_unused_result));
-static bool fopen_notify(const char *path, const char *modestr)
+struct fopen_mode_bools {
+    bool is_create;
+    bool is_write;
+    bool is_read;
+    bool is_truncate;
+};
+
+struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
 {
-    mode_t mode = 0666;
+    struct fopen_mode_bools res = {false, false, false, false};
     switch(modestr[0]) {
     case 'r': {
-        bool res =
-            modestr[1] == '+'
-            ? notify_openw(path, /*is_also_read*/true, /*create*/false, /*truncate*/false, 0)
-            : notify_openr(path);
-        if(!res) return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
+        res.is_read = true;
+        if(modestr[1] == '+') {
+            res.is_write = true;
+        }
         break;
     }
     case 'w':
-        if(!notify_openw(path, /*is_also_read*/modestr[1] == '+', /*create*/true, /*truncate*/modestr[1] != '+', mode)) {
-            return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
+        res.is_write = true;
+        res.is_create = true;
+        if(modestr[1] == '+') {
+            res.is_read = true;
+        } else {
+            res.is_truncate = true;
         }
         break;
     case 'a':
-        if(!notify_openw(path, true, /*create*/true, /*truncate*/false, mode)) {
-            return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
-        }
+        res.is_write = true;
+        res.is_read = true;
+        res.is_create = true;
     default:
         LOG("Invalid fopen mode?!");
         ASSERT(0);
     }
-    return true;
+    return res;
 }
 
-typedef FILE *fopen_func(const char *path, const char *mode);
+#define FOPEN_HANDLER(name, path, modestr, ...)                         \
+    do {                                                                \
+        struct fopen_mode_bools mode = fopen_parse_modestr(modestr);    \
+        if(!mode.is_write && !mode.is_create && !mode.is_truncate) {    \
+            ASSERT(mode.is_read);                                       \
+            bool needs_await = false;                                   \
+            DEFINE_MSG(msg, openr);                                     \
+            IN_PATH_COPY(needs_await, msg.args.path, path);             \
+            return AWAIT_CALL_REAL(                                     \
+                PERM_ERROR(NULL, #name "r \"%s\" \"%s\"", path, modestr), \
+                needs_await, msg, name, path, modestr, ##__VA_ARGS__);  \
+        }                                                               \
+        bool needs_await = false;                                       \
+        DEFINE_MSG(msg, openw);                                         \
+        OUT_PATH_COPY(needs_await, msg.args.path, path);                \
+        if(mode.is_read)     msg.args.flags |= FLAG_ALSO_READ;          \
+        if(mode.is_create)   msg.args.flags |= FLAG_CREATE;             \
+        if(mode.is_truncate) msg.args.flags |= FLAG_TRUNCATE;           \
+        msg.args.mode = 0666;                                           \
+        return CALL_WITH_OUTPUTS(                                       \
+            msg, needs_await, PERM_ERROR(NULL, #name "w \"%s\" \"%s\")", path, modestr), \
+            FILE *, (name, path, modestr, ##__VA_ARGS__),               \
+            {                                                           \
+                msg.args.path.out_effect =                              \
+                    OUT_EFFECT_IF_NOT_ERROR(                            \
+                        NULL, mode.is_truncate ? OUT_EFFECT_CREATED : OUT_EFFECT_CHANGED); \
+            });                                                         \
+    } while(0)
 
-static FILE *fopen_common(const char *fopen_func_name, const char *path, const char *modestr)
+DEFINE_WRAPPER(FILE *, fopen, (const char *path, const char *modestr))
 {
-    if(!fopen_notify(path, modestr)) return NULL;
-    fopen_func *real = dlsym(RTLD_NEXT, fopen_func_name);
-    return real(path, modestr);
+    FOPEN_HANDLER(fopen, path, modestr);
 }
 
-fopen_func fopen;
-FILE *fopen(const char *path, const char *modestr)
+DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *modestr))
 {
-    return fopen_common("fopen", path, modestr);
-}
-
-fopen_func fopen64;
-FILE *fopen64(const char *path, const char *modestr)
-{
-    return fopen_common("fopen64", path, modestr);
+    FOPEN_HANDLER(fopen64, path, modestr);
 }
 
 DEFINE_WRAPPER(FILE *, freopen, (const char *path, const char *modestr, FILE *stream))
 {
-    if(!fopen_notify(path, modestr)) return PERM_ERROR(NULL, "freopen \"%s\" \"%s\"", path, modestr);
-    /* fopen_common handles the reporting */
-    return SILENT_CALL_REAL(freopen, path, modestr, stream);
+    FOPEN_HANDLER(freopen, path, modestr, stream);
 }
 
 DEFINE_WRAPPER(FILE *, freopen64, (const char *path, const char *modestr, FILE *stream))
 {
-    if(!fopen_notify(path, modestr)) return PERM_ERROR(NULL, "freopen64 \"%s\" \"%s\"", path, modestr);
-    /* fopen_common handles the reporting */
-    return SILENT_CALL_REAL(freopen64, path, modestr, stream);
+    FOPEN_HANDLER(freopen64, path, modestr, stream);
 }
 
 /*************************************/
