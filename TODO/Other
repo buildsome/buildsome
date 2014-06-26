@@ -20,6 +20,22 @@
 * everything waits rather than project-paths only -- 10% slower elfs build.
   worth it? Can check if output files exist...
 
+---------
+* Added partial support for out effect for undelayed operations, in C side.
+  Add the matching support in Haskell side,
+  then finish adding the support to all the OUT_PATH notifiers in the C side.
+
+* Some operations succeed iff they create. Set CREATED on output paths
+  Some operations never create. Set NOT_CREATED on output paths
+  Some operations succeed iff they truncate. Losing the file is no big deal in that case (content was lost anyway). Set CREATED
+  Some operations may or may not create, depending on the file status, which cannot be tested atomically, set UNKNOWN
+
+* O_CREAT creates even for read-only files!
+
+* everything waits rather than project-paths only -- 10% slower elfs build.
+  worth it? Can check if output files exist...
+
+-----------
 * Outputs:
 
   * fs_override: send whether output actually happened (if not, consider as input mode only)

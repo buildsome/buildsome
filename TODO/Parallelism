@@ -4,12 +4,3 @@
 * "Parallel" identifiers for actual allocated parallelism,
   illustrating actual use of parallelism
   * Record this to figure out actual achieved parallelism
-
-* Need to prefer scheduling waiters that are being waited for by many
-  online dependents, over waiters that just want to spawn new
-  commands.  i.e: Prefer to finish stuff than start stuff
-
-  * There are only 2 interesting priorities: Normal (needed by hints),
-    FSHook (needed by a memory-consuming process). We could have more
-    fine grained priorities by measuring how much resources are held
-    in memory.
