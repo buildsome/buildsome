@@ -302,6 +302,41 @@ verifyTargetInputs buildsome inputs target
     "inputs" "" (S.fromList (targetAllInputs target))
     (inputs `S.union` phoniesSet buildsome) (targetPos target)
 
+warnLeakTargetOutputs :: Color.Scheme -> Target -> ColorText -> ColorText -> [FilePath] -> IO ()
+warnLeakTargetOutputs colors target outStr avoidSuffix outputs =
+  unless (null outputs) $
+  Print.warn colors (targetPos target) $ mconcat
+  [ "Leaking ", outStr, " outputs ", avoidSuffix, ": "
+  , show outputs
+  ]
+
+warnDeleteTargetOutputs ::
+  Color.Scheme -> TargetType output input ->
+  ColorText -> Map FilePath KeepsOldContent -> IO ()
+warnDeleteTargetOutputs colors target outStr outputMap = do
+  unless (null safeToDelete) $ do
+    Print.warn colors (targetPos target) $
+      "Deleting " <> outStr <> " outputs: " <> show safeToDelete
+    mapM_ removeFileOrDirectoryOrNothing safeToDelete
+  unless (M.null unsafeToDeleteMap) $ do
+    Print.warn colors (targetPos target) $
+      "Leaking " <> outStr <> " outputs (may have old content): " <>
+      show (M.keys unsafeToDeleteMap)
+  where
+    safeToDelete = M.keys safeToDeleteMap
+    (safeToDeleteMap, unsafeToDeleteMap) =
+      M.partition (== KeepsNoOldContent) outputMap
+
+cleanAfterFailure ::
+  Color.Scheme -> Target -> Opt ->
+  Map FilePath KeepsOldContent -> IO ()
+cleanAfterFailure colors target opt =
+  case optDeleteFailedCommandOutputs opt of
+  Opts.DeleteFailedOutputs ->
+    warnLeakTargetOutputs colors target "failed command" " (due to --no-delete-failed-outputs)" . M.keys
+  Opts.DontDeleteFailedOutputs ->
+    warnDeleteTargetOutputs colors target "failed command"
+
 verifyTargetOutputs :: Buildsome -> Map FilePath KeepsOldContent -> Target -> IO ()
 verifyTargetOutputs buildsome outputs target = do
   -- Legal unspecified need to be kept/deleted according to policy:
@@ -319,17 +354,8 @@ verifyTargetOutputs buildsome outputs target = do
     Print.posMessage (targetPos target) $ cError $
       "Illegal output files: " <> show (M.keys existingIllegalOutputs)
 
-    let (safeToDelete, unsafeToDelete) =
-          M.partition (== KeepsNoOldContent) existingIllegalOutputs
-    unless (M.null safeToDelete) $ do
-      Print.warn colors (targetPos target) $
-        "Deleting unspecified outputs: " <> show (M.keys safeToDelete)
-      mapM_ removeFileOrDirectory $ M.keys safeToDelete
-
-    unless (M.null unsafeToDelete) $ do
-      Print.warn colors (targetPos target) $
-        "Leaking unspecified outputs (may have old content): " <>
-        show (M.keys unsafeToDelete)
+    warnDeleteTargetOutputs colors target "illegal" existingIllegalOutputs
+    cleanAfterFailure colors target (bsOpts buildsome) $ outputs `M.intersection` specified
 
     E.throwIO $ IllegalUnspecifiedOutputs colors target $ M.keys existingIllegalOutputs
   warnOverSpecified buildsome "outputs" " (consider adding a .PHONY declaration)"
@@ -717,17 +743,16 @@ fsAccessHandlers outputsRef inputsRef slaveStatsRef bte@BuildTargetEnv{..}
         mapM_ (recordInput inputsRef accessDoc) $
           filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
 
-
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef M.empty
   slaveStatsRef <- newIORef mempty
+  let accessHandlers = fsAccessHandlers outputsRef inputsRef slaveStatsRef bte parCell target
   (time, stdOutputs) <-
-    FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
-    (shellCmdVerify colors target ["HOME", "PATH"])
-    (ColorText.render (cTarget (show (targetOutputs target)))) $
-    fsAccessHandlers outputsRef inputsRef slaveStatsRef bte parCell target
+    cleanOnError outputsRef $
+    FSHook.timedRunCommand hook rootPath shellCmd
+    renderedTargetOutputs accessHandlers
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
   slaveStats <- readIORef slaveStatsRef
@@ -743,6 +768,14 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     , rcrSlaveStats = slaveStats
     }
   where
+    cleanOnError outputsRef =
+      flip E.onException $
+      cleanAfterFailure colors target (bsOpts bteBuildsome) . M.map fst =<<
+      readIORef outputsRef
+    rootPath = bsRootPath bteBuildsome
+    hook = bsFsHook bteBuildsome
+    renderedTargetOutputs = ColorText.render $ cTarget $ show $ targetOutputs target
+    shellCmd = shellCmdVerify colors target ["HOME", "PATH"]
     colors@Color.Scheme{..} = bsColors bteBuildsome
 
 saveExecutionLog :: Buildsome -> Target -> RunCmdResults -> IO ()
