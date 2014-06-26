@@ -151,11 +151,11 @@ get =
                 <|>
                 pure ColorDefault
               )
-          <*> flag DontDeleteUnspecifiedOutputs DeleteUnspecifiedOutputs
+          <*> flag DeleteUnspecifiedOutputs DontDeleteUnspecifiedOutputs
               (short 'D' <>
-               long "delete-unspecified" <>
+               long "no-delete-unspecified" <>
                help "Delete unspecified outputs")
-          <*> flag DontDeleteFailedOutputs DeleteFailedOutputs
+          <*> flag DeleteFailedOutputs DontDeleteFailedOutputs
               (long "no-delete-failed-outputs" <>
                help "Do not delete failed command outputs")
           <*> flag DontOverwriteUnregisteredOutputs OverwriteUnregisteredOutputs

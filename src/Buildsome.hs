@@ -333,9 +333,19 @@ cleanAfterFailure ::
 cleanAfterFailure colors target opt =
   case optDeleteFailedCommandOutputs opt of
   Opts.DeleteFailedOutputs ->
-    warnLeakTargetOutputs colors target "failed command" " (due to --no-delete-failed-outputs)" . M.keys
-  Opts.DontDeleteFailedOutputs ->
     warnDeleteTargetOutputs colors target "failed command"
+  Opts.DontDeleteFailedOutputs ->
+    warnLeakTargetOutputs colors target "failed command" "(due to --no-delete-failed-outputs)" . M.keys
+
+cleanIllegalOutputs ::
+  Color.Scheme -> Target -> Opt ->
+  Map FilePath KeepsOldContent -> IO ()
+cleanIllegalOutputs colors target opt =
+  case optDeleteUnspecifiedOutputs opt of
+  Opts.DeleteUnspecifiedOutputs ->
+    warnDeleteTargetOutputs colors target "illegal"
+  Opts.DontDeleteUnspecifiedOutputs ->
+    warnLeakTargetOutputs colors target "illegal" "(due to --no-delete-unspecified)" . M.keys
 
 verifyTargetOutputs :: Buildsome -> Map FilePath KeepsOldContent -> Target -> IO ()
 verifyTargetOutputs buildsome outputs target = do
@@ -354,14 +364,15 @@ verifyTargetOutputs buildsome outputs target = do
     Print.posMessage (targetPos target) $ cError $
       "Illegal output files: " <> show (M.keys existingIllegalOutputs)
 
-    warnDeleteTargetOutputs colors target "illegal" existingIllegalOutputs
-    cleanAfterFailure colors target (bsOpts buildsome) $ outputs `M.intersection` specified
+    cleanIllegalOutputs colors target opt existingIllegalOutputs
+    cleanAfterFailure colors target opt $ outputs `M.intersection` specified
 
     E.throwIO $ IllegalUnspecifiedOutputs colors target $ M.keys existingIllegalOutputs
   warnOverSpecified buildsome "outputs" " (consider adding a .PHONY declaration)"
     (M.keysSet specified) (M.keysSet outputs `S.union` phoniesSet buildsome)
     (targetPos target)
   where
+    opt = bsOpts buildsome
     colors@Color.Scheme{..} = bsColors buildsome
     (unspecifiedOutputs, illegalOutputs) =
       M.partitionWithKey (\path _ -> MagicFiles.allowedUnspecifiedOutput path)
@@ -676,7 +687,7 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
     ]
   registerOutputs buildsome $ M.keysSet paths `S.intersection` targetOutputsSet
   where
-    combineOutputs = max -- KeepsOldContent > KeepsNoOldContent
+    combineOutputs = min -- KeepsNoOldContent < KeepsOldContent
 
 makeInputs ::
   IORef Slave.Stats -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
