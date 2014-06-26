@@ -652,24 +652,49 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
   where
     combineOutputs = max -- KeepsOldContent > KeepsNoOldContent
 
-runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
-runCmd bte@BuildTargetEnv{..} parCell target = do
-  inputsRef <- newIORef M.empty
-  outputsRef <- newIORef M.empty
-  slaveStatsRef <- newIORef mempty
-  let
-    mappendSlaveStats stats = atomicModifyIORef_ slaveStatsRef (mappend stats)
-    makeInputs accessDoc inputs outputs = do
-      let allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
-      parentSlaveStats <-
-        buildParentDirectories Parallelism.PriorityHigh bte parCell Implicit
-        allPaths
-      slaves <-
-        fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
-        mkSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
-      mappendSlaveStats . mappend parentSlaveStats =<<
-        waitForSlaves Parallelism.PriorityHigh btePrinter parCell bteBuildsome
-        slaves
+makeInputs ::
+  IORef Slave.Stats -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
+  [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
+makeInputs slaveStatsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
+  do
+    let allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
+    parentSlaveStats <-
+      buildParentDirectories Parallelism.PriorityHigh bte parCell Implicit
+      allPaths
+    slaves <-
+      fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
+      mkSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
+    mappendSlaveStats . mappend parentSlaveStats =<<
+      waitForSlaves Parallelism.PriorityHigh btePrinter parCell bteBuildsome
+      slaves
+    where
+      mappendSlaveStats stats = atomicModifyIORef_ slaveStatsRef $ mappend stats
+
+fsAccessHandlers ::
+  IORef (Map FilePath (KeepsOldContent, Reason)) ->
+  IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
+  IORef Slave.Stats ->
+  BuildTargetEnv ->
+  Parallelism.Cell ->
+  TargetType FilePath input ->
+  FSHook.FSAccessHandlers
+fsAccessHandlers outputsRef inputsRef slaveStatsRef bte@BuildTargetEnv{..}
+  parCell target =
+    FSHook.FSAccessHandlers
+    { delayedFSAccessHandler = fsDelayedAccessHandler
+    , undelayedFSAccessHandler = fsUndelayedAccessHandler
+    }
+  where
+    fsUndelayedAccessHandler accessDoc rawInputs rawOutputs = do
+      commonAccessHandler accessDoc rawInputs rawOutputs
+        FSHook.outPath (return . undelayedOutputEffect) $ \_ _ -> return ()
+
+    fsDelayedAccessHandler accessDoc rawInputs rawOutputs = do
+      commonAccessHandler accessDoc rawInputs rawOutputs
+        FSHook.outputPath delayedOutputEffect $ makeInputs slaveStatsRef bte parCell accessDoc
+
+    targetOutputsSet = S.fromList $ targetOutputs target
+
     inputIgnored recordedOutputs (FSHook.Input _ path) =
       MagicFiles.inputIgnored path ||
       path `M.member` recordedOutputs ||
@@ -692,22 +717,17 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
         mapM_ (recordInput inputsRef accessDoc) $
           filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
 
-    fsUndelayedAccessHandler accessDoc rawInputs rawOutputs = do
-      commonAccessHandler accessDoc rawInputs rawOutputs
-        FSHook.outPath (return . undelayedOutputEffect) $ \_ _ -> return ()
 
-    fsDelayedAccessHandler accessDoc rawInputs rawOutputs = do
-      commonAccessHandler accessDoc rawInputs rawOutputs
-        FSHook.outputPath delayedOutputEffect $ makeInputs accessDoc
-
+runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
+runCmd bte@BuildTargetEnv{..} parCell target = do
+  inputsRef <- newIORef M.empty
+  outputsRef <- newIORef M.empty
+  slaveStatsRef <- newIORef mempty
   (time, stdOutputs) <-
     FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
     (shellCmdVerify colors target ["HOME", "PATH"])
-    (ColorText.render (cTarget (show (targetOutputs target))))
-    FSHook.FSAccessHandlers
-    { delayedFSAccessHandler = fsDelayedAccessHandler
-    , undelayedFSAccessHandler = fsUndelayedAccessHandler
-    }
+    (ColorText.render (cTarget (show (targetOutputs target)))) $
+    fsAccessHandlers outputsRef inputsRef slaveStatsRef bte parCell target
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
   slaveStats <- readIORef slaveStatsRef
@@ -724,7 +744,6 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     }
   where
     colors@Color.Scheme{..} = bsColors bteBuildsome
-    targetOutputsSet = S.fromList $ targetOutputs target
 
 saveExecutionLog :: Buildsome -> Target -> RunCmdResults -> IO ()
 saveExecutionLog buildsome target RunCmdResults{..} = do
