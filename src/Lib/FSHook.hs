@@ -4,7 +4,7 @@ module Lib.FSHook
   , FSHook
   , with
 
-  , HasEffect(..), OutputBehavior(..)
+  , KeepsOldContent(..), OutputEffect(..), OutputBehavior(..)
   , Input(..)
   , DelayedOutput(..), UndelayedOutput
   , Protocol.OutFilePath(..), Protocol.OutEffect(..)
@@ -30,7 +30,7 @@ import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.FSHook.AccessType (AccessType(..))
-import Lib.FSHook.OutputBehavior (HasEffect(..), OutputBehavior(..), fileChanger, existingFileChanger, nonExistingFileChanger)
+import Lib.FSHook.OutputBehavior (KeepsOldContent(..), OutputEffect(..), OutputBehavior(..))
 import Lib.FSHook.Protocol (IsDelayed(..))
 import Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
 import Lib.Fresh (Fresh)
@@ -45,6 +45,7 @@ import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Lib.AsyncContext as AsyncContext
+import qualified Lib.FSHook.OutputBehavior as OutputBehavior
 import qualified Lib.FSHook.Protocol as Protocol
 import qualified Lib.Fresh as Fresh
 import qualified Lib.Process as Process
@@ -59,13 +60,13 @@ type JobId = ByteString
 data Input = Input
   { inputAccessType :: AccessType
   , inputPath :: FilePath
-  }
+  } deriving (Eq, Ord, Show)
 
 data DelayedOutput = DelayedOutput
 -- TODO: Rename to delayedOutput...
   { outputBehavior :: OutputBehavior
   , outputPath :: FilePath
-  }
+  } deriving (Eq, Ord, Show)
 
 type UndelayedOutput = Protocol.OutFilePath
 
@@ -178,17 +179,21 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     -- report them as inputs
 
     -- outputs
-    Protocol.OpenW outPath _openWMode _creationMode
-                                -> handleOutputs [(fileChanger, outPath)]
-    Protocol.Creat outPath _    -> handleOutputs [(fileChanger, outPath)]
-    Protocol.Rename a b         -> handleOutputs [(existingFileChanger, a), (fileChanger, b)]
-    Protocol.Unlink outPath     -> handleOutputs [(existingFileChanger, outPath)]
-    Protocol.Truncate outPath _ -> handleOutputs [(existingFileChanger, outPath)]
-    Protocol.Chmod outPath _    -> handleOutputs [(existingFileChanger, outPath)]
-    Protocol.Chown outPath _ _  -> handleOutputs [(existingFileChanger, outPath)]
-    Protocol.MkNod outPath _ _  -> handleOutputs [(nonExistingFileChanger, outPath)] -- TODO: Special mkNod handling?
-    Protocol.MkDir outPath _    -> handleOutputs [(nonExistingFileChanger, outPath)]
-    Protocol.RmDir outPath      -> handleOutputs [(existingFileChanger, outPath)]
+    -- TODO: Handle truncation flag
+    Protocol.OpenW outPath _openWMode _create Protocol.OpenNoTruncate
+                                -> handleOutputs [(OutputBehavior.fileChanger KeepsOldContent, outPath)]
+    Protocol.OpenW outPath _openWMode _create Protocol.OpenTruncate
+                                -> handleOutputs [(OutputBehavior.fileChanger KeepsNoOldContent, outPath)]
+    Protocol.Creat outPath _    -> handleOutputs [(OutputBehavior.fileChanger KeepsNoOldContent, outPath)]
+    Protocol.Rename a b         -> handleOutputs [ (OutputBehavior.existingFileChanger KeepsNoOldContent, a)
+                                                 , (OutputBehavior.fileChanger KeepsOldContent, b) ]
+    Protocol.Unlink outPath     -> handleOutputs [(OutputBehavior.existingFileChanger KeepsNoOldContent, outPath)]
+    Protocol.Truncate outPath _ -> handleOutputs [(OutputBehavior.existingFileChanger KeepsNoOldContent, outPath)]
+    Protocol.Chmod outPath _    -> handleOutputs [(OutputBehavior.existingFileChanger KeepsOldContent, outPath)]
+    Protocol.Chown outPath _ _  -> handleOutputs [(OutputBehavior.existingFileChanger KeepsOldContent, outPath)]
+    Protocol.MkNod outPath _ _  -> handleOutputs [(OutputBehavior.nonExistingFileChanger KeepsNoOldContent, outPath)] -- TODO: Special mkNod handling?
+    Protocol.MkDir outPath _    -> handleOutputs [(OutputBehavior.nonExistingFileChanger KeepsNoOldContent, outPath)]
+    Protocol.RmDir outPath      -> handleOutputs [(OutputBehavior.existingFileChanger KeepsOldContent {- TODO: if we know rmdir will fail (not empty) then no effect at all, and we can use KeepsNoOldContent -}, outPath)]
 
     -- I/O
     Protocol.SymLink target linkPath ->
@@ -197,7 +202,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
       -- than false-negative
       handle
         [ Input AccessTypeFull target ]
-        [ (nonExistingFileChanger, linkPath) ]
+        [ (OutputBehavior.nonExistingFileChanger KeepsNoOldContent, linkPath) ]
     Protocol.Link src dest -> error $ unwords ["Hard links not supported:", show src, "->", show dest]
 
     -- inputs

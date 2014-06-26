@@ -24,7 +24,7 @@
 #define MAX_FRAME_SIZE 8192
 
 #define ENVVARS_PREFIX "BUILDSOME_"
-#define PROTOCOL_HELLO "PROTOCOL4: HELLO, I AM: "
+#define PROTOCOL_HELLO "PROTOCOL5: HELLO, I AM: "
 
 #define PERM_ERROR(x, fmt, ...)                                 \
     ({                                                          \
@@ -201,7 +201,8 @@ enum func {
 
 /* func_openw.flags */
 #define FLAG_ALSO_READ 1
-#define FLAG_CREATE 2           /* func_open.mode is meaningful iff this flag */
+#define FLAG_CREATE 2             /* func_open.mode is meaningful iff this flag */
+#define FLAG_TRUNCATE 4
 
 /* NOTE: This must be kept in sync with Protocol.hs */
 #define MAX_PATH_ENV_VAR_LENGTH (10*1024)
@@ -706,14 +707,15 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 
 /****************** open ********************/
 
-static bool notify_openw(const char *path, bool is_also_read, bool is_create, mode_t mode) __attribute__((warn_unused_result));
-static bool notify_openw(const char *path, bool is_also_read, bool is_create, mode_t mode)
+static bool notify_openw(const char *path, bool is_also_read, bool is_create, bool is_truncate, mode_t mode) __attribute__((warn_unused_result));
+static bool notify_openw(const char *path, bool is_also_read, bool is_create, bool is_truncate, mode_t mode)
 {
     bool needs_await = false;
     DEFINE_MSG(msg, openw);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     if(is_also_read) msg.args.flags |= FLAG_ALSO_READ;
     if(is_create)    msg.args.flags |= FLAG_CREATE;
+    if(is_truncate)  msg.args.flags |= FLAG_TRUNCATE;
     msg.args.mode = mode;
     return SEND_MSG_AWAIT(needs_await, msg);
 }
@@ -733,6 +735,7 @@ static int open_common(const char *open_func_name, const char *path, int flags, 
 {
     bool is_also_read = false;
     bool is_create = flags & CREATION_FLAGS;
+    bool is_truncate = flags & O_TRUNC;
     mode_t mode = is_create ? va_arg(args, mode_t) : 0;
     switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {
     case O_RDONLY:
@@ -743,7 +746,7 @@ static int open_common(const char *open_func_name, const char *path, int flags, 
     case O_RDWR:
         is_also_read = true;
     case O_WRONLY:
-        if(!notify_openw(path, is_also_read, is_create, mode)) return PERM_ERROR(-1, "openw \"%s\" (0x%X)", path, flags);
+        if(!notify_openw(path, is_also_read, is_create, is_truncate, mode)) return PERM_ERROR(-1, "openw \"%s\" (0x%X)", path, flags);
         break;
     default:
         LOG("invalid open mode?!");
@@ -793,18 +796,18 @@ static bool fopen_notify(const char *path, const char *modestr)
     case 'r': {
         bool res =
             modestr[1] == '+'
-            ? notify_openw(path, /*is_also_read*/true, /*create*/false, 0)
+            ? notify_openw(path, /*is_also_read*/true, /*create*/false, /*truncate*/false, 0)
             : notify_openr(path);
         if(!res) return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
         break;
     }
     case 'w':
-        if(!notify_openw(path, /*is_also_read*/modestr[1] == '+', /*create*/true, mode)) {
+        if(!notify_openw(path, /*is_also_read*/modestr[1] == '+', /*create*/true, /*truncate*/modestr[1] != '+', mode)) {
             return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
         }
         break;
     case 'a':
-        if(!notify_openw(path, true, /*create*/true, mode)) {
+        if(!notify_openw(path, true, /*create*/true, /*truncate*/false, mode)) {
             return PERM_ERROR(false, "fopen \"%s\", \"%s\"", path, modestr);
         }
     default:

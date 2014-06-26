@@ -2,6 +2,7 @@
 module Lib.FSHook.Protocol
   ( parseMsg, helloPrefix
   , OpenWriteMode(..), showOpenWriteMode
+  , OpenTruncateMode(..), showOpenTruncateMode
   , CreationMode(..), showCreationMode
   , InFilePath, OutFilePath(..), OutEffect(..)
   , Func(..), showFunc
@@ -37,8 +38,14 @@ data CreationMode = NoCreate | Create Word32 -- Unix permissions
   deriving (Show)
 showCreationMode :: CreationMode -> String
 showCreationMode NoCreate = ""
-showCreationMode (Create x) = "(CREATE:" ++ showOct x "" ++ ")"
+showCreationMode (Create x) = " (CREATE:" ++ showOct x "" ++ ")"
 {-# INLINE showCreationMode #-}
+
+data OpenTruncateMode = OpenNoTruncate | OpenTruncate
+  deriving (Show)
+showOpenTruncateMode :: OpenTruncateMode -> String
+showOpenTruncateMode OpenNoTruncate = ""
+showOpenTruncateMode OpenTruncate = " (TRUNCATE)"
 
 type InFilePath = FilePath
 
@@ -59,7 +66,7 @@ data OutFilePath = OutFilePath
 
 data Func
   = OpenR InFilePath
-  | OpenW OutFilePath OpenWriteMode CreationMode
+  | OpenW OutFilePath OpenWriteMode CreationMode OpenTruncateMode
   | Stat InFilePath
   | LStat InFilePath
   | Creat OutFilePath Word32
@@ -91,7 +98,7 @@ data Msg = Msg
 {-# INLINE showFunc #-}
 showFunc :: Func -> String
 showFunc (OpenR path) = "open:" ++ show path
-showFunc (OpenW path wmode creation) = "openW" ++ showOpenWriteMode wmode ++ ":" ++ show path ++ showCreationMode creation
+showFunc (OpenW path wmode creation trunc) = "openW" ++ showOpenWriteMode wmode ++ ":" ++ show path ++ showCreationMode creation ++ showOpenTruncateMode trunc
 showFunc (Stat path) = "stat:" ++ show path
 showFunc (LStat path) = "lstat:" ++ show path
 showFunc (Creat path perms) = concat ["create:", show path, " ", showOct perms ""]
@@ -143,19 +150,24 @@ fLAG_ALSO_READ :: Word32
 fLAG_ALSO_READ = 1
 fLAG_CREATE :: Word32
 fLAG_CREATE = 2
+fLAG_TRUNCATE :: Word32
+fLAG_TRUNCATE = 4
 
 {-# INLINE parseOpenW #-}
 parseOpenW :: Get Func
 parseOpenW = mkOpen <$> getOutPath <*> getWord32le <*> getWord32le
   where
     mkOpen path flags mode =
-      OpenW path (openMode flags) (creationMode flags mode)
+      OpenW path (openMode flags) (creationMode flags mode) (isTruncate flags)
     openMode flags
       | 0 /= flags .&. fLAG_ALSO_READ = ReadWriteMode
       | otherwise = WriteMode
     creationMode flags mode
       | 0 /= flags .&. fLAG_CREATE = Create mode
       | otherwise = NoCreate
+    isTruncate flags
+      | 0 /= flags .&. fLAG_TRUNCATE = OpenTruncate
+      | otherwise = OpenNoTruncate
 
 execP :: FilePath -> FilePath -> FilePath -> FilePath -> IO Func
 execP file cwd envPath confStrPath
@@ -221,4 +233,4 @@ parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloPrefix #-}
 helloPrefix :: ByteString
-helloPrefix = "PROTOCOL4: HELLO, I AM: "
+helloPrefix = "PROTOCOL5: HELLO, I AM: "

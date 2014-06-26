@@ -17,9 +17,8 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Trans.Either
 import Data.ByteString (ByteString)
 import Data.IORef
-import Data.List (partition)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, catMaybes)
 import Data.Monoid
 import Data.Set (Set)
 import Data.String (IsString(..))
@@ -32,7 +31,7 @@ import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.ColorText (ColorText, renderStr)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.Exception (finally)
-import Lib.FSHook (FSHook, OutputBehavior(..), HasEffect(..))
+import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..), KeepsOldContent(..))
 import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
@@ -67,6 +66,7 @@ import qualified Lib.Directory as Dir
 import qualified Lib.FSHook as FSHook
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Fresh as Fresh
+import qualified Lib.Map as LibMap
 import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
@@ -284,7 +284,8 @@ instance Show IllegalUnspecifiedOutputs where
     , " wrote to unspecified output files: ", show illegalOutputs ]
 
 -- Verify output of whole of slave/execution log
-verifyTargetSpec :: Buildsome -> Set FilePath -> Set FilePath -> Target -> IO ()
+verifyTargetSpec ::
+  Buildsome -> Set FilePath -> Map FilePath KeepsOldContent -> Target -> IO ()
 verifyTargetSpec buildsome inputs outputs target = do
   verifyTargetInputs buildsome inputs target
   verifyTargetOutputs buildsome outputs target
@@ -301,33 +302,46 @@ verifyTargetInputs buildsome inputs target
     "inputs" "" (S.fromList (targetAllInputs target))
     (inputs `S.union` phoniesSet buildsome) (targetPos target)
 
-verifyTargetOutputs :: Buildsome -> Set FilePath -> Target -> IO ()
+verifyTargetOutputs :: Buildsome -> Map FilePath KeepsOldContent -> Target -> IO ()
 verifyTargetOutputs buildsome outputs target = do
   -- Legal unspecified need to be kept/deleted according to policy:
   handleLegalUnspecifiedOutputs buildsome target =<<
-    filterM FilePath.exists unspecifiedOutputs
+    filterM FilePath.exists (M.keys unspecifiedOutputs)
 
   -- Illegal unspecified that no longer exist need to be banned from
   -- input use by any other job:
   -- TODO: Add to a ban-from-input-list (by other jobs)
 
   -- Illegal unspecified that do exist are a problem:
-  existingIllegalOutputs <- filterM FilePath.exists illegalOutputs
-  unless (null existingIllegalOutputs) $ do
+  existingIllegalOutputs <-
+    LibMap.filterAWithKey (\path _ -> FilePath.exists path) illegalOutputs
+  unless (M.null existingIllegalOutputs) $ do
     Print.posMessage (targetPos target) $ cError $
-      "Illegal output files created: " <> show existingIllegalOutputs
+      "Illegal output files: " <> show (M.keys existingIllegalOutputs)
 
-    Print.warn colors (targetPos target) "leaving leaked unspecified output effects" -- Need to make sure we only record actual outputs, and not *attempted* outputs before we delete this
-    -- mapM_ removeFileOrDirectory existingIllegalOutputs
+    let (safeToDelete, unsafeToDelete) =
+          M.partition (== KeepsNoOldContent) existingIllegalOutputs
+    unless (M.null safeToDelete) $ do
+      Print.warn colors (targetPos target) $
+        "Deleting unspecified outputs: " <> show (M.keys safeToDelete)
+      mapM_ removeFileOrDirectory $ M.keys safeToDelete
 
-    E.throwIO $ IllegalUnspecifiedOutputs colors target existingIllegalOutputs
-  warnOverSpecified buildsome "outputs" " (consider adding a .PHONY declaration)" specified (outputs `S.union` phoniesSet buildsome) (targetPos target)
+    unless (M.null unsafeToDelete) $ do
+      Print.warn colors (targetPos target) $
+        "Leaking unspecified outputs (may have old content): " <>
+        show (M.keys unsafeToDelete)
+
+    E.throwIO $ IllegalUnspecifiedOutputs colors target $ M.keys existingIllegalOutputs
+  warnOverSpecified buildsome "outputs" " (consider adding a .PHONY declaration)"
+    (M.keysSet specified) (M.keysSet outputs `S.union` phoniesSet buildsome)
+    (targetPos target)
   where
     colors@Color.Scheme{..} = bsColors buildsome
     (unspecifiedOutputs, illegalOutputs) =
-      partition MagicFiles.allowedUnspecifiedOutput allUnspecified
-    allUnspecified = S.toList $ outputs `S.difference` specified
-    specified = S.fromList $ targetOutputs target
+      M.partitionWithKey (\path _ -> MagicFiles.allowedUnspecifiedOutput path)
+      allUnspecified
+    allUnspecified = outputs `M.difference` specified
+    specified = M.fromSet (const ()) $ S.fromList $ targetOutputs target
 
 warnOverSpecified ::
   Buildsome -> ColorText -> ColorText -> Set FilePath -> Set FilePath -> SourcePos -> IO ()
@@ -346,7 +360,10 @@ replayExecutionLog ::
 replayExecutionLog BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
   Print.replay (bsColors bteBuildsome) btePrinter target stdOutputs
   (optVerbosity (bsOpts bteBuildsome)) selfTime $
-  verifyTargetSpec bteBuildsome inputs outputs target
+  -- We only register legal outputs that were CREATED properly in the
+  -- execution log, so all outputs keep no old content
+  verifyTargetSpec bteBuildsome inputs
+  (M.fromSet (const KeepsNoOldContent) outputs) target
 
 waitForSlaves ::
   Parallelism.Priority -> Printer -> Parallelism.Cell -> Buildsome ->
@@ -579,30 +596,30 @@ data RunCmdResults = RunCmdResults
   { rcrSelfTime :: DiffTime -- excluding pause times
   , rcrStdOutputs :: StdOutputs ByteString
   , rcrInputs :: Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)
-  , rcrOutputs :: Map FilePath Reason
+  , rcrOutputs :: Map FilePath (KeepsOldContent, Reason)
   , rcrSlaveStats :: Slave.Stats
   }
 
--- TODO: The *Effect functions here will have to return whether or not
--- the file is safe to delete later (i.e: If it was
--- truncated/created/deleted during build)
-outputWillHaveEffect :: FSHook.DelayedOutput -> IO Bool
-outputWillHaveEffect (FSHook.DelayedOutput behavior path) = do
-  outputExists <- FilePath.exists path
-  return $
-    case (outputExists, behavior) of
-    (True, OutputBehavior { behaviorWhenFileDoesExist = HasEffect }) -> True
-    (False, OutputBehavior { behaviorWhenFileDoesNotExist = HasEffect }) -> True
-    _ -> False
+outEffectToMaybe :: OutputEffect -> Maybe KeepsOldContent
+outEffectToMaybe OutputEffectNone = Nothing
+outEffectToMaybe (OutputEffectChanged keepsOld) = Just keepsOld
 
-outputHadEffect :: FSHook.OutFilePath -> Bool
-outputHadEffect (FSHook.OutFilePath _ effect) =
+delayedOutputEffect :: FSHook.DelayedOutput -> IO (Maybe KeepsOldContent)
+delayedOutputEffect (FSHook.DelayedOutput behavior path) = do
+  outputExists <- FilePath.exists path
+  return $ outEffectToMaybe $
+    if outputExists
+    then whenFileExists behavior
+    else whenFileMissing behavior
+
+undelayedOutputEffect :: FSHook.OutFilePath -> Maybe KeepsOldContent
+undelayedOutputEffect (FSHook.OutFilePath _ effect) =
   case effect of
-  FSHook.OutEffectNothing -> False
-  FSHook.OutEffectCreated -> True
-  FSHook.OutEffectDeleted -> True
-  FSHook.OutEffectChanged -> True
-  FSHook.OutEffectUnknown -> True -- conservatively assume yes
+  FSHook.OutEffectNothing -> Nothing
+  FSHook.OutEffectCreated -> Just KeepsNoOldContent
+  FSHook.OutEffectDeleted -> Just KeepsNoOldContent
+  FSHook.OutEffectChanged -> Just KeepsOldContent
+  FSHook.OutEffectUnknown -> Just KeepsOldContent -- conservatively assume content kept
 
 recordInput ::
   IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
@@ -622,11 +639,18 @@ recordInput inputsRef reason (FSHook.Input accessType path) = do
     -- of the same job
     merge _ (oldAccessTypes, oldMStat) = (oldAccessTypes `mappend` newAccessTypes, oldMStat)
 
-recordOutputs :: Buildsome -> IORef (Map FilePath Reason) -> Reason -> Set FilePath -> Set FilePath -> IO ()
+recordOutputs ::
+  Buildsome ->
+  IORef (Map FilePath (KeepsOldContent, Reason)) -> Reason ->
+  Set FilePath -> Map FilePath KeepsOldContent -> IO ()
 recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
-  atomicModifyIORef'_ outputsRef $ M.union $
-    M.fromList [(path, accessDoc) | path <- S.toList paths]
-  registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
+  atomicModifyIORef'_ outputsRef $ M.unionWith combineOutputs $ M.fromList
+    [ (path, (keepsOldContent, accessDoc))
+    | (path, keepsOldContent) <- M.toList paths
+    ]
+  registerOutputs buildsome $ M.keysSet paths `S.intersection` targetOutputsSet
+  where
+    combineOutputs = max -- KeepsOldContent > KeepsNoOldContent
 
 runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
@@ -651,27 +675,30 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       path `M.member` recordedOutputs ||
       path `S.member` targetOutputsSet
 
-    commonAccessHandler accessDoc rawInputs rawOutputs getOutPath handler = do
-      recordedOutputs <- readIORef outputsRef
-      let outputs = filter (not . MagicFiles.outputIgnored . getOutPath) rawOutputs
-          inputs = filter (not . inputIgnored recordedOutputs) rawInputs
-      filteredOutputs <- handler inputs outputs
-      recordOutputs bteBuildsome outputsRef accessDoc targetOutputsSet $
-        S.fromList $ map getOutPath $ filteredOutputs
-      mapM_ (recordInput inputsRef accessDoc) $
-        filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
+    commonAccessHandler accessDoc rawInputs rawOutputs
+      getOutPath getOutEffect handler = do
+        recordedOutputs <- readIORef outputsRef
+        let ignoredOutput = MagicFiles.outputIgnored . getOutPath
+            ignoredInput = inputIgnored recordedOutputs
+            inputs = filter (not . ignoredInput) rawInputs
+            outputs = filter (not . ignoredOutput) rawOutputs
+        () <- handler inputs outputs
+        let addMEffect output = do
+              mEffect <- getOutEffect output
+              return $ (,) (getOutPath output) <$> mEffect
+        filteredOutputs <- fmap (M.fromList . catMaybes) $ mapM addMEffect outputs
+        recordOutputs bteBuildsome outputsRef accessDoc
+          targetOutputsSet filteredOutputs
+        mapM_ (recordInput inputsRef accessDoc) $
+          filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
 
     fsUndelayedAccessHandler accessDoc rawInputs rawOutputs = do
-      commonAccessHandler accessDoc rawInputs rawOutputs FSHook.outPath $
-        \_ outputs -> return $ filter outputHadEffect outputs
+      commonAccessHandler accessDoc rawInputs rawOutputs
+        FSHook.outPath (return . undelayedOutputEffect) $ \_ _ -> return ()
 
     fsDelayedAccessHandler accessDoc rawInputs rawOutputs = do
-      commonAccessHandler accessDoc rawInputs rawOutputs FSHook.outputPath $
-        \inputs outputs -> do
-          makeInputs accessDoc inputs outputs
-          -- After makeInputs, we know the current FS state will
-          -- determine output's actual behavior.
-          filterM outputWillHaveEffect outputs
+      commonAccessHandler accessDoc rawInputs rawOutputs
+        FSHook.outputPath delayedOutputEffect $ makeInputs accessDoc
 
   (time, stdOutputs) <-
     FSHook.timedRunCommand (bsFsHook bteBuildsome) (bsRootPath bteBuildsome)
@@ -771,7 +798,8 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
           targetOutputs target
 
         registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
-        mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $ targetOutputs target
+        mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $
+          targetOutputs target
 
         slaves <-
           mkSlavesForPaths bte
@@ -785,7 +813,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
 
         rcr@RunCmdResults{..} <- runCmd bte parCell target
 
-        verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.keysSet rcrOutputs) target
+        verifyTargetSpec bteBuildsome (M.keysSet rcrInputs) (M.map fst rcrOutputs) target
         saveExecutionLog bteBuildsome target rcr
 
         Print.targetTiming colors btePrinter "now" rcrSelfTime
