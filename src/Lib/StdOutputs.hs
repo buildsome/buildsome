@@ -5,6 +5,7 @@ module Lib.StdOutputs
   ) where
 
 import Data.Binary (Binary)
+import Data.List (intersperse)
 import Data.Monoid
 import Data.String (IsString)
 import GHC.Generics (Generic)
@@ -22,11 +23,7 @@ null (StdOutputs out err) = mempty == out && mempty == err
 str :: (Eq a, Monoid a, IsString a) => StdOutputs a -> Maybe a
 str (StdOutputs out err)
   | mempty == out && mempty == err = Nothing
-  | otherwise = Just $ mconcat
-  [ showOutput out
-  , showOutput err
+  | otherwise = Just $ mconcat $ intersperse "\n" $ concat
+  [ [ out | mempty /= out ]
+  , [ err | mempty /= err ]
   ]
-  where
-    showOutput bs
-      | mempty == bs = ""
-      | otherwise = bs
