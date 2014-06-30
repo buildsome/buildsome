@@ -105,7 +105,12 @@ switchDirectory makefilePath = do
 
 parseMakefile :: Color.Scheme -> FilePath -> FilePath -> Makefile.Vars -> IO Makefile
 parseMakefile Color.Scheme{..} origMakefilePath finalMakefilePath vars = do
-  (parseTime, makefile) <- timeIt $ Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative =<< Makefile.parse finalMakefilePath vars
+  cwd <- Posix.getWorkingDirectory
+  let absFinalMakefilePath = cwd </> finalMakefilePath
+  (parseTime, makefile) <-
+    timeIt $
+    Makefile.parse absFinalMakefilePath vars >>=
+    Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative
   ColorText.putStrLn $ mconcat
     [ "Parsed makefile: ", cPath (show origMakefilePath)
     , " (took ", cTiming (show parseTime <> "sec"), ")"]

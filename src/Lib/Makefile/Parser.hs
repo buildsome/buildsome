@@ -6,7 +6,7 @@ module Lib.Makefile.Parser
 
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
 import Control.Monad
-import Control.Monad.IO.Class (MonadIO(..))
+import Control.Monad.Trans.Class (MonadTrans(..))
 import Data.ByteString (ByteString)
 import Data.Char (isAlphaNum)
 import Data.List (partition)
@@ -18,10 +18,10 @@ import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile.CondState (CondState)
+import Lib.Makefile.Monad (MonadMakefileParser)
 import Lib.Makefile.Types
-import Lib.Parsec (parseFromFile, showErr, showPos)
+import Lib.Parsec (showErr, showPos)
 import Prelude hiding (FilePath)
-import System.IO (hPutStrLn, stderr)
 import Text.Parsec ((<?>))
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
@@ -29,6 +29,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Makefile.CondState as CondState
+import qualified Lib.Makefile.Monad as MakefileMonad
 import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
@@ -251,10 +252,10 @@ includeLine = do
     [(path, "")] -> return path
     _ -> return fileNameStr
 
-runInclude :: MonadIO m => IncludePath -> Parser m ()
+runInclude :: MonadMakefileParser m => IncludePath -> Parser m ()
 runInclude rawIncludedPath = do
   includedPath <- computeIncludePath
-  eFileContent <- liftIO $ E.try $ BS8.readFile $ BS8.unpack includedPath
+  eFileContent <- lift $ MakefileMonad.tryReadFile includedPath
   case eFileContent of
     Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e
     Right fileContent ->
@@ -287,7 +288,7 @@ returnToIncluder =
         -- read it here
         P.optional (P.char '\n') <?> "newline after include statement"
 
-beginningOfLine :: MonadIO m => Parser m ()
+beginningOfLine :: MonadMakefileParser m => Parser m ()
 beginningOfLine = do
   mIncludePath <- P.optionMaybe includeLine
   case mIncludePath of
@@ -303,21 +304,21 @@ beginningOfLine = do
 -- Either way, we get to the beginning of a new line, and despite
 -- Parsec unconvinced, we do make progress in both, so it is safe for
 -- Applicative.many (P.many complains)
-newline :: MonadIO m => Parser m ()
+newline :: MonadMakefileParser m => Parser m ()
 newline = (returnToIncluder <|> void (P.char '\n')) *> beginningOfLine
 
 -- we're at the beginning of a line, and we can eat
 -- whitespace-only lines, as long as we also eat all the way to
 -- the end of line (including the next newline if it exists)
 -- Always succeeds, but may eat nothing at all:
-noiseLines :: MonadIO m => Parser m ()
+noiseLines :: MonadMakefileParser m => Parser m ()
 noiseLines =
   P.try (horizSpaces1 *> ((eol *> noiseLines) <|> properEof)) <|>
   P.optional (P.try (eol *> noiseLines))
   where
     eol = skipLineSuffix *> newline
 
-cmdLine :: MonadIO m => Parser m ByteString
+cmdLine :: MonadMakefileParser m => Parser m ByteString
 cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t') *>
     interpolateVariables escapeSequence "#\n" <* skipLineSuffix
@@ -331,7 +332,7 @@ mkFilePattern path
   where
     (dir, file) = FilePath.splitFileName path
 
-targetPattern :: MonadIO m => Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser m ()
+targetPattern :: MonadMakefileParser m => Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser m ()
 targetPattern pos outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
@@ -368,7 +369,7 @@ interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds pos) =
       (metaVariable outputs inputs ooInputs mStem)
       <* skipLineSuffix
 
-targetSimple :: MonadIO m => Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser m ()
+targetSimple :: MonadMakefileParser m => Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser m ()
 targetSimple pos outputPaths inputPaths orderOnlyInputs = do
   cmdLines <- P.many cmdLine
   -- Immediately interpolate cmdLine metaVars (after having expanded ordinary vars):
@@ -381,7 +382,7 @@ targetSimple pos outputPaths inputPaths orderOnlyInputs = do
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
-target :: MonadIO m => Parser m ()
+target :: MonadMakefileParser m => Parser m ()
 target = do
   pos <- P.getPosition
   outputPaths <- P.try $
@@ -464,10 +465,10 @@ directive str act = do
   P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string str *> newWord
   horizSpaces *> act <* skipLineSuffix
 
-echoDirective :: MonadIO m => Parser m ()
+echoDirective :: MonadMakefileParser m => Parser m ()
 echoDirective = directive "echo" $ do
   str <- interpolateVariables unescapedSequence "#\n"
-  whenCondTrue $ liftIO $ BS8.putStrLn $ "ECHO: " <> str
+  whenCondTrue $ lift $ MakefileMonad.outPutStrLn $ "ECHO: " <> str
 
 localsOpen :: Monad m => Parser m ()
 localsOpen = void $ P.updateState $ \state -> state { stateLocalsStack = stateVars state : stateLocalsStack state }
@@ -521,7 +522,7 @@ conditionalStatement = P.choice
   , endifDirective
   ]
 
-makefile :: MonadIO m => Parser m Makefile
+makefile :: MonadMakefileParser m => Parser m Makefile
 makefile =
   mkMakefile <$> do
     beginningOfLine -- due to beginning of file
@@ -541,19 +542,27 @@ makefile =
   where
     sepLines = newline *> noiseLines
 
-parse :: MonadIO m => FilePath -> Vars -> m Makefile
-parse makefileName vars = do
-  res <-
-    join $ liftIO $ parseFromFile makefile State
-    { stateIncludeStack = []
-    , stateLocalsStack = []
-    , stateRootDir = FilePath.takeDirectory makefileName
-    , stateVars = vars
-    , stateCond = CondState.empty
-    , stateWriter = mempty
-    } makefileName
+rethrow :: MonadMakefileParser m => (err -> String) -> m (Either err b) -> m b
+rethrow errToStr act = do
+  res <- act
   case res of
     Right x -> return x
     Left err -> do
-      liftIO $ hPutStrLn stderr $ showErr err
-      fail "Makefile parse failure"
+      MakefileMonad.errPutStrLn $ BS8.pack $ errToStr err
+      fail $ "Makefile parse failure"
+
+parse :: MonadMakefileParser m => FilePath -> Vars -> m Makefile
+parse absMakefilePath vars = do
+  rethrow showErr $ join $ do
+    input <- rethrow show $ MakefileMonad.tryReadFile absMakefilePath
+    return $ P.runParserT makefile initialState (BS8.unpack absMakefilePath) input
+  where
+    initialState =
+      State
+      { stateIncludeStack = []
+      , stateLocalsStack = []
+      , stateRootDir = FilePath.takeDirectory absMakefilePath
+      , stateVars = vars
+      , stateCond = CondState.empty
+      , stateWriter = mempty
+      }
