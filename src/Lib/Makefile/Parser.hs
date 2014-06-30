@@ -6,7 +6,7 @@ module Lib.Makefile.Parser
 
 import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
 import Control.Monad
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO(..))
 import Data.ByteString (ByteString)
 import Data.Char (isAlphaNum)
 import Data.List (partition)
@@ -53,7 +53,7 @@ data State = State
   , stateCond :: CondState
   , stateWriter :: Writer -- would have used WriterT, but Parsec isn't easily liftable
   }
-type Parser = P.ParsecT ByteString State IO
+type Parser m = P.ParsecT ByteString State m
 type ParserG = P.ParsecT ByteString
 
 atStateVars :: (Vars -> Vars) -> State -> State
@@ -65,30 +65,30 @@ atStateIncludeStack f state = state { stateIncludeStack = f (stateIncludeStack s
 atStateWriter :: (Writer -> Writer) -> State -> State
 atStateWriter f state = state { stateWriter = f (stateWriter state) }
 
-tell :: Writer -> Parser ()
+tell :: Monad m => Writer -> Parser m ()
 tell w = P.updateState $ atStateWriter $ mappend w
 
-tellTarget :: Target -> Parser ()
+tellTarget :: Monad m => Target -> Parser m ()
 tellTarget x = tell mempty { writerTargets = [x] }
 
-tellPattern :: Pattern -> Parser ()
+tellPattern :: Monad m => Pattern -> Parser m ()
 tellPattern x = tell mempty { writerPatterns = [x] }
 
-tellWeakVar :: VarName -> ByteString -> Parser ()
+tellWeakVar :: Monad m => VarName -> ByteString -> Parser m ()
 tellWeakVar varName defaultVal = tell mempty { writerWeakVars = M.singleton varName defaultVal }
 
 updateConds ::
-  (CondState -> Either String CondState) -> Parser ()
+  Monad m => (CondState -> Either String CondState) -> Parser m ()
 updateConds f = do
   state <- P.getState
   case f $ stateCond state of
     Left err -> fail err
     Right r -> P.putState $ state { stateCond = r }
 
-isCondTrue :: Parser Bool
+isCondTrue :: Monad m => Parser m Bool
 isCondTrue = CondState.isTrue . stateCond <$> P.getState
 
-whenCondTrue :: Parser () -> Parser ()
+whenCondTrue :: Monad m => Parser m () -> Parser m ()
 whenCondTrue act = do
   t <- isCondTrue
   when t act
@@ -115,10 +115,10 @@ newWord = P.lookAhead $ void $ P.satisfy p
 skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
 
-filepaths :: Parser [FilePath]
+filepaths :: Monad m => Parser m [FilePath]
 filepaths = BS8.words <$> interpolateVariables unescapedSequence ":#|\n"
 
-filepaths1 :: Parser [FilePath]
+filepaths1 :: Monad m => Parser m [FilePath]
 filepaths1 = do
   paths <- BS8.words <$> interpolateVariables unescapedSequence ":#|\n"
   if null paths
@@ -196,7 +196,7 @@ preserveMetavar =
   where
     char4 a b c d = BS8.pack [a, b, c, d]
 
-interpolateVariables :: (forall u m. Monad m => ParserG u m ByteString) -> String -> Parser ByteString
+interpolateVariables :: Monad n => (forall u m. Monad m => ParserG u m ByteString) -> String -> Parser n ByteString
 interpolateVariables escapeParse stopChars = do
   varsEnv <- stateVars <$> P.getState
   let
@@ -242,7 +242,7 @@ interpolateString escapeParser stopChars dollarHandler =
 
 type IncludePath = FilePath
 
-includeLine :: Parser IncludePath
+includeLine :: Monad m => Parser m IncludePath
 includeLine = do
   fileNameStr <-
     P.try (horizSpaces *> P.string "include" *> horizSpace) *>
@@ -251,7 +251,7 @@ includeLine = do
     [(path, "")] -> return path
     _ -> return fileNameStr
 
-runInclude :: IncludePath -> Parser ()
+runInclude :: MonadIO m => IncludePath -> Parser m ()
 runInclude rawIncludedPath = do
   includedPath <- computeIncludePath
   eFileContent <- liftIO $ E.try $ BS8.readFile $ BS8.unpack includedPath
@@ -271,7 +271,7 @@ runInclude rawIncludedPath = do
         state <- P.getState
         return $ stateRootDir state </> pathSuffix
 
-returnToIncluder :: Parser ()
+returnToIncluder :: Monad m => Parser m ()
 returnToIncluder =
   P.eof *> do
     State includeStack localsStack rootDir vars cond writer <- P.getState
@@ -287,7 +287,7 @@ returnToIncluder =
         -- read it here
         P.optional (P.char '\n') <?> "newline after include statement"
 
-beginningOfLine :: Parser ()
+beginningOfLine :: MonadIO m => Parser m ()
 beginningOfLine = do
   mIncludePath <- P.optionMaybe includeLine
   case mIncludePath of
@@ -303,21 +303,21 @@ beginningOfLine = do
 -- Either way, we get to the beginning of a new line, and despite
 -- Parsec unconvinced, we do make progress in both, so it is safe for
 -- Applicative.many (P.many complains)
-newline :: Parser ()
+newline :: MonadIO m => Parser m ()
 newline = (returnToIncluder <|> void (P.char '\n')) *> beginningOfLine
 
 -- we're at the beginning of a line, and we can eat
 -- whitespace-only lines, as long as we also eat all the way to
 -- the end of line (including the next newline if it exists)
 -- Always succeeds, but may eat nothing at all:
-noiseLines :: Parser ()
+noiseLines :: MonadIO m => Parser m ()
 noiseLines =
   P.try (horizSpaces1 *> ((eol *> noiseLines) <|> properEof)) <|>
   P.optional (P.try (eol *> noiseLines))
   where
     eol = skipLineSuffix *> newline
 
-cmdLine :: Parser ByteString
+cmdLine :: MonadIO m => Parser m ByteString
 cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t') *>
     interpolateVariables escapeSequence "#\n" <* skipLineSuffix
@@ -331,7 +331,7 @@ mkFilePattern path
   where
     (dir, file) = FilePath.splitFileName path
 
-targetPattern :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser ()
+targetPattern :: MonadIO m => Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser m ()
 targetPattern pos outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
   -- remain $ if variable fails to parse it
@@ -368,7 +368,7 @@ interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds pos) =
       (metaVariable outputs inputs ooInputs mStem)
       <* skipLineSuffix
 
-targetSimple :: Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser ()
+targetSimple :: MonadIO m => Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser m ()
 targetSimple pos outputPaths inputPaths orderOnlyInputs = do
   cmdLines <- P.many cmdLine
   -- Immediately interpolate cmdLine metaVars (after having expanded ordinary vars):
@@ -381,7 +381,7 @@ targetSimple pos outputPaths inputPaths orderOnlyInputs = do
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
-target :: Parser ()
+target :: MonadIO m => Parser m ()
 target = do
   pos <- P.getPosition
   outputPaths <- P.try $
@@ -427,7 +427,7 @@ mkMakefile (Writer targets targetPatterns weakVars) =
     getPhonyInputs t = badPhony t "invalid"
     (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputs) targets
 
-properEof :: Parser ()
+properEof :: Monad m => Parser m ()
 properEof = do
   P.eof
   state <- P.getState
@@ -439,7 +439,7 @@ properEof = do
 
 data OverrideVar = OverrideVar | DontOverrideVar
 
-varAssignment :: Parser ()
+varAssignment :: Monad m => Parser m ()
 varAssignment = do
   (varName, overrideVar) <-
       do x <- P.try ident
@@ -459,20 +459,20 @@ varAssignment = do
   whenCondTrue $ P.updateState $ atStateVars $
     M.alter (f overrideVar) varName
 
-directive :: String -> Parser a -> Parser a
+directive :: Monad m => String -> Parser m a -> Parser m a
 directive str act = do
   P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string str *> newWord
   horizSpaces *> act <* skipLineSuffix
 
-echoDirective :: Parser ()
+echoDirective :: MonadIO m => Parser m ()
 echoDirective = directive "echo" $ do
   str <- interpolateVariables unescapedSequence "#\n"
   whenCondTrue $ liftIO $ BS8.putStrLn $ "ECHO: " <> str
 
-localsOpen :: Parser ()
+localsOpen :: Monad m => Parser m ()
 localsOpen = void $ P.updateState $ \state -> state { stateLocalsStack = stateVars state : stateLocalsStack state }
 
-localsClose :: Parser ()
+localsClose :: Monad m => Parser m ()
 localsClose = do
   state <- P.getState
   case stateLocalsStack state of
@@ -480,7 +480,7 @@ localsClose = do
     (oldVars:rest) ->
       P.putState $ state { stateLocalsStack = rest, stateVars = oldVars }
 
-localDirective :: Parser ()
+localDirective :: Monad m => Parser m ()
 localDirective =
   directive "local" $
   P.choice
@@ -490,7 +490,7 @@ localDirective =
 
 data IfType = IfEq | IfNeq
 
-ifeqDirective :: String -> IfType -> Parser ()
+ifeqDirective :: Monad m => String -> IfType -> Parser m ()
 ifeqDirective keyword ifType = directive keyword $ do
   _ <- P.char '('
   l <- readExp ','
@@ -505,15 +505,15 @@ ifeqDirective keyword ifType = directive keyword $ do
       IfEq -> (==)
       IfNeq -> (/=)
 
-endifDirective :: Parser ()
+endifDirective :: Monad m => Parser m ()
 endifDirective =
   directive "endif" $ updateConds $ CondState.unnest "endif mismatched"
 
-elseDirective :: Parser ()
+elseDirective :: Monad m => Parser m ()
 elseDirective =
   directive "else" $ updateConds (CondState.inverse "else mismatched")
 
-conditionalStatement :: Parser ()
+conditionalStatement :: Monad m => Parser m ()
 conditionalStatement = P.choice
   [ ifeqDirective "ifeq" IfEq
   , ifeqDirective "ifneq" IfNeq
@@ -521,7 +521,7 @@ conditionalStatement = P.choice
   , endifDirective
   ]
 
-makefile :: Parser Makefile
+makefile :: MonadIO m => Parser m Makefile
 makefile =
   mkMakefile <$> do
     beginningOfLine -- due to beginning of file
@@ -541,10 +541,10 @@ makefile =
   where
     sepLines = newline *> noiseLines
 
-parse :: FilePath -> Vars -> IO Makefile
+parse :: MonadIO m => FilePath -> Vars -> m Makefile
 parse makefileName vars = do
   res <-
-    join $ parseFromFile makefile State
+    join $ liftIO $ parseFromFile makefile State
     { stateIncludeStack = []
     , stateLocalsStack = []
     , stateRootDir = FilePath.takeDirectory makefileName
@@ -555,5 +555,5 @@ parse makefileName vars = do
   case res of
     Right x -> return x
     Left err -> do
-      hPutStrLn stderr $ showErr err
+      liftIO $ hPutStrLn stderr $ showErr err
       fail "Makefile parse failure"
