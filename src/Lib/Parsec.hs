@@ -1,15 +1,30 @@
+{-# OPTIONS -fno-warn-orphans #-}
 module Lib.Parsec (showErr, showPos) where
 
+import Control.Applicative ((<$>), (<*>))
+import Data.Binary (Binary(..))
 import Prelude hiding (FilePath)
 import qualified Text.Parsec.Error as ParseError
-import qualified Text.Parsec.Pos as ParsePos
+import qualified Text.Parsec.Pos as ParsecPos
 
-showPos :: ParsePos.SourcePos -> String
+instance Binary ParsecPos.SourcePos where
+  put pos = do
+    put $ ParsecPos.sourceName pos
+    put $ ParsecPos.sourceLine pos
+    put $ ParsecPos.sourceColumn pos
+  get = mkPos <$> get <*> get <*> get
+    where
+      mkPos name line column =
+        flip ParsecPos.setSourceColumn column $
+        flip ParsecPos.setSourceLine line $
+        ParsecPos.initialPos name
+
+showPos :: ParsecPos.SourcePos -> String
 showPos pos = concat [path, ":", show line, ":", show col]
   where
-    col = ParsePos.sourceColumn pos
-    line = ParsePos.sourceLine pos
-    path = ParsePos.sourceName pos
+    col = ParsecPos.sourceColumn pos
+    line = ParsecPos.sourceLine pos
+    path = ParsecPos.sourceName pos
 
 showErr :: ParseError.ParseError -> String
 showErr err = concat [showPos pos, ":", str]

@@ -1,25 +1,30 @@
 -- | The notion of a string pattern: abc%def can be matched or plugged
 -- with a match
+{-# LANGUAGE DeriveGeneric #-}
 module Lib.StringPattern
   ( StringPattern(..), fromString
   , Match(..), match, plug
   ) where
 
+import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Monoid ((<>))
+import GHC.Generics (Generic)
 import Lib.ByteString (unprefixed, unsuffixedWildCard)
-import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 
 data StringPattern = StringPattern
   { stringPatternPrefix :: ByteString
   , stringPatternSuffix :: ByteString
-  } deriving (Show)
+  } deriving (Show, Generic)
+instance Binary StringPattern
 
 data Match = Match
   { matchPlaceHolder :: ByteString -- which value % took in this match
   , matchWildcard :: Maybe ByteString -- which value the optional * took
-  } deriving (Show)
+  } deriving (Show, Generic)
+instance Binary Match
 
 match :: StringPattern -> ByteString -> Maybe Match
 match (StringPattern prefix suffix) string =

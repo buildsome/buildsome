@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 module Lib.Makefile.Types
   ( TargetType(..), targetAllInputs
   , FilePattern(..), onFilePatternPaths
@@ -9,31 +10,37 @@ module Lib.Makefile.Types
   ) where
 
 import Control.Applicative (Applicative(..), (<$>))
+import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Map (Map)
 import Data.Traversable (traverse)
+import GHC.Generics (Generic)
 import Lib.FilePath (FilePath)
+import Lib.Parsec () -- instance Binary SourcePos
 import Lib.StringPattern (StringPattern)
 import Prelude hiding (FilePath)
-import qualified Text.Parsec as Parsec
+import qualified Text.Parsec.Pos as ParsecPos
 
 data TargetType output input = Target
   { targetOutputs :: [output]
   , targetInputs :: [input]
   , targetOrderOnlyInputs :: [input]
   , targetCmds :: ByteString
-  , targetPos :: Parsec.SourcePos
-  } deriving (Show)
+  , targetPos :: ParsecPos.SourcePos
+  } deriving (Show, Generic)
+instance (Binary output, Binary input) => Binary (TargetType output input)
 
 type Target = TargetType FilePath FilePath
 
 data FilePattern = FilePattern
   { filePatternDirectory :: FilePath
   , filePatternFile :: StringPattern
-  } deriving (Show)
+  } deriving (Show, Generic)
+instance Binary FilePattern
 
 data InputPat = InputPath FilePath | InputPattern FilePattern
-  deriving (Show)
+  deriving (Show, Generic)
+instance Binary InputPat
 
 type Pattern = TargetType FilePattern InputPat
 
@@ -46,7 +53,8 @@ data Makefile = Makefile
   , makefilePatterns :: [Pattern]
   , makefilePhonies :: [FilePath]
   , makefileWeakVars :: Vars
-  } deriving (Show)
+  } deriving (Show, Generic)
+instance Binary Makefile
 
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
