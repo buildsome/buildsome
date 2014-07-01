@@ -15,6 +15,7 @@ import qualified System.Posix.ByteString as Posix
 data ThirdPartyMeddlingError = ThirdPartyMeddlingError FilePath String deriving (Show, Typeable)
 instance E.Exception ThirdPartyMeddlingError
 
+-- TODO: Rename MTime to something else, it tests more than mtime
 assertFileMTime :: FilePath -> Maybe Posix.FileStatus -> IO ()
 assertFileMTime path oldMStat = do
   newMStat <- Dir.getMFileStatus path
