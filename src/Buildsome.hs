@@ -6,7 +6,6 @@ module Buildsome
 
 import Buildsome.Db (Db, IRef(..), Reason)
 import Buildsome.FileContentDescCache (fileContentDescOfStat)
-import Buildsome.Meddling (assertSameMTime)
 import Buildsome.Opts (Opt(..))
 import Control.Applicative ((<$>), Applicative(..))
 import Control.Concurrent (myThreadId)
@@ -53,6 +52,7 @@ import qualified Buildsome.Clean as Clean
 import qualified Buildsome.Color as Color
 import qualified Buildsome.Db as Db
 import qualified Buildsome.MagicFiles as MagicFiles
+import qualified Buildsome.Meddling as Meddling
 import qualified Buildsome.Opts as Opts
 import qualified Buildsome.Print as Print
 import qualified Control.Exception as E
@@ -814,6 +814,9 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     }
   where
     db = bsDb buildsome
+    assertSameMTime path oldMStat =
+      unless (MagicFiles.allowedUnspecifiedOutput path) $
+      Meddling.assertSameMTime path oldMStat
     inputAccess ::
       FilePath ->
       (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
@@ -826,7 +829,7 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
       assertSameMTime path Nothing
       return $ Db.FileDescNonExisting reason
     inputAccess path (accessTypes, Just stat) = do
-      assertSameMTime path (Just stat)
+      assertSameMTime path $ Just stat
       let
         addDesc accessType getDesc = do
           desc <- getDesc
