@@ -107,12 +107,16 @@ parseMakefile :: Color.Scheme -> Db -> FilePath -> FilePath -> Makefile.Vars -> 
 parseMakefile Color.Scheme{..} db origMakefilePath finalMakefilePath vars = do
   cwd <- Posix.getWorkingDirectory
   let absFinalMakefilePath = cwd </> finalMakefilePath
-  (parseTime, makefile) <-
-    timeIt $
-    MemoParseMakefile.memoParse db absFinalMakefilePath vars >>=
-    Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative
+  (parseTime, (isHit, makefile)) <- timeIt $ do
+    (isHit, rawMakefile) <- MemoParseMakefile.memoParse db absFinalMakefilePath vars
+    makefile <- Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative rawMakefile
+    return (isHit, makefile)
+  let msg =
+        case isHit of
+        MemoParseMakefile.Hit -> "Got makefile from cache: "
+        MemoParseMakefile.Miss -> "Parsed makefile: "
   ColorText.putStrLn $ mconcat
-    [ "Parsed makefile: ", cPath (show origMakefilePath)
+    [ msg, cPath (show origMakefilePath)
     , " (took ", cTiming (show parseTime <> "sec"), ")"]
   return makefile
 
