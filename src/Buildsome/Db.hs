@@ -17,6 +17,7 @@ import Data.IORef
 import Data.Map (Map)
 import Data.Set (Set)
 import Data.Time.Clock (DiffTime)
+import Data.Time.Clock.POSIX (POSIXTime)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.BuildId (BuildId)
@@ -35,7 +36,7 @@ import qualified Database.Sophia as Sophia
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.6"
+schemaVersion = "schema.ver.7"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -44,7 +45,7 @@ data Db = Db
   }
 
 data FileContentDescCache = FileContentDescCache
-  { fcdcModificationTime :: Posix.EpochTime
+  { fcdcModificationTime :: POSIXTime
   , fcdcFileContentDesc :: FileContentDesc
   } deriving (Generic, Show)
 instance Binary FileContentDescCache

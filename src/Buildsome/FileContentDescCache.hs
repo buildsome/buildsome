@@ -15,13 +15,13 @@ fileContentDescOfStat db path stat = do
   mDescCache <- Db.readIRef cacheIRef
   case mDescCache of
     Just oldCache
-      | Posix.modificationTime stat ==
+      | Posix.modificationTimeHiRes stat ==
         Db.fcdcModificationTime oldCache ->
         return $ Db.fcdcFileContentDesc oldCache
     _ -> do
       newFileContentDesc <- FileDesc.fileContentDescOfStat path stat
       Db.writeIRef cacheIRef Db.FileContentDescCache
-        { Db.fcdcModificationTime = Posix.modificationTime stat
+        { Db.fcdcModificationTime = Posix.modificationTimeHiRes stat
         , Db.fcdcFileContentDesc = newFileContentDesc
         }
       return newFileContentDesc
