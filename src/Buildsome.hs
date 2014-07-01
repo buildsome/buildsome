@@ -814,9 +814,9 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     }
   where
     db = bsDb buildsome
-    assertSameMTime path oldMStat =
+    assertFileMTime path oldMStat =
       unless (MagicFiles.allowedUnspecifiedOutput path) $
-      Meddling.assertSameMTime path oldMStat
+      Meddling.assertFileMTime path oldMStat
     inputAccess ::
       FilePath ->
       (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
@@ -826,10 +826,10 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
             case M.elems accessTypes of
             [] -> error $ "AccessTypes empty in rcrInputs:" ++ show path
             x:_ -> x
-      assertSameMTime path Nothing
+      assertFileMTime path Nothing
       return $ Db.FileDescNonExisting reason
     inputAccess path (accessTypes, Just stat) = do
-      assertSameMTime path $ Just stat
+      assertFileMTime path $ Just stat
       let
         addDesc accessType getDesc = do
           desc <- getDesc
