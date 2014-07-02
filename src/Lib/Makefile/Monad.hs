@@ -7,7 +7,7 @@ module Lib.Makefile.Monad
 import Control.Applicative (Applicative)
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.Trans.Writer (WriterT(..))
+import Control.Monad.Trans.State (StateT(..))
 import Data.ByteString (ByteString)
 import Data.Map (Map)
 import Data.Monoid (Monoid(..))
@@ -16,7 +16,7 @@ import Lib.FilePath (FilePath)
 import Prelude hiding (FilePath)
 import qualified Buildsome.Meddling as Meddling
 import qualified Control.Exception as E
-import qualified Control.Monad.Trans.Writer as Writer
+import qualified Control.Monad.Trans.State as State
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
 import qualified System.IO as IO
@@ -53,16 +53,21 @@ instance Monoid W where
 runPutStrLn :: (PutStrLnTarget, ByteString) -> IO ()
 runPutStrLn (target, bs) = BS8.hPutStrLn (targetHandle target) bs
 
-newtype M a = M (WriterT W IO a)
+-- IMPORTANT: Use StateT and not WriterT, because WriterT's >>= leaks
+-- stack-space due to tuple unpacking (and mappend) *after* the inner
+-- bind, whereas StateT uses a tail call for the inner bind.
+newtype M a = M (StateT W IO a)
   deriving (Functor, Applicative, Monad)
+tell :: W -> M ()
+tell = M . State.modify . mappend
 
 instance MonadMakefileParser M where
-  outPutStrLn bs = M $ Writer.tell $ mempty { wPutStrLns = [(Out, bs)] }
-  errPutStrLn bs = M $ Writer.tell $ mempty { wPutStrLns = [(Err, bs)] }
-  tryReadFile filePath = M $ do
-    mFileStat <- liftIO $ getMFileStatus filePath
-    Writer.tell $ mempty { wReadFiles = Map.singleton filePath [mFileStat] }
-    liftIO $ tryReadFile filePath
+  outPutStrLn bs = tell $ mempty { wPutStrLns = [(Out, bs)] }
+  errPutStrLn bs = tell $ mempty { wPutStrLns = [(Err, bs)] }
+  tryReadFile filePath = do
+    mFileStat <- M $ liftIO $ getMFileStatus filePath
+    tell $ mempty { wReadFiles = Map.singleton filePath [mFileStat] }
+    M $ liftIO $ tryReadFile filePath
 
 mergeAllFileStatuses :: FilePath -> [Maybe Posix.FileStatus] -> IO (Maybe Posix.FileStatus)
 mergeAllFileStatuses filePath = go
@@ -76,7 +81,7 @@ mergeAllFileStatuses filePath = go
 
 runM :: M a -> IO (ReadFiles, a)
 runM (M act) = do
-  (res, w) <- runWriterT act
+  (res, w) <- runStateT act mempty
   forM_ (wPutStrLns w) runPutStrLn
   readFiles <- Map.traverseWithKey mergeAllFileStatuses (wReadFiles w)
   return $ (readFiles, res)
