@@ -1,5 +1,5 @@
 module Buildsome.MemoParseMakefile
-  ( IsHit(..), memoParse
+  ( memoParse
   ) where
 
 import Buildsome.Db (Db)
@@ -48,23 +48,22 @@ cacheInputsMatch db (oldPath, oldVars, oldFiles) path vars
       newContentDesc <- mkFileDesc db filePath mStat
       return $ oldContentDesc == newContentDesc
 
-data IsHit = Hit | Miss
-
-matchCache :: Db -> FilePath -> Vars -> Maybe Db.MakefileParseCache -> (Makefile -> IO r) -> IO r -> IO r
-matchCache _ _ _ Nothing _ miss = miss
-matchCache db absMakefilePath vars (Just (Db.MakefileParseCache inputs output)) hit miss = do
+matchCache :: Db -> FilePath -> Vars -> Maybe Db.MakefileParseCache -> IO Makefile -> IO Makefile
+matchCache _ _ _ Nothing miss = miss
+matchCache db absMakefilePath vars (Just (Db.MakefileParseCache inputs output)) miss = do
   isMatch <- cacheInputsMatch db inputs absMakefilePath vars
   if isMatch
-    then hit output
+    then return output
     else miss
 
-memoParse :: Db -> FilePath -> Vars -> IO (IsHit, Makefile)
+
+memoParse :: Db -> FilePath -> Vars -> IO Makefile
 memoParse db absMakefilePath vars = do
   mCache <- Db.readIRef makefileParseCacheIRef
-  matchCache db absMakefilePath vars mCache (return . (,) Hit) $ do
+  matchCache db absMakefilePath vars mCache $ do
     (newFiles, output) <- parse db absMakefilePath vars
     Db.writeIRef makefileParseCacheIRef $
       Db.MakefileParseCache (absMakefilePath, vars, newFiles) output
-    return (Miss, output)
+    return output
   where
     makefileParseCacheIRef = Db.makefileParseCache db
