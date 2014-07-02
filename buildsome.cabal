@@ -36,7 +36,6 @@ executable buildsome
                ,     Buildsome.Db
                ,     Buildsome.FileContentDescCache
                ,     Buildsome.Meddling
-               ,     Buildsome.MemoParseMakefile
                ,     Buildsome.Print
                ,     Buildsome.MagicFiles
                ,     Buildsome.Opts

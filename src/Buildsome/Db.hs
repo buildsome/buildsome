@@ -8,7 +8,6 @@ module Buildsome.Db
   , FileContentDescCache(..), fileContentDescCache
   , Reason
   , IRef(..)
-  , MFileContentDesc, MakefileParseCache(..), makefileParseCache
   ) where
 
 import Control.Applicative ((<$>))
@@ -25,7 +24,7 @@ import Lib.BuildId (BuildId)
 import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
 import Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
-import Lib.Makefile (Makefile)
+import Lib.Makefile (TargetType(..), Target)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeInstances ()
 import Prelude hiding (FilePath)
@@ -34,7 +33,6 @@ import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Set as S
 import qualified Database.Sophia as Sophia
-import qualified Lib.Makefile as Makefile
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
@@ -64,7 +62,7 @@ instance Binary InputDesc
 data FileDesc ne e
   = FileDescNonExisting ne
   | FileDescExisting e
-  deriving (Generic, Eq, Ord, Show)
+  deriving (Generic)
 instance (Binary ne, Binary e) => Binary (FileDesc ne e)
 
 data OutputDesc = OutputDesc
@@ -130,21 +128,10 @@ mkIRefKey key db = IRef
   , delIRef = deleteKey db key
   }
 
-executionLog :: Makefile.Target -> Db -> IRef ExecutionLog
+executionLog :: Target -> Db -> IRef ExecutionLog
 executionLog target = mkIRefKey targetKey
   where
-    targetKey = MD5.hash $ Makefile.targetCmds target -- TODO: Canonicalize commands (whitespace/etc)
+    targetKey = MD5.hash $ targetCmds target -- TODO: Canonicalize commands (whitespace/etc)
 
 fileContentDescCache :: FilePath -> Db -> IRef FileContentDescCache
 fileContentDescCache = mkIRefKey
-
-type MFileContentDesc = FileDesc () FileContentDesc
-
-data MakefileParseCache = MakefileParseCache
-  { mpcInputs :: (FilePath, Makefile.Vars, Map FilePath MFileContentDesc)
-  , mpcOutput :: Makefile
-  } deriving (Generic)
-instance Binary MakefileParseCache
-
-makefileParseCache :: Db -> IRef MakefileParseCache
-makefileParseCache = mkIRefKey "makefileParseCache"

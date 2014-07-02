@@ -2,8 +2,9 @@
 module Main (main) where
 
 import Buildsome (Buildsome)
-import Buildsome.Db (Db, Reason)
+import Buildsome.Db (Reason)
 import Buildsome.Opts (Opts(..), Opt(..))
+import Control.Applicative ((<$))
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.List (foldl')
@@ -24,7 +25,6 @@ import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
 import qualified Buildsome
 import qualified Buildsome.Color as Color
-import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
 import qualified Buildsome.Opts as Opts
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
@@ -103,13 +103,13 @@ switchDirectory makefilePath = do
   where
     (cwd, file) = FilePath.splitFileName makefilePath
 
-parseMakefile :: Color.Scheme -> Db -> FilePath -> FilePath -> Makefile.Vars -> IO Makefile
-parseMakefile Color.Scheme{..} db origMakefilePath finalMakefilePath vars = do
+parseMakefile :: Color.Scheme -> FilePath -> FilePath -> Makefile.Vars -> IO Makefile
+parseMakefile Color.Scheme{..} origMakefilePath finalMakefilePath vars = do
   cwd <- Posix.getWorkingDirectory
   let absFinalMakefilePath = cwd </> finalMakefilePath
   (parseTime, makefile) <-
     timeIt $
-    MemoParseMakefile.memoParse db absFinalMakefilePath vars >>=
+    Makefile.parse absFinalMakefilePath vars >>=
     Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative
   ColorText.putStrLn $ mconcat
     [ "Parsed makefile: ", cPath (show origMakefilePath)
@@ -177,9 +177,11 @@ verifyValidFlags validFlags userFlags
 
 handleOpts ::
   Color.Scheme -> Opts ->
-  (Db -> Opt -> InOrigCwd -> Requested -> FilePath -> Makefile -> IO ()) -> IO ()
-handleOpts _ GetVersion _ =  BS8.putStrLn $ "buildsome " <> Version.version
-handleOpts colors (Opts opt) body = do
+  IO (Maybe (Opt, InOrigCwd, Requested, FilePath, Makefile))
+handleOpts _ GetVersion = do
+  BS8.putStrLn $ "buildsome " <> Version.version
+  return Nothing
+handleOpts colors (Opts opt) = do
   origMakefilePath <-
     case optMakefilePath opt of
     Nothing ->
@@ -196,14 +198,13 @@ handleOpts colors (Opts opt) body = do
         -- Otherwise: there's no useful original cwd:
         Just _ -> return
   requested <- getRequestedTargets colors mChartsPath $ optRequestedTargets opt
-  Buildsome.withDb finalMakefilePath $ \db -> do
-    makefile <- parseMakefile colors db origMakefilePath finalMakefilePath (optVars opt)
-    let flags = flagsOfVars (Makefile.makefileWeakVars makefile)
-    if optHelpFlags opt
-      then showHelpFlags flags
-      else do
-        verifyValidFlags flags (optWiths opt ++ optWithouts opt)
-        body db opt inOrigCwd requested finalMakefilePath makefile
+  makefile <- parseMakefile colors origMakefilePath finalMakefilePath (optVars opt)
+  let flags = flagsOfVars (Makefile.makefileWeakVars makefile)
+  if optHelpFlags opt
+    then Nothing <$ showHelpFlags flags
+    else do
+      verifyValidFlags flags (optWiths opt ++ optWithouts opt)
+      return $ Just (opt, inOrigCwd, requested, finalMakefilePath, makefile)
 
 makeChart :: Slave.Stats -> FilePath -> IO ()
 makeChart slaveStats filePath = do
@@ -222,9 +223,12 @@ main :: IO ()
 main = do
   opts <- Opts.get
   colors <- getColors opts
-  handleOpts colors opts $ \db opt inOrigCwd requested finalMakefilePath makefile -> do
-    installSigintHandler
-    setBuffering
-    printer <- Printer.new 0
-    Buildsome.with colors db finalMakefilePath makefile opt $ \buildsome ->
-      handleRequested buildsome printer inOrigCwd requested
+  mRes <- handleOpts colors opts
+  case mRes of
+    Nothing -> return ()
+    Just (opt, inOrigCwd, requested, finalMakefilePath, makefile) -> do
+      installSigintHandler
+      setBuffering
+      printer <- Printer.new 0
+      Buildsome.with colors finalMakefilePath makefile opt $ \buildsome ->
+        handleRequested buildsome printer inOrigCwd requested
