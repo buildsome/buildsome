@@ -35,7 +35,7 @@ import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
-import Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
+import Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs, filePatternFile)
 import Lib.Parallelism (Parallelism)
 import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
@@ -71,6 +71,7 @@ import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Slave as Slave
+import qualified Lib.StringPattern as StringPattern
 import qualified Lib.Timeout as Timeout
 import qualified Prelude
 import qualified System.IO as IO
@@ -243,11 +244,17 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
 makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
 makeChildSlaves bte@BuildTargetEnv{..} path
   | not (null childPatterns) =
-    fail "UNSUPPORTED: Read directory on directory with patterns"
+    fail $ BS8.unpack $ bsRender bteBuildsome $ mconcat
+    [ "UNSUPPORTED: Read directory (", bteReason, ") on directory ", show path
+    , " with patterns: "
+    , cTarget $ show $ map (map showTargetOutputPattern . targetOutputs) childPatterns
+    ]
   | otherwise =
     traverse (getSlaveForTarget bte) $
     filter (not . isPhony . snd) childTargets
   where
+    Color.Scheme{..} = Color.scheme
+    showTargetOutputPattern = StringPattern.toString . filePatternFile
     isPhony = all (`S.member` phoniesSet bteBuildsome) . targetOutputs
     DirectoryBuildMap childTargets childPatterns =
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
@@ -445,7 +452,6 @@ mkStats targetRep execTime selfTime stdOutputs =
     then S.singleton targetRep
     else S.empty
   }
-
 
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Cell ->
