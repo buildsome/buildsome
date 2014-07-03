@@ -13,6 +13,7 @@ import Data.String (IsString(..))
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
+import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile (Makefile)
@@ -22,6 +23,8 @@ import Lib.Show (show)
 import Lib.Sigint (installSigintHandler)
 import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
+import System.Posix.IO (stdOutput)
+import System.Posix.Terminal (queryTerminal)
 import qualified Buildsome
 import qualified Buildsome.Color as Color
 import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
@@ -43,18 +46,22 @@ import qualified System.Posix.ByteString as Posix
 standardMakeFilename :: FilePath
 standardMakeFilename = "Buildsome.mk"
 
-data SpecifiedInexistentMakefilePath = SpecifiedInexistentMakefilePath Color.Scheme FilePath deriving (Typeable)
+data SpecifiedInexistentMakefilePath =
+  SpecifiedInexistentMakefilePath (ColorText -> ByteString) FilePath
+  deriving (Typeable)
 instance Show SpecifiedInexistentMakefilePath where
-  show (SpecifiedInexistentMakefilePath Color.Scheme{..} path) =
-    ColorText.renderStr $ cError $ mconcat
+  show (SpecifiedInexistentMakefilePath render path) =
+    BS8.unpack $ render $ cError $ mconcat
     ["Specified makefile path: ", cPath (show path), " does not exist"]
+    where
+      Color.Scheme{..} = Color.scheme
 instance E.Exception SpecifiedInexistentMakefilePath
 
-specifiedMakefile :: Color.Scheme -> FilePath -> IO FilePath
-specifiedMakefile colors path = do
+specifiedMakefile :: Printer -> FilePath -> IO FilePath
+specifiedMakefile printer path = do
   mStat <- getMFileStatus path
   case mStat of
-    Nothing -> E.throwIO $ SpecifiedInexistentMakefilePath colors path
+    Nothing -> E.throwIO $ SpecifiedInexistentMakefilePath (Printer.render printer) path
     Just stat
       | Posix.isDirectory stat -> return $ path </> standardMakeFilename
       | otherwise -> return path
@@ -67,21 +74,26 @@ data TargetsRequest = TargetsRequest
 
 data Requested = RequestedClean | RequestedTargets TargetsRequest
 
-data BadCommandLine = BadCommandLine Color.Scheme String deriving (Typeable)
+data BadCommandLine = BadCommandLine (ColorText -> ByteString) String deriving (Typeable)
 instance E.Exception BadCommandLine
 instance Show BadCommandLine where
-  show (BadCommandLine Color.Scheme{..} msg) =
-    ColorText.renderStr $ cError $ "Invalid command line options: " <> fromString msg
+  show (BadCommandLine render msg) =
+    BS8.unpack $ render $ cError $ "Invalid command line options: " <> fromString msg
+    where
+      Color.Scheme{..} = Color.scheme
 
-getRequestedTargets :: Color.Scheme -> Maybe FilePath -> [ByteString] -> IO Requested
-getRequestedTargets colors (Just _) ["clean"] = E.throwIO $ BadCommandLine colors "Clean requested with charts"
+getRequestedTargets :: Printer -> Maybe FilePath -> [ByteString] -> IO Requested
+getRequestedTargets printer (Just _) ["clean"] =
+  E.throwIO $ BadCommandLine (Printer.render printer) "Clean requested with charts"
 getRequestedTargets _ Nothing ["clean"] = return RequestedClean
 getRequestedTargets _ mChartPath [] = return $ RequestedTargets TargetsRequest
   { targetsRequestPaths = ["default"]
   , targetsRequestReason = "implicit 'default' target"
   , targetsRequestChartPath = mChartPath }
-getRequestedTargets colors mChartPath ts
-  | "clean" `elem` ts = E.throwIO $ BadCommandLine colors "Clean must be requested exclusively"
+getRequestedTargets printer mChartPath ts
+  | "clean" `elem` ts =
+    E.throwIO $
+    BadCommandLine (Printer.render printer) "Clean must be requested exclusively"
   | otherwise = return $ RequestedTargets TargetsRequest
   { targetsRequestPaths = ts
   , targetsRequestReason = "explicit request from cmdline"
@@ -103,8 +115,8 @@ switchDirectory makefilePath = do
   where
     (cwd, file) = FilePath.splitFileName makefilePath
 
-parseMakefile :: Color.Scheme -> Db -> FilePath -> FilePath -> Makefile.Vars -> IO Makefile
-parseMakefile Color.Scheme{..} db origMakefilePath finalMakefilePath vars = do
+parseMakefile :: Printer -> Db -> FilePath -> FilePath -> Makefile.Vars -> IO Makefile
+parseMakefile printer db origMakefilePath finalMakefilePath vars = do
   cwd <- Posix.getWorkingDirectory
   let absFinalMakefilePath = cwd </> finalMakefilePath
   (parseTime, (isHit, makefile)) <- timeIt $ do
@@ -115,32 +127,41 @@ parseMakefile Color.Scheme{..} db origMakefilePath finalMakefilePath vars = do
         case isHit of
         MemoParseMakefile.Hit -> "Got makefile from cache: "
         MemoParseMakefile.Miss -> "Parsed makefile: "
-  ColorText.putStrLn $ mconcat
+  Printer.rawPrintStrLn printer $ mconcat
     [ msg, cPath (show origMakefilePath)
     , " (took ", cTiming (show parseTime <> "sec"), ")"]
   return makefile
+  where
+    Color.Scheme{..} = Color.scheme
 
 type InOrigCwd = [FilePath] -> IO [FilePath]
 
-data MakefileScanFailed = MakefileScanFailed Color.Scheme deriving (Typeable)
+data MakefileScanFailed = MakefileScanFailed (ColorText -> ByteString) deriving (Typeable)
 instance E.Exception MakefileScanFailed
 instance Show MakefileScanFailed where
-  show (MakefileScanFailed Color.Scheme{..}) =
-    ColorText.renderStr $ cError $ mconcat
+  show (MakefileScanFailed render) =
+    BS8.unpack $ render $ cError $ mconcat
     [ "ERROR: Cannot find a file named "
     , cPath (show standardMakeFilename)
     , " in this directory or any of its parents"
     ]
+    where
+      Color.Scheme{..} = Color.scheme
 
 -- TODO: Extract the --enable/disable colors outside of the
 -- version/etc separation.
-getColors :: Opts -> IO Color.Scheme
-getColors GetVersion = return Color.nonColorScheme
-getColors (Opts opt) =
+getColorRender :: Opts -> IO (ColorText -> ByteString)
+getColorRender GetVersion = return ColorText.stripColors
+getColorRender (Opts opt) =
   case optColor opt of
-  Opts.ColorDisable -> return Color.nonColorScheme
-  Opts.ColorEnable -> return Color.defaultScheme
-  Opts.ColorDefault -> Color.schemeForTerminal
+  Opts.ColorDisable -> return ColorText.stripColors
+  Opts.ColorEnable -> return ColorText.render
+  Opts.ColorDefault -> do
+    isTty <- queryTerminal stdOutput
+    return $
+      if isTty
+      then ColorText.render
+      else ColorText.stripColors
 
 flagPrefix :: ByteString
 flagPrefix = "FLAG_"
@@ -180,16 +201,17 @@ verifyValidFlags validFlags userFlags
     invalidUserFlags = filter (`M.notMember` validFlags) userFlags
 
 handleOpts ::
-  Color.Scheme -> Opts ->
+  Printer -> Opts ->
   (Db -> Opt -> InOrigCwd -> Requested -> FilePath -> Makefile -> IO ()) -> IO ()
-handleOpts _ GetVersion _ =  BS8.putStrLn $ "buildsome " <> Version.version
-handleOpts colors (Opts opt) body = do
+handleOpts printer GetVersion _ =
+  Printer.rawPrintStrLn printer $ "buildsome " <> Version.version
+handleOpts printer (Opts opt) body = do
   origMakefilePath <-
     case optMakefilePath opt of
     Nothing ->
-      maybe (E.throwIO (MakefileScanFailed colors)) return =<<
+      maybe (E.throwIO (MakefileScanFailed (Printer.render printer))) return =<<
       scanFileUpwards standardMakeFilename
-    Just path -> specifiedMakefile colors path
+    Just path -> specifiedMakefile printer path
   mChartsPath <- traverse FilePath.canonicalizePath $ optChartsPath opt
   (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
   let inOrigCwd =
@@ -199,9 +221,10 @@ handleOpts colors (Opts opt) body = do
         Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
         -- Otherwise: there's no useful original cwd:
         Just _ -> return
-  requested <- getRequestedTargets colors mChartsPath $ optRequestedTargets opt
+  requested <- getRequestedTargets printer mChartsPath $ optRequestedTargets opt
   Buildsome.withDb finalMakefilePath $ \db -> do
-    makefile <- parseMakefile colors db origMakefilePath finalMakefilePath (optVars opt)
+    makefile <-
+      parseMakefile printer db origMakefilePath finalMakefilePath (optVars opt)
     let flags = flagsOfVars (Makefile.makefileWeakVars makefile)
     if optHelpFlags opt
       then showHelpFlags flags
@@ -220,15 +243,16 @@ handleRequested buildsome printer inOrigCwd (RequestedTargets (TargetsRequest re
   slaveStats <- Buildsome.want printer buildsome reason requestedTargetPaths
   maybe (return ()) (makeChart slaveStats) mChartPath
 
-handleRequested buildsome _ _ RequestedClean = Buildsome.clean buildsome
+handleRequested buildsome printer _ RequestedClean = Buildsome.clean printer buildsome
 
 main :: IO ()
 main = do
   opts <- Opts.get
-  colors <- getColors opts
-  handleOpts colors opts $ \db opt inOrigCwd requested finalMakefilePath makefile -> do
-    installSigintHandler
-    setBuffering
-    printer <- Printer.new 0
-    Buildsome.with colors db finalMakefilePath makefile opt $ \buildsome ->
-      handleRequested buildsome printer inOrigCwd requested
+  render <- getColorRender opts
+  printer <- Printer.new render 0
+  handleOpts printer opts $
+    \db opt inOrigCwd requested finalMakefilePath makefile -> do
+      installSigintHandler
+      setBuffering
+      Buildsome.with printer db finalMakefilePath makefile opt $ \buildsome ->
+        handleRequested buildsome printer inOrigCwd requested

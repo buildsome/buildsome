@@ -1,11 +1,9 @@
 module Buildsome.Color
-  ( Scheme(..), defaultScheme, nonColorScheme, schemeForTerminal
+  ( Scheme(..), scheme
   ) where
 
 import Lib.ColorText (ColorText(..), withAttr)
 import System.Console.ANSI (Color(..), ColorIntensity(..))
-import System.Posix.IO (stdOutput)
-import System.Posix.Terminal (queryTerminal)
 import qualified Lib.Printer as Printer
 import qualified System.Console.ANSI as Console
 
@@ -28,8 +26,8 @@ data Scheme = Scheme
   , cPrinter :: Printer.ColorScheme
   }
 
-defaultScheme :: Scheme
-defaultScheme = Scheme
+scheme :: Scheme
+scheme = Scheme
   { cWarning = withAttr [fgColor Vivid Yellow]
   , cError   = withAttr [fgColor Vivid Red]
   , cTarget  = withAttr [fgColor Vivid Cyan]
@@ -44,28 +42,3 @@ defaultScheme = Scheme
     , Printer.cOk        = withAttr [fgColor Vivid Green]
     }
   }
-
-nonColorScheme :: Scheme
-nonColorScheme = Scheme
-  { cWarning = id
-  , cError = id
-  , cTarget = id
-  , cPath = id
-  , cTiming = id
-  , cSuccess = id
-  , cCommand = id
-  , cStdout = id
-  , cStderr = id
-  , cPrinter = Printer.ColorScheme
-    { Printer.cException = id
-    , Printer.cOk = id
-    }
-  }
-
-schemeForTerminal :: IO Scheme
-schemeForTerminal = do
-  isTty <- queryTerminal stdOutput
-  return $
-    if isTty
-    then defaultScheme
-    else nonColorScheme

@@ -37,6 +37,7 @@ import Lib.FSHook.Protocol (IsDelayed(..))
 import Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
+import Lib.Printer (Printer)
 import Lib.Sock (recvFrame, recvLoop_, withUnixStreamListener)
 import Lib.TimeIt (timeIt)
 import Network.Socket (Socket)
@@ -47,10 +48,10 @@ import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Lib.AsyncContext as AsyncContext
-import qualified Lib.ColorText as ColorText
 import qualified Lib.FSHook.OutputBehavior as OutputBehavior
 import qualified Lib.FSHook.Protocol as Protocol
 import qualified Lib.Fresh as Fresh
+import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
@@ -103,8 +104,8 @@ instance E.Exception ProtocolError
 instance Show ProtocolError where
   show (ProtocolError msg) = "ProtocolError: " ++ msg
 
-serve :: FSHook -> Socket -> IO ()
-serve fsHook conn = do
+serve :: Printer -> FSHook -> Socket -> IO ()
+serve printer fsHook conn = do
   mHelloLine <- recvFrame conn
   case mHelloLine of
     Nothing -> E.throwIO $ ProtocolError "Unexpected EOF"
@@ -128,7 +129,7 @@ serve fsHook conn = do
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
               -- which connected again!
-              [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (ColorText.render label)
+              [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer label)
               , ") received new connections after formal completion!"]
           where
             fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
@@ -143,8 +144,8 @@ printRethrowExceptions msg =
       _ -> hPutStrLn stderr $ msg ++ show e
     E.throwIO e
 
-with :: FilePath -> (FSHook -> IO a) -> IO a
-with ldPreloadPath body = do
+with :: Printer -> FilePath -> (FSHook -> IO a) -> IO a
+with printer ldPreloadPath body = do
   pid <- Posix.getProcessID
   freshJobIds <- Fresh.new 0
   let serverFilename = "/tmp/fshook-" <> BS8.pack (show pid)
@@ -166,7 +167,7 @@ with ldPreloadPath body = do
             -- Job connection may fail when the process is killed
             -- during a send-message, which may cause a protocol error
             printRethrowExceptions "Job connection failed: " $
-            serve fsHook conn
+            serve printer fsHook conn
             `E.finally` Sock.close conn
       body fsHook
 

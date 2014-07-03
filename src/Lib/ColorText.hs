@@ -1,7 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, DeriveGeneric #-}
 module Lib.ColorText
   ( ColorText(..), normalize, simple
-  , render, renderStr
+  , render, renderStr, stripColors
   , withAttr
   , intercalate, lines, putStrLn, singleton
   ) where
@@ -62,6 +62,9 @@ render = go [] . colorTextPairs
         colorCode
           | curSgrs /= sgrs = fromString (Console.setSGRCode sgrs)
           | otherwise = ""
+
+stripColors :: ColorText -> ByteString
+stripColors = mconcat . map snd . colorTextPairs
 
 intercalate :: Monoid m => m -> [m] -> m
 intercalate x = mconcat . List.intersperse x

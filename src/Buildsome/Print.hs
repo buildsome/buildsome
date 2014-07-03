@@ -26,63 +26,71 @@ import Prelude hiding (show)
 import Text.Parsec (SourcePos)
 import qualified Buildsome.Color as Color
 import qualified Data.ByteString.Char8 as BS8
-import qualified Lib.ColorText as ColorText
 import qualified Lib.Printer as Printer
 import qualified Lib.StdOutputs as StdOutputs
 
 fromBytestring8 :: IsString str => ByteString -> str
 fromBytestring8 = fromString . BS8.unpack
 
-posMessage :: SourcePos -> ColorText -> IO ()
-posMessage pos msg =
-  ColorText.putStrLn $ mconcat [fromString (showPos pos), ": ", msg]
+posMessage :: Printer -> SourcePos -> ColorText -> IO ()
+posMessage printer pos msg =
+  Printer.rawPrintStrLn printer $ mconcat [fromString (showPos pos), ": ", msg]
 
-warn :: Color.Scheme -> SourcePos -> ColorText -> IO ()
-warn Color.Scheme{..} pos str =
-  posMessage pos $ cWarning $ "WARNING: " <> str
+warn :: Printer -> SourcePos -> ColorText -> IO ()
+warn printer pos str =
+  posMessage printer pos $ cWarning $ "WARNING: " <> str
+  where
+    Color.Scheme{..} = Color.scheme
 
-targetWrap :: Color.Scheme -> Printer -> Reason -> Target -> ColorText -> IO a -> IO a
-targetWrap colors@Color.Scheme{..} printer reason target str =
-  Printer.printWrap (Color.cPrinter colors) printer
+targetWrap ::
+  Printer -> Reason -> Target -> ColorText -> IO a -> IO a
+targetWrap printer reason target str =
+  Printer.printWrap cPrinter printer
   (cTarget (show (targetOutputs target))) $
   mconcat [str, " (", reason, ")"]
+  where
+    Color.Scheme{..} = Color.scheme
 
-targetTiming :: Show a => Color.Scheme -> Printer -> ColorText -> a -> IO ()
-targetTiming Color.Scheme{..} printer str selfTime =
+targetTiming :: Show a => Printer -> ColorText -> a -> IO ()
+targetTiming printer str selfTime =
   printStrLn printer $
     "Build (" <> str <> ") took " <> cTiming (show selfTime <> " seconds")
+  where
+    Color.Scheme{..} = Color.scheme
 
-colorStdOutputs :: Color.Scheme -> StdOutputs ByteString -> StdOutputs ColorText
-colorStdOutputs Color.Scheme{..} (StdOutputs out err) =
+colorStdOutputs :: StdOutputs ByteString -> StdOutputs ColorText
+colorStdOutputs (StdOutputs out err) =
   StdOutputs
   (colorize cStdout out)
   (colorize cStderr err)
   where
     colorize f = f . fromBytestring8 . chopTrailingNewline
+    Color.Scheme{..} = Color.scheme
 
-outputsStr :: Color.Scheme -> StdOutputs ByteString -> Maybe ColorText
-outputsStr colors = StdOutputs.str . colorStdOutputs colors
+outputsStr :: StdOutputs ByteString -> Maybe ColorText
+outputsStr = StdOutputs.str . colorStdOutputs
 
-targetStdOutputs :: Color.Scheme -> Target -> StdOutputs ByteString -> IO ()
-targetStdOutputs colors _target stdOutputs =
-  maybe (return ()) ColorText.putStrLn $ outputsStr colors stdOutputs
+targetStdOutputs :: Printer -> Target -> StdOutputs ByteString -> IO ()
+targetStdOutputs printer _target stdOutputs =
+  maybe (return ()) (Printer.rawPrintStrLn printer) $ outputsStr stdOutputs
 
-cmd :: Color.Scheme -> Printer -> Target -> IO ()
-cmd Color.Scheme{..} printer target =
-  unless (BS8.null cmds) $ printStrLn printer $ delimitMultiline $
-  ColorText.render $ cCommand $ fromBytestring8 cmds
+cmd :: Printer -> Target -> IO ()
+cmd printer target =
+  unless (BS8.null cmds) $ printStrLn printer $ cCommand $ fromBytestring8 $
+  delimitMultiline cmds
   where
     cmds = targetCmds target
+    Color.Scheme{..} = Color.scheme
 
-replayCmd :: Color.Scheme -> PrintCommands -> Printer -> Target -> IO ()
-replayCmd colors PrintCommandsForAll printer target = cmd colors printer target
-replayCmd _      PrintCommandsForExecution _ _ = return ()
-replayCmd _      PrintCommandsNever _ _ = return ()
+replayCmd :: PrintCommands -> Printer -> Target -> IO ()
+replayCmd PrintCommandsForAll printer target = cmd printer target
+replayCmd PrintCommandsForExecution _ _ = return ()
+replayCmd PrintCommandsNever _ _ = return ()
 
-executionCmd :: Color.Scheme -> PrintCommands -> Printer -> Target -> IO ()
-executionCmd colors PrintCommandsForAll printer target = cmd colors printer target
-executionCmd colors PrintCommandsForExecution printer target = cmd colors printer target
-executionCmd _      PrintCommandsNever _ _ = return ()
+executionCmd :: PrintCommands -> Printer -> Target -> IO ()
+executionCmd PrintCommandsForAll printer target = cmd printer target
+executionCmd PrintCommandsForExecution printer target = cmd printer target
+executionCmd PrintCommandsNever _ _ = return ()
 
 delimitMultiline :: ByteString -> ByteString
 delimitMultiline xs
@@ -92,12 +100,12 @@ delimitMultiline xs
     x = chopTrailingNewline xs
     multilineDelimiter = "\"\"\""
 
-replay :: Show a => Color.Scheme -> Printer -> Target -> StdOutputs ByteString -> Verbosity -> a -> IO () -> IO ()
-replay colors@Color.Scheme{..} printer target stdOutputs verbosity selfTime action = do
+replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Verbosity -> a -> IO () -> IO ()
+replay printer target stdOutputs verbosity selfTime action = do
   action `onException` \e -> do
     printStrLn printer $ "REPLAY for target " <> cTarget (show (targetOutputs target))
-    cmd colors printer target
-    targetStdOutputs colors target stdOutputs
+    cmd printer target
+    targetStdOutputs printer target stdOutputs
     printStrLn printer $ cError $ "EXCEPTION: " <> show e
   when shouldPrint $ do
     printStrLn printer $ mconcat
@@ -105,8 +113,8 @@ replay colors@Color.Scheme{..} printer target stdOutputs verbosity selfTime acti
       , " (originally) took ", cTiming (show selfTime <> " seconds")
       , outputsHeader
       ]
-    replayCmd colors (verbosityCommands verbosity) printer target
-    targetStdOutputs colors target stdOutputs
+    replayCmd (verbosityCommands verbosity) printer target
+    targetStdOutputs printer target stdOutputs
   where
     shouldPrint =
       case verbosityOutputs verbosity of
@@ -120,3 +128,4 @@ replay colors@Color.Scheme{..} printer target stdOutputs verbosity selfTime acti
       (False, True)  -> ", STDOUT follows"
       (True, False)  -> ", STDERR follows"
       (True, True)   -> ""
+    Color.Scheme{..} = Color.scheme

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Lib.Timeout
   ( warning
   , picos, nanos, micros, millis, seconds
@@ -5,8 +6,11 @@ module Lib.Timeout
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
+import Data.ByteString (ByteString)
+import Data.Monoid ((<>))
 import Data.Time (DiffTime, picosecondsToDiffTime, secondsToDiffTime)
-import System.IO (hPutStrLn, stderr)
+import System.IO (stderr)
+import qualified Data.ByteString.Char8 as BS8
 
 picos :: Integer -> DiffTime
 picos = picosecondsToDiffTime
@@ -23,10 +27,10 @@ millis = micros . (* 1000)
 seconds :: Integer -> DiffTime
 seconds = secondsToDiffTime
 
-warning :: DiffTime -> String -> IO a -> IO a
+warning :: DiffTime -> ByteString -> IO a -> IO a
 warning timeout errMsg action =
   withAsync timeoutMsg $ const action
   where
     timeoutMsg = do
       threadDelay $ floor $ 1000000.0 * timeout
-      hPutStrLn stderr $ "TIMEOUT: " ++ errMsg
+      BS8.hPutStrLn stderr $ "TIMEOUT: " <> errMsg

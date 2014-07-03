@@ -2,8 +2,8 @@
 module Lib.Printer
   ( Id, idStr
   , Printable
-  , Printer, new, newFrom
-  , printStrLn
+  , Printer, new, newFrom, render
+  , printStrLn, rawPrintStrLn
   , printWrap
   , ColorScheme(..)
   ) where
@@ -15,7 +15,7 @@ import Data.Monoid
 import Data.String (IsString(..))
 import Lib.ColorText (ColorText)
 import Lib.Exception (onException)
-import Prelude hiding (putStrLn, lines)
+import Prelude hiding (lines, putStrLn)
 import Text.Printf (printf)
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
@@ -28,36 +28,49 @@ type Id = Int
 class (IsString p, Monoid p) => Printable p where
   intercalate :: p -> [p] -> p
   lines :: p -> [p]
-  putStrLn :: p -> IO ()
+  putStrLn :: (ColorText -> ByteString) -> p -> IO ()
 
 instance Printable String where
   intercalate = List.intercalate
   lines = List.lines
-  putStrLn = Prelude.putStrLn
+  putStrLn _ = Prelude.putStrLn
+  {-# INLINE intercalate #-}
+  {-# INLINE lines #-}
+  {-# INLINE putStrLn #-}
 
 instance Printable ByteString where
   intercalate = BS8.intercalate
   lines = BS8.lines
-  putStrLn = BS8.putStrLn
+  putStrLn _ = BS8.putStrLn
+  {-# INLINE intercalate #-}
+  {-# INLINE lines #-}
+  {-# INLINE putStrLn #-}
 
 instance Printable ColorText where
   intercalate = ColorText.intercalate
   lines = ColorText.lines
-  putStrLn = ColorText.putStrLn
+  putStrLn toBS = BS8.putStrLn . toBS
+  {-# INLINE intercalate #-}
+  {-# INLINE lines #-}
+  {-# INLINE putStrLn #-}
 
 data Printer = Printer
   { _printerId :: Id
+  , printerRender :: ColorText -> ByteString
   , printerIndentLevelRef :: IORef Int
   }
 
+render :: Printer -> ColorText -> ByteString
+render = printerRender
+
 {-# INLINE new #-}
-new :: Id -> IO Printer
-new pid = Printer pid <$> newIORef 0
+new :: (ColorText -> ByteString) -> Id -> IO Printer
+new toBS pid = Printer pid toBS <$> newIORef 0
 
 {-# INLINE newFrom #-}
 newFrom :: Printer -> Id -> IO Printer
-newFrom (Printer _id indentRef) pid =
-  Printer pid <$> (newIORef =<< readIORef indentRef)
+newFrom (Printer _id toBS indentRef) pid =
+  Printer pid toBS <$> (newIORef =<< readIORef indentRef)
 
 {-# INLINE idStr #-}
 idStr :: IsString str => Id -> str
@@ -65,10 +78,17 @@ idStr = fromString . printf "T%03d"
 
 {-# INLINE printStrLn #-}
 printStrLn :: Printable str => Printer -> str -> IO ()
-printStrLn (Printer pid indentRef) str = do
+printStrLn (Printer pid toBS indentRef) str = do
   indentLevel <- readIORef indentRef
   let prefix = idStr pid <> " " <> mconcat (replicate indentLevel "  ")
-  putStrLn . intercalate "\n" . map (prefix <>) . lines $ str
+  putStrLn toBS $ intercalate "\n" $ map (prefix <>) $ lines str
+
+{-# INLINE rawPrintStrLn #-}
+rawPrintStrLn :: Printable str => Printer -> str -> IO ()
+rawPrintStrLn (Printer pid toBS indentRef) str = do
+  indentLevel <- readIORef indentRef
+  let prefix = idStr pid <> " " <> mconcat (replicate indentLevel "  ")
+  putStrLn toBS $ intercalate "\n" $ map (prefix <>) $ lines str
 
 data ColorScheme = ColorScheme
   { cException :: ColorText -> ColorText
