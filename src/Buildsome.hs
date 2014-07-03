@@ -480,17 +480,12 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlave (M.toList elInputsDescs)
 
-  let hintReason = "Hint from " <> (cTarget . show . targetOutputs) target
-  hintedSlaves <-
-    mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
-
   targetParentsStats <-
     buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
     targetOutputs target
 
-  let allSlaves = speculativeSlaves ++ hintedSlaves
   mappend targetParentsStats <$>
-    waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome allSlaves
+    waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome speculativeSlaves
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs target
@@ -868,36 +863,41 @@ redirectExceptions buildsome =
     bsFastKillBuild buildsome e
     E.throwIO e
 
+buildHintedInputs ::
+  BuildTargetEnv -> MissingInputHintsAllowed -> Parallelism.Cell -> Target ->
+  IO (Slave.Stats, Bool)
+buildHintedInputs bte@BuildTargetEnv{..} missingInputsBehavior parCell target = do
+  slaves <-
+    mkSlavesForPaths bte
+      { bteReason = "Hint from " <> cTarget (show (targetOutputs target))
+      } explicitness inputs
+  hintedStats <-
+    waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome slaves
+  (,) hintedStats <$>
+    case missingInputsBehavior of
+    MissingInputHintsAllowed -> and <$> mapM FilePath.exists inputs
+    MissingInputHintsDisallowed -> return True
+  where
+    Color.Scheme{..} = Color.scheme
+    explicitness =
+      case missingInputsBehavior of
+      MissingInputHintsAllowed -> Implicit
+      MissingInputHintsDisallowed -> Explicit
+    inputs = targetAllInputs target
+
 buildTarget ::
   BuildTargetEnv -> MissingInputHintsAllowed -> Parallelism.Cell ->
   TargetRep -> Target -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} missingInputsBehavior parCell targetRep target =
   redirectExceptions bteBuildsome $ do
-    mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
-    case mSlaveStats of
-      Just slaveStats -> return slaveStats
-      Nothing -> do
-        let explicitness =
-              case missingInputsBehavior of
-              MissingInputHintsAllowed -> Implicit
-              MissingInputHintsDisallowed -> Explicit
-            inputs = targetAllInputs target
-
-        slaves <-
-          mkSlavesForPaths bte
-            { bteReason = "Hint from " <> cTarget (show (targetOutputs target))
-            } explicitness inputs
-        hintedStats <-
-          waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome
-          slaves
-
-        shouldBuild <-
-          case missingInputsBehavior of
-          MissingInputHintsAllowed -> and <$> mapM FilePath.exists inputs
-          MissingInputHintsDisallowed -> return True
-
-        if shouldBuild
-          then do
+    (hintedStats, shouldBuild) <- buildHintedInputs bte missingInputsBehavior parCell target
+    if not shouldBuild
+      then do return mempty
+      else do
+        mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
+        case mSlaveStats of
+          Just slaveStats -> return $ hintedStats `mappend` slaveStats
+          Nothing -> do
             targetParentsStats <-
               buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
               targetOutputs target
@@ -916,8 +916,6 @@ buildTarget bte@BuildTargetEnv{..} missingInputsBehavior parCell targetRep targe
             Print.targetTiming btePrinter target rcrSelfTime
             let selfStats = mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs
             return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
-          else do
-            return mempty
   where
     Color.Scheme{..} = Color.scheme
     verbosityCommands = Opts.verbosityCommands verbosity
