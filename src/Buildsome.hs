@@ -220,6 +220,8 @@ instance Show TargetNotCreated where
     where
       Color.Scheme{..} = Color.scheme
 
+data MissingInputHintsAllowed = MissingInputHintsAllowed | MissingInputHintsDisallowed
+
 mkSlavesDirectAccess :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
@@ -229,8 +231,8 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
     when (explicitness == Explicit) $ assertExists path $
       MissingRule (bsRender bteBuildsome) path bteReason
     return []
-  Just tgt@(_, target) -> do
-    slave <- getSlaveForTarget bte tgt
+  Just (source, tgt@(_, target)) -> do
+    slave <- getSlaveForTarget bte (missingInputHintsBehavior source explicitness) tgt
     (: []) <$> case explicitness of
       Implicit -> return slave
       Explicit -> verifyFileGetsCreated slave
@@ -239,6 +241,9 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
           | path `elem` (map snd . makefilePhonies . bsMakefile) bteBuildsome = return slave
           | otherwise =
             Slave.wrap (<* assertExists path (TargetNotCreated (bsRender bteBuildsome) path target)) slave
+  where
+    missingInputHintsBehavior BuildMaps.SourcePattern Implicit = MissingInputHintsAllowed
+    missingInputHintsBehavior _                       _        = MissingInputHintsDisallowed
 
 makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
 makeChildSlaves bte@BuildTargetEnv{..} path
@@ -249,7 +254,7 @@ makeChildSlaves bte@BuildTargetEnv{..} path
     , cTarget $ show $ map (map showTargetOutputPattern . targetOutputs) childPatterns
     ]
   | otherwise =
-    traverse (getSlaveForTarget bte) $
+    traverse (getSlaveForTarget bte MissingInputHintsDisallowed) $
     filter (not . isPhony . snd) childTargets
   where
     Color.Scheme{..} = Color.scheme
@@ -567,8 +572,9 @@ panic render msg = do
   E.throwIO $ PanicError render msg
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: BuildTargetEnv -> (TargetRep, Target) -> IO Slave
-getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
+getSlaveForTarget ::
+  BuildTargetEnv -> MissingInputHintsAllowed -> (TargetRep, Target) -> IO Slave
+getSlaveForTarget bte@BuildTargetEnv{..} missingInputHints (targetRep, target)
   | any ((== targetRep) . fst) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
   | otherwise = do
@@ -584,7 +590,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
         , mkSlave newSlaveMVar $ \printer allocParCell ->
           allocParCell $ \parCell -> restoreMask $ do
             let newBte = bte { bteParents = newParents, btePrinter = printer }
-            buildTarget newBte parCell targetRep target
+            buildTarget newBte missingInputHints parCell targetRep target
         )
     where
       Color.Scheme{..} = Color.scheme
@@ -862,39 +868,56 @@ redirectExceptions buildsome =
     bsFastKillBuild buildsome e
     E.throwIO e
 
-buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
-buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
+buildTarget ::
+  BuildTargetEnv -> MissingInputHintsAllowed -> Parallelism.Cell ->
+  TargetRep -> Target -> IO Slave.Stats
+buildTarget bte@BuildTargetEnv{..} missingInputsBehavior parCell targetRep target =
   redirectExceptions bteBuildsome $ do
     mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
     case mSlaveStats of
       Just slaveStats -> return slaveStats
       Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
-        targetParentsStats <-
-          buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
-          targetOutputs target
-
-        registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
-        mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $
-          targetOutputs target
+        let explicitness =
+              case missingInputsBehavior of
+              MissingInputHintsAllowed -> Implicit
+              MissingInputHintsDisallowed -> Explicit
+            inputs = targetAllInputs target
 
         slaves <-
           mkSlavesForPaths bte
             { bteReason = "Hint from " <> cTarget (show (targetOutputs target))
-            } Explicit $ targetAllInputs target
+            } explicitness inputs
         hintedStats <-
           waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome
           slaves
 
-        Print.executionCmd verbosityCommands btePrinter target
+        shouldBuild <-
+          case missingInputsBehavior of
+          MissingInputHintsAllowed -> and <$> mapM FilePath.exists inputs
+          MissingInputHintsDisallowed -> return True
 
-        rcr@RunCmdResults{..} <- runCmd bte parCell target
+        if shouldBuild
+          then do
+            targetParentsStats <-
+              buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
+              targetOutputs target
 
-        verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) target
-        saveExecutionLog bteBuildsome target rcr
+            registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
+            mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $
+              targetOutputs target
 
-        Print.targetTiming btePrinter "now" rcrSelfTime
-        let selfStats = mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs
-        return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
+            Print.executionCmd verbosityCommands btePrinter target
+
+            rcr@RunCmdResults{..} <- runCmd bte parCell target
+
+            verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) target
+            saveExecutionLog bteBuildsome target rcr
+
+            Print.targetTiming btePrinter "now" rcrSelfTime
+            let selfStats = mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs
+            return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
+          else do
+            return mempty
   where
     Color.Scheme{..} = Color.scheme
     verbosityCommands = Opts.verbosityCommands verbosity
