@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Buildsome.Db
   ( Db, with
-  , registeredOutputsRef, leakedOutputsRef
+  , registeredOutputsRef
   , InputDesc(..), FileDesc(..)
   , OutputDesc(..)
   , ExecutionLog(..), executionLog
@@ -45,7 +45,6 @@ schemaVersion = "schema.ver.11"
 data Db = Db
   { dbSophia :: Sophia.Db
   , dbRegisteredOutputs :: IORef (Set FilePath)
-  , dbLeakedOutputs :: IORef (Set FilePath)
   }
 
 data FileContentDescCache = FileContentDescCache
@@ -87,9 +86,6 @@ instance Binary ExecutionLog
 registeredOutputsRef :: Db -> IORef (Set FilePath)
 registeredOutputsRef = dbRegisteredOutputs
 
-leakedOutputsRef :: Db -> IORef (Set FilePath)
-leakedOutputsRef = dbLeakedOutputs
-
 setKey :: Binary a => Db -> ByteString -> a -> IO ()
 setKey db key val = Sophia.setValue (dbSophia db) key $ encode val
 
@@ -107,8 +103,7 @@ with rawDbPath body = do
     Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation (BS8.unpack (dbPath </> schemaVersion))
     Sophia.withDb env $ \db ->
       withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
-      withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
-      body (Db db registeredOutputs leakedOutputs)
+      body (Db db registeredOutputs)
   where
     withIORefFile path =
       E.bracket (newIORef =<< decodeFileOrEmpty path)

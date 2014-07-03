@@ -134,7 +134,6 @@ verbosePutStrln buildsome str =
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
   outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
-  leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
   let dir = FilePath.takeDirectory makefilePath
       gitIgnorePath = dir </> ".gitignore"
       gitIgnoreBasePath = dir </> gitignoreBaseName
@@ -146,7 +145,7 @@ updateGitIgnore buildsome makefilePath = do
   let
     generatedPaths =
       map (("/" <>) . FilePath.makeRelative dir) $
-        extraIgnored ++ S.toList (outputs <> leaked)
+        extraIgnored ++ S.toList outputs
   BS8.writeFile (BS8.unpack gitIgnorePath) $ BS8.unlines $
     header ++ generatedPaths ++ base
   where
@@ -275,22 +274,9 @@ mkSlaves bte@BuildTargetEnv{..} explicitness path
   childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
   return $ slaves ++ childs
 
--- e.g: .pyc files
-handleLegalUnspecifiedOutputs :: BuildTargetEnv -> Target -> [FilePath] -> IO ()
-handleLegalUnspecifiedOutputs BuildTargetEnv{..} target paths = do
-  -- TODO: Verify nobody ever used this file as an input besides the
-  -- creating job
-  unless (null paths) $ Print.warn btePrinter (targetPos target) $
-    mconcat ["Leaked unspecified outputs: ", show paths, ", ", actionDesc]
-  action
-  where
-    (actionDesc, action) =
-      case optDeleteUnspecifiedOutputs (bsOpts bteBuildsome) of
-      Opts.DeleteUnspecifiedOutputs -> ("deleting", mapM_ removeFileOrDirectoryOrNothing paths)
-      Opts.DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs bteBuildsome (S.fromList paths))
-
 data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs (ColorText -> ByteString) Target [FilePath]
   deriving (Typeable)
+
 instance E.Exception IllegalUnspecifiedOutputs
 instance Show IllegalUnspecifiedOutputs where
   show (IllegalUnspecifiedOutputs render target illegalOutputs) =
@@ -366,10 +352,6 @@ cleanIllegalOutputs printer target opt =
 
 verifyTargetOutputs :: BuildTargetEnv -> Map FilePath KeepsOldContent -> Target -> IO ()
 verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
-  -- Legal unspecified need to be kept/deleted according to policy:
-  handleLegalUnspecifiedOutputs bte target =<<
-    filterM FilePath.exists (M.keys unspecifiedOutputs)
-
   -- Illegal unspecified that no longer exist need to be banned from
   -- input use by any other job:
   -- TODO: Add to a ban-from-input-list (by other jobs)
@@ -393,10 +375,7 @@ verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
   where
     opt = bsOpts bteBuildsome
     Color.Scheme{..} = Color.scheme
-    (unspecifiedOutputs, illegalOutputs) =
-      M.partitionWithKey (\path _ -> MagicFiles.allowedUnspecifiedOutput path)
-      allUnspecified
-    allUnspecified = outputs `M.difference` specified
+    illegalOutputs = outputs `M.difference` specified
     specified = M.fromSet (const ()) $ S.fromList $ targetOutputs target
 
 warnOverSpecified ::
@@ -848,9 +827,6 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     }
   where
     db = bsDb buildsome
-    assertFileMTime path oldMStat =
-      unless (MagicFiles.allowedUnspecifiedOutput path) $
-      Meddling.assertFileMTime path oldMStat
     inputAccess ::
       FilePath ->
       (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
@@ -860,10 +836,10 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
             case M.elems accessTypes of
             [] -> error $ "AccessTypes empty in rcrInputs:" ++ show path
             x:_ -> x
-      assertFileMTime path Nothing
+      Meddling.assertFileMTime path Nothing
       return $ Db.FileDescNonExisting reason
     inputAccess path (accessTypes, Just stat) = do
-      assertFileMTime path $ Just stat
+      Meddling.assertFileMTime path $ Just stat
       let
         addDesc accessType getDesc = do
           desc <- getDesc
@@ -930,9 +906,6 @@ registerDbList mkIORef buildsome newItems =
 
 registerOutputs :: Buildsome -> Set FilePath -> IO ()
 registerOutputs = registerDbList Db.registeredOutputsRef
-
-registerLeakedOutputs :: Buildsome -> Set FilePath -> IO ()
-registerLeakedOutputs = registerDbList Db.leakedOutputsRef
 
 deleteRemovedOutputs :: Printer -> Buildsome -> IO ()
 deleteRemovedOutputs printer buildsome = do
@@ -1039,11 +1012,9 @@ with printer db makefilePath makefile opt@Opt{..} body = do
 clean :: Printer -> Buildsome -> IO ()
 clean printer buildsome = do
   outputs <- readIORef $ Db.registeredOutputsRef $ bsDb buildsome
-  leaked <- readIORef $ Db.leakedOutputsRef $ bsDb buildsome
   Clean.Result _totalSize totalSpace count <-
-    mconcat <$> mapM Clean.output (S.toList (outputs <> leaked))
+    mconcat <$> mapM Clean.output (S.toList outputs)
   writeIORef (Db.registeredOutputsRef (bsDb buildsome)) S.empty
-  writeIORef (Db.leakedOutputsRef (bsDb buildsome)) S.empty
   Printer.rawPrintStrLn printer $ mconcat
     [ cSuccess "Clean Successful", ": Cleaned "
     , show count, " files freeing an estimated "

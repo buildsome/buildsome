@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Buildsome.MagicFiles
   ( inputIgnored, outputIgnored
-  , allowedUnspecifiedOutput
   ) where
 
 import Lib.FilePath (FilePath)
@@ -16,6 +15,3 @@ inputIgnored = specialFile
 
 outputIgnored :: FilePath -> Bool
 outputIgnored = specialFile
-
-allowedUnspecifiedOutput :: FilePath -> Bool
-allowedUnspecifiedOutput = (".pyc" `BS8.isSuffixOf`)
