@@ -22,6 +22,7 @@ import Data.Time.Clock.POSIX (POSIXTime)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.BuildId (BuildId)
+import Lib.ColorText (ColorText)
 import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
 import Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
@@ -38,7 +39,7 @@ import qualified Lib.Makefile as Makefile
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.7"
+schemaVersion = "schema.ver.8"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -52,7 +53,7 @@ data FileContentDescCache = FileContentDescCache
   } deriving (Generic, Show)
 instance Binary FileContentDescCache
 
-type Reason = ByteString
+type Reason = ColorText
 
 data InputDesc = InputDesc
   { idModeAccess :: Maybe (Reason, FileModeDesc)

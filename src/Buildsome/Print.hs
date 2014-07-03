@@ -45,7 +45,7 @@ targetWrap :: Color.Scheme -> Printer -> Reason -> Target -> ColorText -> IO a -
 targetWrap colors@Color.Scheme{..} printer reason target str =
   Printer.printWrap (Color.cPrinter colors) printer
   (cTarget (show (targetOutputs target))) $
-  mconcat [str, " (", fromBytestring8 reason, ")"]
+  mconcat [str, " (", reason, ")"]
 
 targetTiming :: Show a => Color.Scheme -> Printer -> ColorText -> a -> IO ()
 targetTiming Color.Scheme{..} printer str selfTime =

@@ -25,10 +25,12 @@ import Data.IORef
 import Data.Map.Strict (Map)
 import Data.Maybe (maybeToList)
 import Data.Monoid ((<>))
+import Data.String (IsString(..))
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
+import Lib.ColorText (ColorText)
 import Lib.FSHook.AccessType (AccessType(..))
 import Lib.FSHook.OutputBehavior (KeepsOldContent(..), OutputEffect(..), OutputBehavior(..))
 import Lib.FSHook.Protocol (IsDelayed(..))
@@ -45,6 +47,7 @@ import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Lib.AsyncContext as AsyncContext
+import qualified Lib.ColorText as ColorText
 import qualified Lib.FSHook.OutputBehavior as OutputBehavior
 import qualified Lib.FSHook.Protocol as Protocol
 import qualified Lib.Fresh as Fresh
@@ -53,7 +56,7 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Posix.ByteString as Posix
 
-type AccessDoc = ByteString
+type AccessDoc = ColorText
 
 type JobId = ByteString
 
@@ -75,7 +78,7 @@ data FSAccessHandlers = FSAccessHandlers
   , undelayedFSAccessHandler :: AccessDoc -> [Input] -> [UndelayedOutput] -> IO ()
   }
 
-type JobLabel = ByteString
+type JobLabel = ColorText
 
 data RunningJob = RunningJob
   { jobLabel :: JobLabel
@@ -125,7 +128,8 @@ serve fsHook conn = do
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
               -- which connected again!
-              ["Job: ", BS8.unpack jobId, "(", BS8.unpack label, ") received new connections after formal completion!"]
+              [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (ColorText.render label)
+              , ") received new connections after formal completion!"]
           where
             fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
             [pidStr, tidStr, jobId] = BS8.split ':' pidJobId
@@ -222,7 +226,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     handleDelayed   inputs outputs = wrap $ delayedFSAccessHandler handlers actDesc inputs outputs
     handleUndelayed inputs outputs = wrap $ undelayedFSAccessHandler handlers actDesc inputs outputs
     wrap = wrapHandler job conn isDelayed
-    actDesc = BS8.pack (Protocol.showFunc func) <> " done by " <> jobLabel job
+    actDesc = fromString (Protocol.showFunc func) <> " done by " <> jobLabel job
     handleInput accessType path = handleInputs [Input accessType path]
     handleInputs inputs =
       case isDelayed of
@@ -284,9 +288,8 @@ mkEnvVars fsHook rootFilter jobId =
   ]
 
 timedRunCommand ::
-  FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString ->
-  FSAccessHandlers ->
-  IO (NominalDiffTime, r)
+  FSHook -> FilePath -> (Process.Env -> IO r) -> ColorText ->
+  FSAccessHandlers -> IO (NominalDiffTime, r)
 timedRunCommand fsHook rootFilter cmd label fsAccessHandlers = do
   pauseTimeRef <- newIORef 0
   let
@@ -321,7 +324,7 @@ withRunningJob fsHook jobId job body = do
     setJob = atomicModifyIORef_ registry . M.insert jobId
 
 runCommand ::
-  FSHook -> FilePath -> (Process.Env -> IO r) -> ByteString ->
+  FSHook -> FilePath -> (Process.Env -> IO r) -> ColorText ->
   FSAccessHandlers -> IO r
 runCommand fsHook rootFilter cmd label fsAccessHandlers = do
   activeConnections <- newIORef M.empty

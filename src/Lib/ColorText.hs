@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, DeriveGeneric #-}
 module Lib.ColorText
   ( ColorText(..), normalize, simple
   , render, renderStr
@@ -6,17 +6,21 @@ module Lib.ColorText
   , intercalate, lines, putStrLn, singleton
   ) where
 
+import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Function (on)
 import Data.Monoid
 import Data.String (IsString(..))
+import GHC.Generics (Generic)
+import Lib.AnsiConsoleUtils ()
 import Prelude hiding (putStrLn, lines)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.List as List
 import qualified System.Console.ANSI as Console
 
 newtype ColorText = ColorText { colorTextPairs :: [([Console.SGR], ByteString)] }
-  deriving (Monoid, Show)
+  deriving (Monoid, Show, Generic)
+instance Binary ColorText
 
 onFirst :: (a -> a') -> (a, b) -> (a', b)
 onFirst f (x, y) = (f x, y)

@@ -203,7 +203,7 @@ instance E.Exception MissingRule
 instance Show MissingRule where
   show (MissingRule Color.Scheme{..} path reason) =
     renderStr $ cError $ mconcat
-    ["ERROR: No rule to build ", cTarget (show path), " (", fromBytestring8 reason, ")"]
+    ["ERROR: No rule to build ", cTarget (show path), " (", reason, ")"]
 
 data TargetNotCreated = TargetNotCreated Color.Scheme FilePath Target deriving (Typeable)
 instance E.Exception TargetNotCreated
@@ -477,7 +477,7 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlave (M.toList elInputsDescs)
 
-  let hintReason = ColorText.render $ "Hint from " <> (cTarget . show . targetOutputs) target
+  let hintReason = "Hint from " <> (cTarget . show . targetOutputs) target
   hintedSlaves <-
     mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
 
@@ -513,8 +513,7 @@ buildParentDirectories priority bte@BuildTargetEnv{..} parCell explicitness =
     Color.Scheme{..} = bsColors bteBuildsome
     mkParentSlaves path =
       mkSlavesDirectAccess bte
-      { bteReason =
-        ColorText.render $ "Container directory of: " <> cTarget (show path)
+      { bteReason = "Container directory of: " <> cTarget (show path)
       } explicitness (FilePath.takeDirectory path)
 
 -- TODO: Remember the order of input files' access so can iterate here
@@ -543,7 +542,7 @@ showParents :: Color.Scheme -> Parents -> ByteString
 showParents Color.Scheme{..} = ColorText.render . mconcat . map showParent
   where
     showParent (targetRep, reason) =
-      mconcat ["\n-> ", cTarget (show targetRep), " (", fromBytestring8 reason, ")"]
+      mconcat ["\n-> ", cTarget (show targetRep), " (", reason, ")"]
 
 data TargetDependencyLoop = TargetDependencyLoop Color.Scheme Parents deriving (Typeable)
 instance E.Exception TargetDependencyLoop
@@ -687,7 +686,10 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
     ]
   registerOutputs buildsome $ M.keysSet paths `S.intersection` targetOutputsSet
   where
-    combineOutputs = min -- KeepsNoOldContent < KeepsOldContent
+    combineOutputs a@(ax, _) b@(bx, _)
+      -- KeepsNoOldContent < KeepsOldContent
+      | ax < bx = a
+      | otherwise = b
 
 makeInputs ::
   IORef Slave.Stats -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
@@ -785,7 +787,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       readIORef outputsRef
     rootPath = bsRootPath bteBuildsome
     hook = bsFsHook bteBuildsome
-    renderedTargetOutputs = ColorText.render $ cTarget $ show $ targetOutputs target
+    renderedTargetOutputs = cTarget $ show $ targetOutputs target
     shellCmd = shellCmdVerify colors target ["HOME", "PATH"]
     colors@Color.Scheme{..} = bsColors bteBuildsome
 
@@ -869,7 +871,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
 
         slaves <-
           mkSlavesForPaths bte
-            { bteReason = ColorText.render $ "Hint from " <> cTarget (show (targetOutputs target))
+            { bteReason = "Hint from " <> cTarget (show (targetOutputs target))
             } Explicit $ targetAllInputs target
         hintedStats <-
           waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome
