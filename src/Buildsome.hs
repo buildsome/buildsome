@@ -876,7 +876,7 @@ buildTarget bte@BuildTargetEnv{..} missingInputsBehavior parCell targetRep targe
     mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
     case mSlaveStats of
       Just slaveStats -> return slaveStats
-      Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
+      Nothing -> do
         let explicitness =
               case missingInputsBehavior of
               MissingInputHintsAllowed -> Implicit
@@ -913,7 +913,7 @@ buildTarget bte@BuildTargetEnv{..} missingInputsBehavior parCell targetRep targe
             verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) target
             saveExecutionLog bteBuildsome target rcr
 
-            Print.targetTiming btePrinter "now" rcrSelfTime
+            Print.targetTiming btePrinter target rcrSelfTime
             let selfStats = mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs
             return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
           else do

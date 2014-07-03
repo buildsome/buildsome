@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
 module Buildsome.Print
-  ( targetWrap, targetTiming
+  ( targetTiming
   , warn, posMessage
   , replayCmd, executionCmd, targetStdOutputs
   , delimitMultiline
@@ -8,7 +8,6 @@ module Buildsome.Print
   , replay
   ) where
 
-import Buildsome.Db (Reason)
 import Buildsome.Opts (Verbosity(..), PrintOutputs(..), PrintCommands(..))
 import Control.Monad
 import Data.ByteString (ByteString)
@@ -42,19 +41,13 @@ warn printer pos str =
   where
     Color.Scheme{..} = Color.scheme
 
-targetWrap ::
-  Printer -> Reason -> Target -> ColorText -> IO a -> IO a
-targetWrap printer reason target str =
-  Printer.printWrap cPrinter printer
-  (cTarget (show (targetOutputs target))) $
-  mconcat [str, " (", reason, ")"]
-  where
-    Color.Scheme{..} = Color.scheme
-
-targetTiming :: Show a => Printer -> ColorText -> a -> IO ()
-targetTiming printer str selfTime =
-  printStrLn printer $
-    "Build (" <> str <> ") took " <> cTiming (show selfTime <> " seconds")
+targetTiming :: Show a => Printer -> Target -> a -> IO ()
+targetTiming printer target selfTime =
+  printStrLn printer $ mconcat
+    [ cTarget (show (targetOutputs target))
+    , ": Build (now) took "
+    , cTiming (show selfTime <> " seconds")
+    ]
   where
     Color.Scheme{..} = Color.scheme
 
@@ -76,8 +69,10 @@ targetStdOutputs printer _target stdOutputs =
 
 cmd :: Printer -> Target -> IO ()
 cmd printer target =
-  unless (BS8.null cmds) $ printStrLn printer $ cCommand $ fromBytestring8 $
-  delimitMultiline cmds
+  unless (BS8.null cmds) $ printStrLn printer $ mconcat
+    [ cTarget (show (targetOutputs target)), ": CMD: "
+    , cCommand $ fromBytestring8 $ delimitMultiline cmds
+    ]
   where
     cmds = targetCmds target
     Color.Scheme{..} = Color.scheme
