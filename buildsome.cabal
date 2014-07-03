@@ -41,6 +41,7 @@ executable buildsome
                ,     Buildsome.MagicFiles
                ,     Buildsome.Opts
                ,     Lib.AnnotatedException
+               ,     Lib.AnsiConsoleUtils
                ,     Lib.Argv0
                ,     Lib.Async
                ,     Lib.AsyncContext
