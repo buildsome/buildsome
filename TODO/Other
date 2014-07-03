@@ -3,11 +3,15 @@
 
 * Must verify nobody ever writes to the Makefile or any of the included makefiles?
 
+* If execution log of anything records full access to a directory with
+  patterns, then even "clean" does not cause the execution log's
+  recorded input to stop taking effect, effectively hiding the command
+  that caused the problem, since the inputs are printed BEFORE the
+  command that required them!
+
 * Add Exception type wrapper for all buildsome exceptions that has a
   coloredText method: Color.Scheme -> ColorText.  "Show" should be the
   default Show.
-
-* .pyc doesn't properly get auto-deleted.  Remember generator of .pyc, associate it with a command
 
 * Phonies should not be included in directory listing
 
@@ -120,10 +124,6 @@
 
 * Nice to haves:
   * keep-going needs to avoid dying on first exception from slaves created
-
-  * Associate allowedUnspecifiedOutputs with targets somehow? generated
-    .pyc currently not associated with anything, cannot know when to
-    clean it
 
   * Add an age to keys, and delete old ones?
 

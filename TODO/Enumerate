@@ -1,6 +1,12 @@
-* Need to fix dan's wildcards
+* Python listdirs the current dir, must fix ls
 
-  * Remove StringTemplate, as Pattern needs to be bidirectional, make it a type alias
+  * Need to enumerate all existing patterns.
+
+  * This is only possible for targets where each wildcard on the left
+    side (outputs) also appears in the right-side (inputs)
+
+  * Template instantiations need to be silo'd in their own
+    subdirectory instances/ that never gets listdir'd
 
 * Enumerate pattern targets:
   * Enumerate FilePattern inputs as Matches
