@@ -2,6 +2,7 @@
 module Lib.Parsec (showErr, showPos) where
 
 import Control.Applicative ((<$>), (<*>))
+import Control.DeepSeq (NFData(..))
 import Data.Binary (Binary(..))
 import Prelude hiding (FilePath)
 import qualified Text.Parsec.Error as ParseError
@@ -18,6 +19,15 @@ instance Binary ParsecPos.SourcePos where
         flip ParsecPos.setSourceColumn column $
         flip ParsecPos.setSourceLine line $
         ParsecPos.initialPos name
+  {-# INLINE get #-}
+  {-# INLINE put #-}
+
+instance NFData ParsecPos.SourcePos where
+  rnf pos =
+    rnf (ParsecPos.sourceName pos) `seq`
+    rnf (ParsecPos.sourceLine pos) `seq`
+    rnf (ParsecPos.sourceColumn pos)
+  {-# INLINE rnf #-}
 
 showPos :: ParsecPos.SourcePos -> String
 showPos pos = concat [path, ":", show line, ":", show col]

@@ -5,6 +5,7 @@ module Buildsome.MemoParseMakefile
 import Buildsome.Db (Db)
 import Buildsome.FileContentDescCache (fileContentDescOfStat)
 import Control.Applicative ((<$>))
+import Control.DeepSeq (rnf)
 import Data.Map (Map)
 import Lib.FileDesc (FileContentDesc)
 import Lib.FilePath (FilePath)
@@ -12,6 +13,7 @@ import Lib.Makefile (Makefile, Vars)
 import Prelude hiding (FilePath)
 import qualified Buildsome.Db as Db
 import qualified Buildsome.Meddling as Meddling
+import qualified Control.Exception as E
 import qualified Data.Map as Map
 import qualified Lib.Directory as Dir
 import qualified Lib.Makefile as Makefile
@@ -61,10 +63,13 @@ matchCache db absMakefilePath vars (Just (Db.MakefileParseCache inputs output)) 
 memoParse :: Db -> FilePath -> Vars -> IO (IsHit, Makefile)
 memoParse db absMakefilePath vars = do
   mCache <- Db.readIRef makefileParseCacheIRef
-  matchCache db absMakefilePath vars mCache (return . (,) Hit) $ do
-    (newFiles, output) <- parse db absMakefilePath vars
-    Db.writeIRef makefileParseCacheIRef $
-      Db.MakefileParseCache (absMakefilePath, vars, newFiles) output
-    return (Miss, output)
+  (isHit, makefile) <-
+    matchCache db absMakefilePath vars mCache (return . (,) Hit) $ do
+      (newFiles, output) <- parse db absMakefilePath vars
+      Db.writeIRef makefileParseCacheIRef $
+        Db.MakefileParseCache (absMakefilePath, vars, newFiles) output
+      return (Miss, output)
+  E.evaluate $ rnf makefile
+  return (isHit, makefile)
   where
     makefileParseCacheIRef = Db.makefileParseCache db

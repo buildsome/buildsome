@@ -6,6 +6,8 @@ module Lib.StringPattern
   , Match(..), match, plug
   ) where
 
+import Control.DeepSeq (NFData(..))
+import Control.DeepSeq.Generics (genericRnf)
 import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Monoid ((<>))
@@ -19,12 +21,14 @@ data StringPattern = StringPattern
   , stringPatternSuffix :: ByteString
   } deriving (Show, Generic)
 instance Binary StringPattern
+instance NFData StringPattern where rnf = genericRnf
 
 data Match = Match
   { matchPlaceHolder :: ByteString -- which value % took in this match
   , matchWildcard :: Maybe ByteString -- which value the optional * took
   } deriving (Show, Generic)
 instance Binary Match
+instance NFData Match where rnf = genericRnf
 
 match :: StringPattern -> ByteString -> Maybe Match
 match (StringPattern prefix suffix) string =

@@ -10,6 +10,8 @@ module Lib.Makefile.Types
   ) where
 
 import Control.Applicative (Applicative(..), (<$>))
+import Control.DeepSeq (NFData(..))
+import Control.DeepSeq.Generics (genericRnf)
 import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Map (Map)
@@ -29,6 +31,8 @@ data TargetType output input = Target
   , targetPos :: ParsecPos.SourcePos
   } deriving (Show, Generic)
 instance (Binary output, Binary input) => Binary (TargetType output input)
+instance (NFData output, NFData input) => NFData (TargetType output input) where
+  rnf = genericRnf
 
 type Target = TargetType FilePath FilePath
 
@@ -37,10 +41,12 @@ data FilePattern = FilePattern
   , filePatternFile :: StringPattern
   } deriving (Show, Generic)
 instance Binary FilePattern
+instance NFData FilePattern where rnf = genericRnf
 
 data InputPat = InputPath FilePath | InputPattern FilePattern
   deriving (Show, Generic)
 instance Binary InputPat
+instance NFData InputPat where rnf = genericRnf
 
 type Pattern = TargetType FilePattern InputPat
 
@@ -55,6 +61,7 @@ data Makefile = Makefile
   , makefileWeakVars :: Vars
   } deriving (Show, Generic)
 instance Binary Makefile
+instance NFData Makefile where rnf = genericRnf
 
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
