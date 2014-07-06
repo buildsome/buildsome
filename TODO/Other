@@ -1,3 +1,5 @@
+* Must verify nobody ever writes to the Makefile or any of the included makefiles?
+
 * Add Exception type wrapper for all buildsome exceptions that has a
   coloredText method: Color.Scheme -> ColorText.  "Show" should be the
   default Show.

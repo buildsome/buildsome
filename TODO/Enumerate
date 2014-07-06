@@ -1,0 +1,16 @@
+* Need to fix dan's wildcards
+
+  * Remove StringTemplate, as Pattern needs to be bidirectional, make it a type alias
+
+* Enumerate pattern targets:
+  * Enumerate FilePattern inputs as Matches
+  * Instantiate patterns with matches
+
+* Enumerate FilePattern inputs as Matches:
+  * Glob files that match the FilePatterns
+  * Find targets/patterns that match the FilePatterns:
+
+    Need to find all patterns, in dir/, that match: foo_%_bar
+    e.g:  foo_zag_%, %, f%, ...
+
+
