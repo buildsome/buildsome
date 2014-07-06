@@ -2,8 +2,8 @@
 -- with a match
 {-# LANGUAGE DeriveGeneric #-}
 module Lib.StringPattern
-  ( StringPattern(..), fromString, toString
-  , Match(..), match, plug
+  ( StringPattern, fromString, toString
+  , Match, matchPlaceHolder, match, plug
   ) where
 
 import Control.DeepSeq (NFData(..))
@@ -24,11 +24,14 @@ instance Binary StringPattern
 instance NFData StringPattern where rnf = genericRnf
 
 data Match = Match
-  { matchPlaceHolder :: ByteString -- which value % took in this match
-  , matchWildcard :: Maybe ByteString -- which value the optional * took
+  { _matchPlaceHolder :: ByteString -- which value % took in this match
+  , _matchWildcard :: Maybe ByteString -- which value the optional * took
   } deriving (Show, Generic)
 instance Binary Match
 instance NFData Match where rnf = genericRnf
+
+matchPlaceHolder :: Match -> ByteString
+matchPlaceHolder = _matchPlaceHolder
 
 match :: StringPattern -> ByteString -> Maybe Match
 match (StringPattern prefix suffix) string =
