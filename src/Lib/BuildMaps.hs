@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.BuildMaps
-  ( TargetRep(..)
+  ( TargetRep(..), pairWithTargetRep
   , DirectoryBuildMap(..)
   , BuildMaps(..)
   , Source(..)
@@ -26,6 +26,9 @@ newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimu
   deriving (Eq, Ord, Show)
 computeTargetRep :: Target -> TargetRep
 computeTargetRep = TargetRep . minimum . targetOutputs
+
+pairWithTargetRep :: Target -> (TargetRep, Target)
+pairWithTargetRep target = (computeTargetRep target, target)
 
 data DirectoryBuildMap = DirectoryBuildMap
   { dbmTargets :: [(TargetRep, Target)]
@@ -55,7 +58,7 @@ find (BuildMaps buildMap childrenMap) path =
     patternMatch =
       case mapMaybe instantiate patterns of
       [] -> Nothing
-      [(_, target)] -> Just (computeTargetRep target, target)
+      [(_, target)] -> Just $ pairWithTargetRep target
       targets ->
         error $ BS8.unpack $ mconcat
         [ "Multiple matching patterns for: ", BS8.pack (show path), "\n"
@@ -90,8 +93,6 @@ make makefile = BuildMaps buildMap childrenMap
       | targetPattern <- makefilePatterns makefile
       , outPatDir <- nub (map Makefile.filePatternDirectory (targetOutputs targetPattern))
       ]
-
-    pairWithTargetRep target = (computeTargetRep target, target)
 
     buildMap =
       M.fromListWithKey (\path -> error $ "Overlapping output paths for: " ++ show path)

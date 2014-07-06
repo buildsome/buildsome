@@ -32,7 +32,7 @@ instance NFData StringPattern where rnf = genericRnf
 data Match = Match
   { _matchPlaceHolder1 :: ByteString       -- which value % took in this match
   , _matchPlaceHolder2 :: Maybe ByteString -- which value the optional * took
-  } deriving (Show, Generic)
+  } deriving (Show, Generic, Eq, Ord)
 instance Binary Match
 instance NFData Match where rnf = genericRnf
 

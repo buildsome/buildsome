@@ -63,7 +63,7 @@ data Makefile = Makefile
 instance Binary Makefile
 instance NFData Makefile where rnf = genericRnf
 
-targetAllInputs :: Target -> [FilePath]
+targetAllInputs :: TargetType output input -> [input]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
 
