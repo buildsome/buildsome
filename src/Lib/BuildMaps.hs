@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Lib.BuildMaps
   ( TargetRep(..)
   , DirectoryBuildMap(..)
@@ -6,6 +7,7 @@ module Lib.BuildMaps
   , findDirectory
   ) where
 
+import Control.Applicative ((<$>))
 import Control.Monad
 import Data.List (nub)
 import Data.Map.Strict (Map)
@@ -14,8 +16,10 @@ import Data.Monoid
 import Lib.FilePath (FilePath, takeDirectory)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
 import Prelude hiding (FilePath)
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Lib.Makefile as Makefile
+import qualified Lib.StringPattern as StringPattern
 
 newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimum output path as the target key/representative
   deriving (Eq, Ord, Show)
@@ -43,14 +47,20 @@ find (BuildMaps buildMap childrenMap) path =
   where
     directMatch = path `M.lookup` buildMap
     patterns = dbmPatterns $ M.findWithDefault mempty (takeDirectory path) childrenMap
+    instantiate pattern = (,) pattern <$> Makefile.instantiatePatternByOutput path pattern
     patternMatch =
-      case mapMaybe (Makefile.instantiatePatternByOutput path) patterns of
+      case mapMaybe instantiate patterns of
       [] -> Nothing
-      [target] -> Just (computeTargetRep target, target)
+      [(_, target)] -> Just (computeTargetRep target, target)
       targets ->
-        error $ concat
-        [ "Multiple matching patterns: ", show path
-        , " (", show (map targetOutputs targets), ")"
+        error $ BS8.unpack $ mconcat
+        [ "Multiple matching patterns for: ", BS8.pack (show path), "\n"
+        , BS8.unlines $ map BS8.unwords $
+          map
+          ( map (StringPattern.toString '%' . Makefile.filePatternFile) .
+            targetOutputs . fst
+          )
+          targets
         ]
 
 findDirectory :: BuildMaps -> FilePath -> DirectoryBuildMap

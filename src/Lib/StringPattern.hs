@@ -2,7 +2,7 @@
 -- with a match
 {-# LANGUAGE DeriveGeneric #-}
 module Lib.StringPattern
-  ( StringPattern(..), fromString
+  ( StringPattern(..), fromString, toString
   , Match(..), match, plug
   ) where
 
@@ -45,6 +45,10 @@ plug (Match component Nothing) (StringPattern prefix suffix) =
 plug (Match component (Just wildcard)) (StringPattern prefix suffix) =
   prefix <> component <> (let (a, b) = BS.breakSubstring (BS8.pack "*") suffix in
       if BS.null b then suffix else a <> wildcard <> BS.drop 1 b)
+
+toString :: Char -> StringPattern -> ByteString
+toString splitter (StringPattern prefix suffix) =
+  prefix <> BS8.singleton splitter <> suffix
 
 fromString :: Char -> ByteString -> Maybe StringPattern
 fromString splitter pattern =
