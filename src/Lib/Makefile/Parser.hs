@@ -328,7 +328,7 @@ mkFilePattern :: FilePath -> Maybe FilePattern
 mkFilePattern path
   | "%" `BS8.isInfixOf` dir =
     error $ "Directory component may not be a pattern: " ++ show path
-  | otherwise = FilePattern dir <$> StringPattern.fromString '%' file
+  | otherwise = FilePattern dir <$> StringPattern.fromString file
   where
     (dir, file) = FilePath.splitFileName path
 

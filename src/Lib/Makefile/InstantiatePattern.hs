@@ -3,28 +3,34 @@ module Lib.Makefile.InstantiatePattern
   , instantiatePatternByMatch
   ) where
 
+import Control.Applicative ((<$>), Applicative(..))
 import Control.Monad (guard, msum)
 import Lib.FilePath ((</>), FilePath, splitFileName)
 import Lib.Makefile.Parser (interpolateCmds)
 import Lib.Makefile.Types
-import Lib.StringPattern (matchPlaceHolder)
 import Prelude hiding (FilePath)
 import qualified Lib.StringPattern as StringPattern
 
-plugFilePattern :: StringPattern.Match -> FilePattern -> FilePath
-plugFilePattern match (FilePattern dir file) = dir </> StringPattern.plug match file
+plugFilePattern :: StringPattern.Match -> FilePattern -> Maybe FilePath
+plugFilePattern match (FilePattern dir file) = (dir </>) <$> StringPattern.plug match file
 
-instantiatePatternByMatch :: StringPattern.Match -> Pattern -> Target
+instantiatePatternByMatch :: StringPattern.Match -> Pattern -> Maybe Target
 instantiatePatternByMatch match (Target outputs inputs ooInputs cmds pos) =
-  interpolateCmds mStem $
-  Target pluggedOutputs pluggedInputs pluggedOOInputs cmds pos
+  interpolateCmds mStem <$>
+  ( Target
+    <$> mPluggedOutputs
+    <*> mPluggedInputs
+    <*> mPluggedOOInputs
+    <*> pure cmds
+    <*> pure pos
+  )
   where
-    mStem = Just (matchPlaceHolder match)
+    mStem = Just $ StringPattern.matchPlaceHolder1 match
     plugInputMatch (InputPattern pat) = plugFilePattern match pat
-    plugInputMatch (InputPath str) = str
-    pluggedOutputs  = map (plugFilePattern match) outputs
-    pluggedInputs   = map plugInputMatch inputs
-    pluggedOOInputs = map plugInputMatch ooInputs
+    plugInputMatch (InputPath str) = Just str
+    mPluggedOutputs  = mapM (plugFilePattern match) outputs
+    mPluggedInputs   = mapM plugInputMatch inputs
+    mPluggedOOInputs = mapM plugInputMatch ooInputs
 
 instantiatePatternByOutput :: FilePath -> Pattern -> Maybe Target
 instantiatePatternByOutput outputPath target =
@@ -34,4 +40,4 @@ instantiatePatternByOutput outputPath target =
     tryMatchOutput (FilePattern patDir patFile) = do
       guard (patDir == outputDir)
       outputMatch <- StringPattern.match patFile outputFile
-      return $ instantiatePatternByMatch outputMatch target
+      instantiatePatternByMatch outputMatch target

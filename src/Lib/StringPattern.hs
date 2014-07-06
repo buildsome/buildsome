@@ -1,9 +1,9 @@
 -- | The notion of a string pattern: abc%def can be matched or plugged
 -- with a match
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Lib.StringPattern
   ( StringPattern, fromString, toString
-  , Match, matchPlaceHolder, match, plug
+  , Match, matchPlaceHolder1, matchPlaceHolder2, match, plug
   ) where
 
 import Control.DeepSeq (NFData(..))
@@ -12,55 +12,72 @@ import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Monoid ((<>))
 import GHC.Generics (Generic)
-import Lib.ByteString (unprefixed, unsuffixedWildCard)
-import qualified Data.ByteString as BS
+import Lib.ByteString (unprefixed, unsuffixed, splitBS)
 import qualified Data.ByteString.Char8 as BS8
 
+-- String Pattern is one of:
+-- 1. A%B
+-- 2. A%B*C
+
+-- A,B substrings always exist. C may or may not exist.
+
 data StringPattern = StringPattern
-  { stringPatternPrefix :: ByteString
-  , stringPatternSuffix :: ByteString
+  { _stringPatternA :: ByteString
+  , _stringPatternB :: ByteString       -- After the %
+  , _stringPatternC :: Maybe ByteString -- After the *, if * exists
   } deriving (Show, Generic)
 instance Binary StringPattern
 instance NFData StringPattern where rnf = genericRnf
 
 data Match = Match
-  { _matchPlaceHolder :: ByteString -- which value % took in this match
-  , _matchWildcard :: Maybe ByteString -- which value the optional * took
+  { _matchPlaceHolder1 :: ByteString       -- which value % took in this match
+  , _matchPlaceHolder2 :: Maybe ByteString -- which value the optional * took
   } deriving (Show, Generic)
 instance Binary Match
 instance NFData Match where rnf = genericRnf
 
-matchPlaceHolder :: Match -> ByteString
-matchPlaceHolder = _matchPlaceHolder
+matchPlaceHolder1 :: Match -> ByteString
+matchPlaceHolder1 = _matchPlaceHolder1
+
+matchPlaceHolder2 :: Match -> Maybe ByteString
+matchPlaceHolder2 = _matchPlaceHolder2
 
 match :: StringPattern -> ByteString -> Maybe Match
-match (StringPattern prefix suffix) string =
-  case unprefixed prefix string of
-    Nothing -> Nothing
-    Just m ->
-      case unsuffixedWildCard suffix m of
-        (Nothing, _) -> Nothing
-        (Just m2, w) -> Just $ Match m2 w
+match (StringPattern a b Nothing) string =
+  do
+    afterA <- unprefixed a string
+    placeHolder1 <- unsuffixed b afterA
+    Just $ Match placeHolder1 Nothing
+match (StringPattern a b (Just c)) string =
+  do
+    afterA <- unprefixed a string -- String from % to the end
+    (placeHolder1, afterB)  <- splitBS b afterA
+    placeHolder2 <- unsuffixed c afterB
+    Just $ Match placeHolder1 $ Just placeHolder2
 
-plug :: Match -> StringPattern -> ByteString
-plug (Match component Nothing) (StringPattern prefix suffix) =
-  prefix <> component <> suffix
-plug (Match component (Just wildcard)) (StringPattern prefix suffix) =
-  prefix <> component <> (let (a, b) = BS.breakSubstring (BS8.pack "*") suffix in
-      if BS.null b then suffix else a <> wildcard <> BS.drop 1 b)
+plug :: Match -> StringPattern -> Maybe ByteString
+plug (Match placeHolder1 (Just placeHolder2)) (StringPattern a b (Just c)) =
+  Just $ a <> placeHolder1 <> b <> placeHolder2 <> c
+plug (Match placeHolder1 _) (StringPattern a b Nothing) =
+  Just $ a <> placeHolder1 <> b
+plug (Match _ Nothing) (StringPattern _ _ (Just _)) = Nothing
 
-toString :: Char -> StringPattern -> ByteString
-toString splitter (StringPattern prefix suffix) =
-  prefix <> BS8.singleton splitter <> suffix
+toString :: StringPattern -> ByteString
+toString (StringPattern a b Nothing)  = a <> "%" <> b
+toString (StringPattern a b (Just c)) = a <> "%" <> b <> "*" <> c
 
-fromString :: Char -> ByteString -> Maybe StringPattern
-fromString splitter pattern =
-  case BS8.split splitter pattern of
+fromString :: ByteString -> Maybe StringPattern
+fromString pattern =
+  case BS8.split '%' pattern of
   [] -> Nothing
   [_] -> Nothing
-  [prefix, suffix] ->
-    Just StringPattern
-      { stringPatternPrefix = prefix
-      , stringPatternSuffix = suffix
-      }
+  [a, afterA] ->
+    Just $
+    case BS8.split '*' afterA of
+      [] -> noAsterisk a afterA
+      [_] -> noAsterisk a afterA
+      [b, c] -> StringPattern a b $ Just c
+      _ -> error $ "Too many * in pattern: " ++ show pattern
   _ -> error $ "Too many % in pattern: " ++ show pattern
+  where
+    noAsterisk a b = StringPattern a b Nothing

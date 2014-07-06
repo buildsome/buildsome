@@ -57,7 +57,7 @@ find (BuildMaps buildMap childrenMap) path =
         [ "Multiple matching patterns for: ", BS8.pack (show path), "\n"
         , BS8.unlines $ map BS8.unwords $
           map
-          ( map (StringPattern.toString '%' . Makefile.filePatternFile) .
+          ( map (StringPattern.toString . Makefile.filePatternFile) .
             targetOutputs . fst
           )
           targets
