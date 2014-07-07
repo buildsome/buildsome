@@ -85,10 +85,7 @@ printStrLn (Printer pid toBS indentRef) str = do
 
 {-# INLINE rawPrintStrLn #-}
 rawPrintStrLn :: Printable str => Printer -> str -> IO ()
-rawPrintStrLn (Printer pid toBS indentRef) str = do
-  indentLevel <- readIORef indentRef
-  let prefix = idStr pid <> " " <> mconcat (replicate indentLevel "  ")
-  putStrLn toBS $ intercalate "\n" $ map (prefix <>) $ lines str
+rawPrintStrLn (Printer _ toBS _) str = putStrLn toBS str
 
 data ColorScheme = ColorScheme
   { cException :: ColorText -> ColorText
