@@ -1,16 +1,18 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, DeriveGeneric #-}
 module Lib.Makefile.Monad
   ( MonadMakefileParser(..)
+  , PutStrLn, runPutStrLn
   , M, runM
   ) where
 
 import Control.Applicative (Applicative)
-import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Trans.State (StateT(..))
+import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Map (Map)
 import Data.Monoid (Monoid(..))
+import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus)
 import Lib.FilePath (FilePath)
 import Prelude hiding (FilePath)
@@ -33,7 +35,10 @@ instance MonadMakefileParser IO where
   tryReadFile = E.try . BS8.readFile . BS8.unpack
 
 -- Specific Monad type for makefile parsing that tracks all inputs/outputs:
-data PutStrLnTarget = Out | Err
+data PutStrLnTarget = Out | Err deriving (Generic, Show)
+data PutStrLn = PutStrLn PutStrLnTarget ByteString deriving (Generic, Show)
+instance Binary PutStrLnTarget
+instance Binary PutStrLn
 
 targetHandle :: PutStrLnTarget -> IO.Handle
 targetHandle Out = IO.stdout
@@ -42,7 +47,7 @@ targetHandle Err = IO.stderr
 type ReadFiles = Map FilePath (Maybe Posix.FileStatus)
 
 data W = W
-  { wPutStrLns :: [(PutStrLnTarget, ByteString)]
+  { wPutStrLns :: [PutStrLn]
   , wReadFiles :: Map FilePath [Maybe Posix.FileStatus]
   }
 instance Monoid W where
@@ -50,8 +55,8 @@ instance Monoid W where
   mappend (W ax ay) (W bx by) =
     W (mappend ax bx) (Map.unionWith (++) ay by)
 
-runPutStrLn :: (PutStrLnTarget, ByteString) -> IO ()
-runPutStrLn (target, bs) = BS8.hPutStrLn (targetHandle target) bs
+runPutStrLn :: PutStrLn -> IO ()
+runPutStrLn (PutStrLn target bs) = BS8.hPutStrLn (targetHandle target) bs
 
 -- IMPORTANT: Use StateT and not WriterT, because WriterT's >>= leaks
 -- stack-space due to tuple unpacking (and mappend) *after* the inner
@@ -62,8 +67,8 @@ tell :: W -> M ()
 tell = M . State.modify . mappend
 
 instance MonadMakefileParser M where
-  outPutStrLn bs = tell $ mempty { wPutStrLns = [(Out, bs)] }
-  errPutStrLn bs = tell $ mempty { wPutStrLns = [(Err, bs)] }
+  outPutStrLn bs = tell $ mempty { wPutStrLns = [(PutStrLn Out bs)] }
+  errPutStrLn bs = tell $ mempty { wPutStrLns = [(PutStrLn Err bs)] }
   tryReadFile filePath = do
     mFileStat <- M $ liftIO $ getMFileStatus filePath
     tell $ mempty { wReadFiles = Map.singleton filePath [mFileStat] }
@@ -79,9 +84,8 @@ mergeAllFileStatuses filePath = go
       Meddling.assertSameMTime filePath x r
       return x
 
-runM :: M a -> IO (ReadFiles, a)
+runM :: M a -> IO (ReadFiles, [PutStrLn], a)
 runM (M act) = do
   (res, w) <- runStateT act mempty
-  forM_ (wPutStrLns w) runPutStrLn
   readFiles <- Map.traverseWithKey mergeAllFileStatuses (wReadFiles w)
-  return $ (readFiles, res)
+  return $ (readFiles, wPutStrLns w, res)

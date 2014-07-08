@@ -27,6 +27,7 @@ import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
 import Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Makefile (Makefile)
+import Lib.Makefile.Monad (PutStrLn)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeInstances ()
 import Prelude hiding (FilePath)
@@ -39,7 +40,7 @@ import qualified Lib.Makefile as Makefile
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.9"
+schemaVersion = "schema.ver.10"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -143,7 +144,7 @@ type MFileContentDesc = FileDesc () FileContentDesc
 
 data MakefileParseCache = MakefileParseCache
   { mpcInputs :: (FilePath, Makefile.Vars, Map FilePath MFileContentDesc)
-  , mpcOutput :: Makefile
+  , mpcOutput :: (Makefile, [PutStrLn])
   } deriving (Generic)
 instance Binary MakefileParseCache
 

@@ -25,15 +25,15 @@ mkFileDesc :: Db -> FilePath -> Maybe Posix.FileStatus -> IO (Db.FileDesc () Fil
 mkFileDesc _ _ Nothing = return $ Db.FileDescNonExisting ()
 mkFileDesc db path (Just stat) = Db.FileDescExisting <$> fileContentDescOfStat db path stat
 
-parse :: Db -> FilePath -> Vars -> IO (Map FilePath (Db.FileDesc () FileContentDesc), Makefile)
+parse :: Db -> FilePath -> Vars -> IO (Map FilePath (Db.FileDesc () FileContentDesc), [MakefileMonad.PutStrLn], Makefile)
 parse db absMakefilePath vars = do
-  (readFiles, res) <-
+  (readFiles, putStrLns, res) <-
     MakefileMonad.runM $
     MakefileParser.parse absMakefilePath vars
   contentDescs <- Map.traverseWithKey (mkFileDesc db) readFiles
   -- This must come after:
   mapM_ (uncurry Meddling.assertFileMTime) $ Map.toList readFiles
-  return (contentDescs, res)
+  return (contentDescs, putStrLns, res)
 
 cacheInputsMatch ::
   Db ->
@@ -52,7 +52,9 @@ cacheInputsMatch db (oldPath, oldVars, oldFiles) path vars
 
 data IsHit = Hit | Miss
 
-matchCache :: Db -> FilePath -> Vars -> Maybe Db.MakefileParseCache -> (Makefile -> IO r) -> IO r -> IO r
+matchCache ::
+  Db -> FilePath -> Vars -> Maybe Db.MakefileParseCache ->
+  ((Makefile, [MakefileMonad.PutStrLn]) -> IO r) -> IO r -> IO r
 matchCache _ _ _ Nothing _ miss = miss
 matchCache db absMakefilePath vars (Just (Db.MakefileParseCache inputs output)) hit miss = do
   isMatch <- cacheInputsMatch db inputs absMakefilePath vars
@@ -63,12 +65,13 @@ matchCache db absMakefilePath vars (Just (Db.MakefileParseCache inputs output)) 
 memoParse :: Db -> FilePath -> Vars -> IO (IsHit, Makefile)
 memoParse db absMakefilePath vars = do
   mCache <- Db.readIRef makefileParseCacheIRef
-  (isHit, makefile) <-
+  (isHit, (makefile, putStrLns)) <-
     matchCache db absMakefilePath vars mCache (return . (,) Hit) $ do
-      (newFiles, output) <- parse db absMakefilePath vars
+      (newFiles, putStrLns, makefile) <- parse db absMakefilePath vars
       Db.writeIRef makefileParseCacheIRef $
-        Db.MakefileParseCache (absMakefilePath, vars, newFiles) output
-      return (Miss, output)
+        Db.MakefileParseCache (absMakefilePath, vars, newFiles) (makefile, putStrLns)
+      return (Miss, (makefile, putStrLns))
+  mapM_ MakefileMonad.runPutStrLn putStrLns
   E.evaluate $ rnf makefile
   return (isHit, makefile)
   where
