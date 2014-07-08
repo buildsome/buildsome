@@ -66,9 +66,16 @@ newtype M a = M (StateT W IO a)
 tell :: W -> M ()
 tell = M . State.modify . mappend
 
+doPutStrLn :: PutStrLnTarget -> ByteString -> M ()
+doPutStrLn tgt bs = do
+  M $ liftIO $ runPutStrLn p
+  tell $ mempty { wPutStrLns = [p] }
+  where
+    p = PutStrLn tgt bs
+
 instance MonadMakefileParser M where
-  outPutStrLn bs = tell $ mempty { wPutStrLns = [(PutStrLn Out bs)] }
-  errPutStrLn bs = tell $ mempty { wPutStrLns = [(PutStrLn Err bs)] }
+  outPutStrLn = doPutStrLn Out
+  errPutStrLn = doPutStrLn Err
   tryReadFile filePath = do
     mFileStat <- M $ liftIO $ getMFileStatus filePath
     tell $ mempty { wReadFiles = Map.singleton filePath [mFileStat] }

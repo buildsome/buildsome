@@ -65,14 +65,16 @@ matchCache db absMakefilePath vars (Just (Db.MakefileParseCache inputs output)) 
 memoParse :: Db -> FilePath -> Vars -> IO (IsHit, Makefile)
 memoParse db absMakefilePath vars = do
   mCache <- Db.readIRef makefileParseCacheIRef
-  (isHit, (makefile, putStrLns)) <-
-    matchCache db absMakefilePath vars mCache (return . (,) Hit) $ do
+  (isHit, makefile) <-
+    matchCache db absMakefilePath vars mCache hit $ do
       (newFiles, putStrLns, makefile) <- parse db absMakefilePath vars
       Db.writeIRef makefileParseCacheIRef $
         Db.MakefileParseCache (absMakefilePath, vars, newFiles) (makefile, putStrLns)
-      return (Miss, (makefile, putStrLns))
-  mapM_ MakefileMonad.runPutStrLn putStrLns
+      return (Miss, makefile)
   E.evaluate $ rnf makefile
   return (isHit, makefile)
   where
+    hit (makefile, putStrLns) = do
+      mapM_ MakefileMonad.runPutStrLn putStrLns
+      return (Hit, makefile)
     makefileParseCacheIRef = Db.makefileParseCache db
