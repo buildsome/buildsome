@@ -236,7 +236,7 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
       Explicit -> verifyFileGetsCreated slave
       where
         verifyFileGetsCreated slave
-          | path `elem` makefilePhonies (bsMakefile bteBuildsome) = return slave
+          | path `elem` (map snd . makefilePhonies . bsMakefile) bteBuildsome = return slave
           | otherwise =
             Slave.wrap (<* assertExists path (TargetNotCreated (bsRender bteBuildsome) path target)) slave
 
@@ -301,7 +301,7 @@ verifyTargetSpec bte inputs outputs target = do
   verifyTargetOutputs bte outputs target
 
 phoniesSet :: Buildsome -> Set FilePath
-phoniesSet = S.fromList . makefilePhonies . bsMakefile
+phoniesSet = S.fromList . map snd . makefilePhonies . bsMakefile
 
 verifyTargetInputs :: BuildTargetEnv -> Set FilePath -> Target -> IO ()
 verifyTargetInputs bte@BuildTargetEnv{..} inputs target

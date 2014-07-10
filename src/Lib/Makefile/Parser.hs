@@ -403,9 +403,9 @@ target = do
   targetParser pos outputPaths inputPaths orderOnlyInputs
 
 data PosError = PosError Pos.SourcePos ByteString deriving (Typeable)
+instance E.Exception PosError
 instance Show PosError where
   show (PosError pos msg) = concat [showPos pos, ": ", BS8.unpack msg]
-instance E.Exception PosError
 
 mkMakefile :: Writer -> Makefile
 mkMakefile (Writer targets targetPatterns weakVars) =
@@ -418,13 +418,10 @@ mkMakefile (Writer targets targetPatterns weakVars) =
       , makefileWeakVars = weakVars
       }
   where
-    outputPathsSet = S.fromList (concatMap targetOutputs regularTargets)
     badPhony t str = Left $ PosError (targetPos t) $ ".PHONY target " <> str
-    getPhonyInputs t@(Target [".PHONY"] inputs [] cmd _) =
-      case filter (`S.notMember` outputPathsSet) inputs of
-      (danglingInput:_) -> badPhony t $ "refers to inexistent target " <> danglingInput
-      [] | not (BS8.null cmd) -> badPhony t "may not specify commands"
-         | otherwise -> return inputs
+    getPhonyInputs t@(Target [".PHONY"] inputs [] cmd _)
+      | not (BS8.null cmd) = badPhony t "may not specify commands"
+      | otherwise = return $ map ((,) (targetPos t)) inputs
     getPhonyInputs t = badPhony t "invalid"
     (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputs) targets
 

@@ -57,7 +57,7 @@ type Vars = Map VarName VarValue
 data Makefile = Makefile
   { makefileTargets :: [Target]
   , makefilePatterns :: [Pattern]
-  , makefilePhonies :: [FilePath]
+  , makefilePhonies :: [(ParsecPos.SourcePos, FilePath)]
   , makefileWeakVars :: Vars
   } deriving (Show, Generic)
 instance Binary Makefile
@@ -94,10 +94,13 @@ onPatternPaths f (Target outputs inputs orderOnlyInputs cmds pos) =
   <*> pure cmds
   <*> pure pos
 
+_2 :: Functor f => (b -> f c) -> (a, b) -> f (a, c)
+_2 f (x, y) = (,) x <$> f y
+
 onMakefilePaths :: Applicative f => (FilePath -> f FilePath) -> Makefile -> f Makefile
 onMakefilePaths f (Makefile targets patterns phonies weakVars) =
   Makefile
   <$> traverse (onTargetPaths f) targets
   <*> traverse (onPatternPaths f) patterns
-  <*> traverse f phonies
+  <*> (traverse . _2) f phonies
   <*> pure weakVars

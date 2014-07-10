@@ -122,6 +122,7 @@ parseMakefile printer db origMakefilePath finalMakefilePath vars = do
   (parseTime, (isHit, makefile)) <- timeIt $ do
     (isHit, rawMakefile) <- MemoParseMakefile.memoParse db absFinalMakefilePath vars
     makefile <- Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative rawMakefile
+    Makefile.verifyPhonies makefile
     return (isHit, makefile)
   let msg =
         case isHit of
