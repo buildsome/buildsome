@@ -891,6 +891,14 @@ DEFINE_WRAPPER(FILE *, freopen64, (const char *path, const char *modestr, FILE *
     FOPEN_HANDLER(freopen64, path, modestr, stream);
 }
 
+DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
+{
+    bool needs_await = false;
+    DEFINE_MSG(msg, openr);
+    IN_PATH_COPY(needs_await, msg.args.path, filename);
+    return AWAIT_CALL_REAL(NULL, needs_await, msg, dlopen, filename, flag);
+}
+
 /*************************************/
 
 /* TODO: Track utime? */
