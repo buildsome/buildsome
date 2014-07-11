@@ -896,6 +896,9 @@ DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
     bool needs_await = false;
     DEFINE_MSG(msg, openr);
     IN_PATH_COPY(needs_await, msg.args.path, filename);
+    /* TODO: dlopen does a lot of searching/etc if the pathname does
+     * not contain slash, need to handle it correctly (or switch to
+     * fuse!) */
     return AWAIT_CALL_REAL(NULL, needs_await, msg, dlopen, filename, flag);
 }
 
