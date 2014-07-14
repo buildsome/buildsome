@@ -1,3 +1,6 @@
+* Show in "status lines" what targets are actively-building/passively-waiting, with times spent on each?
+* "file changed during build!" then causes output leakage not detected as outputs by buildsome!
+
 * Must verify nobody ever writes to the Makefile or any of the included makefiles?
 
 * Add Exception type wrapper for all buildsome exceptions that has a
