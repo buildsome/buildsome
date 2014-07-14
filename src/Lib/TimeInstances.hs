@@ -5,9 +5,11 @@ module Lib.TimeInstances () where
 import Control.Applicative ((<$>))
 import Data.Binary(Binary(..))
 import Data.Time.Clock (NominalDiffTime, DiffTime)
-import Data.Fixed (Pico, Fixed(..), HasResolution)
+import Data.Fixed (Pico, Fixed(..))
 
 #if __GLASGOW_HASKELL__ <= 706
+import Data.Fixed (HasResolution)
+
 fromFixed :: HasResolution a => Fixed a -> Integer
 fromFixed = truncate . (*1e12)
 {-# INLINE fromFixed #-}
@@ -21,6 +23,7 @@ instance HasResolution a => Binary (Fixed a) where
   {-# INLINE put #-}
 #else
 import GHC.Generics (Generic)
+
 deriving instance Generic (Fixed a)
 instance Binary (Fixed a)
 #endif
