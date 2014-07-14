@@ -85,6 +85,7 @@ data Buildsome = Buildsome
   { -- static:
     bsOpts :: Opt
   , bsMakefile :: Makefile
+  , bsPhoniesSet :: Set FilePath
   , bsBuildId :: BuildId
   , bsRootPath :: FilePath
   , bsBuildMaps :: BuildMaps
@@ -248,7 +249,7 @@ makeChildSlaves bte@BuildTargetEnv{..} path
     traverse (getSlaveForTarget bte) $
     filter (not . isPhony . snd) childTargets
   where
-    isPhony = all (`S.member` phoniesSet bteBuildsome) . targetOutputs
+    isPhony = all (`S.member` bsPhoniesSet bteBuildsome) . targetOutputs
     DirectoryBuildMap childTargets childPatterns =
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
 
@@ -300,17 +301,14 @@ verifyTargetSpec bte inputs outputs target = do
   verifyTargetInputs bte inputs target
   verifyTargetOutputs bte outputs target
 
-phoniesSet :: Buildsome -> Set FilePath
-phoniesSet = S.fromList . map snd . makefilePhonies . bsMakefile
-
 verifyTargetInputs :: BuildTargetEnv -> Set FilePath -> Target -> IO ()
 verifyTargetInputs bte@BuildTargetEnv{..} inputs target
-  | all (`S.member` phoniesSet bteBuildsome)
+  | all (`S.member` bsPhoniesSet bteBuildsome)
     (targetOutputs target) = return () -- Phony target doesn't need real inputs
   | otherwise =
     warnOverSpecified bte
     "inputs" "" (S.fromList (targetAllInputs target))
-    (inputs `S.union` phoniesSet bteBuildsome) (targetPos target)
+    (inputs `S.union` bsPhoniesSet bteBuildsome) (targetPos target)
 
 warnLeakTargetOutputs :: Printer -> Target -> ColorText -> ColorText -> [FilePath] -> IO ()
 warnLeakTargetOutputs printer target outStr avoidSuffix outputs =
@@ -381,7 +379,7 @@ verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
       IllegalUnspecifiedOutputs (bsRender bteBuildsome) target $
       M.keys existingIllegalOutputs
   warnOverSpecified bte "outputs" " (consider adding a .PHONY declaration)"
-    (M.keysSet specified) (M.keysSet outputs `S.union` phoniesSet bteBuildsome)
+    (M.keysSet specified) (M.keysSet outputs `S.union` bsPhoniesSet bteBuildsome)
     (targetPos target)
   where
     opt = bsOpts bteBuildsome
@@ -1002,6 +1000,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         Buildsome
         { bsOpts = opt
         , bsMakefile = makefile
+        , bsPhoniesSet = S.fromList . map snd $ makefilePhonies makefile
         , bsBuildId = buildId
         , bsRootPath = rootPath
         , bsBuildMaps = BuildMaps.make makefile
