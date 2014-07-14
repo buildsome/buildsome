@@ -13,11 +13,14 @@ module Lib.FilePath
   ) where
 
 import Control.Applicative ((<$>))
+import Control.Exception (catch, throwIO)
 import Data.ByteString.Char8 (ByteString)
 import Data.Maybe (fromMaybe)
 import Data.Monoid
+import GHC.IO.Exception (IOErrorType(..))
 import Lib.ByteString (unprefixed)
 import Prelude hiding (FilePath)
+import System.IO.Error (ioeGetErrorType)
 import qualified Data.ByteString.Char8 as BS8
 import qualified System.Posix.ByteString as Posix
 
@@ -27,7 +30,11 @@ type FilePath = Posix.RawFilePath
 exists :: FilePath -> IO Bool
 exists path
   | BS8.null path = return True
-  | otherwise = Posix.fileExist path
+  | otherwise = Posix.fileExist path `catch`
+    \e ->
+    case ioeGetErrorType e of
+    InappropriateType -> return False
+    _ -> throwIO e
 
 splitPath :: FilePath -> [FilePath]
 splitPath path
