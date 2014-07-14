@@ -50,6 +50,7 @@ import qualified Data.Map.Strict as M
 import qualified Lib.AsyncContext as AsyncContext
 import qualified Lib.FSHook.OutputBehavior as OutputBehavior
 import qualified Lib.FSHook.Protocol as Protocol
+import qualified Lib.FilePath as FilePath
 import qualified Lib.Fresh as Fresh
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
@@ -357,7 +358,7 @@ instance E.Exception CannotFindOverrideSharedObject
 
 assertLdPreloadPathExists :: FilePath -> IO ()
 assertLdPreloadPathExists path = do
-  e <- Posix.fileExist path
+  e <- FilePath.exists path
   unless e $ E.throwIO CannotFindOverrideSharedObject
 
 getLdPreloadPath :: Maybe FilePath -> IO FilePath
@@ -367,7 +368,7 @@ getLdPreloadPath (Just path) = do
   return ldPreloadPath
 getLdPreloadPath Nothing = do
   installedFilePath <- BS8.pack <$> (getDataFileName . BS8.unpack) fileName
-  installedExists <- Posix.fileExist installedFilePath
+  installedExists <- FilePath.exists installedFilePath
   if installedExists
     then return installedFilePath
     else do

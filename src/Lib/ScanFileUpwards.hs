@@ -25,5 +25,5 @@ scanFileUpwards name = do
     Right () -> return Nothing
   where
     check path = do
-      exists <- liftIO $ Posix.fileExist path
+      exists <- liftIO $ FilePath.exists path
       when exists $ left path
