@@ -893,6 +893,8 @@ DEFINE_WRAPPER(FILE *, freopen64, (const char *path, const char *modestr, FILE *
 
 DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
 {
+    if(!filename) return SILENT_CALL_REAL(dlopen, filename, flag);
+
     bool needs_await = false;
     DEFINE_MSG(msg, openr);
     IN_PATH_COPY(needs_await, msg.args.path, filename);
