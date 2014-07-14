@@ -1,32 +1,29 @@
-{-# LANGUAGE CPP, DeriveGeneric, StandaloneDeriving #-}
+{-# LANGUAGE CPP, FlexibleInstances #-}
 {-# OPTIONS -fno-warn-orphans #-}
 module Lib.TimeInstances () where
 
 import Control.Applicative ((<$>))
 import Data.Binary(Binary(..))
 import Data.Time.Clock (NominalDiffTime, DiffTime)
-import Data.Fixed (Pico, Fixed(..))
+import Data.Fixed (Pico, Fixed(..), E12)
 
+toPicos :: Pico -> Integer
+fromPicos :: Integer -> Pico
 #if __GLASGOW_HASKELL__ <= 706
-import Data.Fixed (HasResolution)
+toPicos = truncate . (*1e12)
+fromPicos = (/1e12) . realToFrac
+#else
+toPicos (MkFixed x) = x
+fromPicos = MkFixed
+#endif
+{-# INLINE toPicos #-}
+{-# INLINE fromPicos #-}
 
-fromFixed :: HasResolution a => Fixed a -> Integer
-fromFixed = truncate . (*1e12)
-{-# INLINE fromFixed #-}
-toFixed :: HasResolution a => Integer -> Fixed a
-toFixed = (/1e12) . fromIntegral
-{-# INLINE toFixed #-}
-instance HasResolution a => Binary (Fixed a) where
-  get = toFixed <$> get
-  put = put . fromFixed
+instance Binary (Fixed E12) where
+  get = fromPicos <$> get
+  put = put . toPicos
   {-# INLINE get #-}
   {-# INLINE put #-}
-#else
-import GHC.Generics (Generic)
-
-deriving instance Generic (Fixed a)
-instance Binary (Fixed a)
-#endif
 
 {-# INLINE toPico #-}
 toPico :: Real a => a -> Pico

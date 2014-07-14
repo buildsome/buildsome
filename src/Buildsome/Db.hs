@@ -40,7 +40,7 @@ import qualified Lib.Makefile as Makefile
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.12"
+schemaVersion = "schema.ver.13"
 
 data Db = Db
   { dbSophia :: Sophia.Db
