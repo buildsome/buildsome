@@ -22,6 +22,7 @@ import Data.Monoid
 import Data.Set (Set)
 import Data.String (IsString(..))
 import Data.Time (DiffTime)
+import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
 import Lib.AnnotatedException (annotateException)
@@ -453,11 +454,12 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
   nestedSlaveStats <- executionLogWaitForInputs bte parCell target el
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
-      verifyFileDesc "input" filePath desc $ \stat (Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
-        let verify str getDesc mPair = verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
-        verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
-        verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
-        verify "content" (fileContentDescOfStat db filePath stat) mContentAccess
+      verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
+        when (Posix.modificationTimeHiRes stat /= mtime) $ do
+          let verify str getDesc mPair = verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
+          verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
+          verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
+          verify "content" (fileContentDescOfStat db filePath stat) mContentAccess
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
@@ -507,7 +509,7 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
       | otherwise = mkInputSlaveFor desc Implicit inputPath
     mkInputSlaveFor (Db.FileDescNonExisting depReason) =
       mkSlavesDirectAccess bte { bteReason = depReason }
-    mkInputSlaveFor (Db.FileDescExisting inputDesc) =
+    mkInputSlaveFor (Db.FileDescExisting (_mtime, inputDesc)) =
       case inputDesc of
       Db.InputDesc { Db.idContentAccess = Just (depReason, _) } -> mkSlaves bte { bteReason = depReason }
       Db.InputDesc { Db.idStatAccess = Just (depReason, _) } -> mkSlavesDirectAccess bte { bteReason = depReason }
@@ -846,7 +848,7 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     inputAccess ::
       FilePath ->
       (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
-      IO (Db.FileDesc Reason Db.InputDesc)
+      IO (Db.FileDesc Reason (POSIXTime, Db.InputDesc))
     inputAccess path (accessTypes, Nothing) = do
       let reason =
             case M.elems accessTypes of
@@ -866,11 +868,14 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
         addDesc FSHook.AccessTypeStat $ return $ fileStatDescOfStat stat
       contentAccess <-
         addDesc FSHook.AccessTypeFull $ fileContentDescOfStat db path stat
-      return $ Db.FileDescExisting Db.InputDesc
-        { Db.idModeAccess = modeAccess
-        , Db.idStatAccess = statAccess
-        , Db.idContentAccess = contentAccess
-        }
+      return $ Db.FileDescExisting
+        ( Posix.modificationTimeHiRes stat
+        , Db.InputDesc
+          { Db.idModeAccess = modeAccess
+          , Db.idStatAccess = statAccess
+          , Db.idContentAccess = contentAccess
+          }
+        )
 
 redirectExceptions :: Buildsome -> IO a -> IO a
 redirectExceptions buildsome =
