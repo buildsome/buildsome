@@ -12,6 +12,7 @@ import Data.Monoid
 import Data.String (IsString(..))
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
+import GHC.Conc (setNumCapabilities, getNumProcessors)
 import Lib.ByteString (unprefixed)
 import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus)
@@ -248,6 +249,7 @@ handleRequested buildsome printer _ RequestedClean = Buildsome.clean printer bui
 
 main :: IO ()
 main = do
+  setNumCapabilities =<< getNumProcessors
   opts <- Opts.get
   render <- getColorRender opts
   printer <- Printer.new render 0
