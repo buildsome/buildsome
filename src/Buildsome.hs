@@ -217,6 +217,7 @@ instance Show TargetNotCreated where
   show (TargetNotCreated render path target) =
     BS8.unpack $ render $ cError $ mconcat
     [ (fromString . showPos . targetPos) target
+    , ": "
     , cTarget (show path)
     , " explicitly demanded but was not created by its target rule" ]
     where
