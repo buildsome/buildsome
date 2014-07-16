@@ -1,6 +1,3 @@
-* Compare mtime only and not the content hash/stat when possible to
-  save time in empty build?
-
 * Show in "status lines" what targets are actively-building/passively-waiting, with times spent on each?
 * "file changed during build!" then causes output leakage not detected as outputs by buildsome!
 
