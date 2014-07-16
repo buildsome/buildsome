@@ -1,3 +1,22 @@
+* scratch_problem_wip:
+  * No longer need to track what's "safe to delete" (no deletions, yay!)
+  * So now only need the output effect for determining scratch files:
+  * Add  (O_CREATE|O_EXCL <-> !O_CREAT&!O_EXCL)  open loop, guaranteeing
+  * No uncertainty about whether creation happened should be left anywhere, remove the MayCreate constructor
+  * Can safely know for sure whether output is created. Need to keep the FIRST output addition!
+  * Allow illegal output only if it was CREATED and now does not exist
+
+  * When first adding an unspecified output, add it to ban list that
+    all fsAccess's are checked against to cause failure of commands
+    that access it
+
+    * OPTIONALLY: When calling verifyTargetOutputs (in build context,
+      not replay context) can remove the ban list
+
+* Use FUSE!
+  * dlopen isn't correct
+  * open(dir)+failed-read-as-file depends on directory, when it doesn't depend on it
+
 * Show in "status lines" what targets are actively-building/passively-waiting, with times spent on each?
 * "file changed during build!" then causes output leakage not detected as outputs by buildsome!
 
