@@ -271,15 +271,6 @@ mkSlaves bte@BuildTargetEnv{..} explicitness path
   childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
   return $ slaves ++ childs
 
--- e.g: .pyc files
-handleLegalUnspecifiedOutputs :: BuildTargetEnv -> Target -> [FilePath] -> IO ()
-handleLegalUnspecifiedOutputs BuildTargetEnv{..} target paths = do
-  -- TODO: Verify nobody ever used this file as an input besides the
-  -- creating job
-  unless (null paths) $ Print.warn btePrinter (targetPos target) $
-    mconcat ["Leaked unspecified outputs: ", show paths]
-  registerLeakedOutputs bteBuildsome (S.fromList paths)
-
 data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs (ColorText -> ByteString) Target [FilePath]
   deriving (Typeable)
 instance E.Exception IllegalUnspecifiedOutputs
@@ -293,7 +284,8 @@ instance Show IllegalUnspecifiedOutputs where
 
 -- Verify output of whole of slave/execution log
 verifyTargetSpec ::
-  BuildTargetEnv -> Set FilePath -> Map FilePath KeepsOldContent -> Target -> IO ()
+  BuildTargetEnv -> Set FilePath -> Map FilePath KeepsOldContent -> Target ->
+  IO (Map FilePath KeepsOldContent)
 verifyTargetSpec bte inputs outputs target = do
   verifyTargetInputs bte inputs target
   verifyTargetOutputs bte outputs target
@@ -307,11 +299,16 @@ verifyTargetInputs bte@BuildTargetEnv{..} inputs target
     "inputs" "" (S.fromList (targetAllInputs target))
     (inputs `S.union` bsPhoniesSet bteBuildsome) (targetPos target)
 
-verifyTargetOutputs :: BuildTargetEnv -> Map FilePath KeepsOldContent -> Target -> IO ()
+handleLegalUnspecifiedOutputs :: BuildTargetEnv -> TargetType output input -> [FilePath] -> IO ()
+handleLegalUnspecifiedOutputs BuildTargetEnv{..} target unspecifiedOutputs = do
+  legalUnspecified <- filterM FilePath.exists unspecifiedOutputs
+  unless (null legalUnspecified) $ Print.warn btePrinter (targetPos target) $
+    mconcat ["Leaked unspecified outputs: ", show legalUnspecified]
+  registerLeakedOutputs bteBuildsome $ S.fromList legalUnspecified
+
+verifyTargetOutputs :: BuildTargetEnv -> Map FilePath KeepsOldContent -> Target -> IO (Map FilePath KeepsOldContent)
 verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
-  -- Legal unspecified need to be kept/deleted according to policy:
-  handleLegalUnspecifiedOutputs bte target =<<
-    filterM FilePath.exists (M.keys unspecifiedOutputs)
+  handleLegalUnspecifiedOutputs bte target $ M.keys unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
   -- input use by any other job:
@@ -330,6 +327,7 @@ verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
   warnOverSpecified bte "outputs" " (consider adding a .PHONY declaration)"
     (M.keysSet specified) (M.keysSet outputs `S.union` bsPhoniesSet bteBuildsome)
     (targetPos target)
+  return $ M.intersection outputs specified
   where
     Color.Scheme{..} = Color.scheme
     (unspecifiedOutputs, illegalOutputs) =
@@ -358,7 +356,7 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
   (optVerbosity (bsOpts bteBuildsome)) selfTime $
   -- We only register legal outputs that were CREATED properly in the
   -- execution log, so all outputs keep no old content
-  verifyTargetSpec bte inputs
+  void $ verifyTargetSpec bte inputs
   (M.fromSet (const KeepsNoOldContent) outputs) target
 
 waitForSlaves ::
@@ -759,11 +757,14 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     shellCmd = shellCmdVerify bte target ["HOME", "PATH"]
     Color.Scheme{..} = Color.scheme
 
-saveExecutionLog :: Buildsome -> Target -> RunCmdResults -> IO ()
-saveExecutionLog buildsome target RunCmdResults{..} = do
-  inputsDescs <- M.traverseWithKey inputAccess rcrInputs
+saveExecutionLog ::
+  Buildsome -> Target ->
+  Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
+  [FilePath] -> StdOutputs ByteString -> DiffTime -> IO ()
+saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
+  inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
-    forM (M.keys rcrOutputs) $ \outPath -> do
+    forM outputs $ \outPath -> do
       mStat <- Dir.getMFileStatus outPath
       fileDesc <-
         case mStat of
@@ -779,8 +780,8 @@ saveExecutionLog buildsome target RunCmdResults{..} = do
     { elBuildId = bsBuildId buildsome
     , elInputsDescs = inputsDescs
     , elOutputsDescs = M.fromList outputDescPairs
-    , elStdoutputs = rcrStdOutputs
-    , elSelfTime = rcrSelfTime
+    , elStdoutputs = stdOutputs
+    , elSelfTime = selfTime
     }
   where
     db = bsDb buildsome
@@ -850,10 +851,10 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
 
         Print.executionCmd verbosityCommands btePrinter target
 
-        rcr@RunCmdResults{..} <- runCmd bte parCell target
+        RunCmdResults{..} <- runCmd bte parCell target
 
-        verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) target
-        saveExecutionLog bteBuildsome target rcr
+        outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) target
+        saveExecutionLog bteBuildsome target rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
 
         Print.targetTiming btePrinter "now" rcrSelfTime
         let selfStats = mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs
