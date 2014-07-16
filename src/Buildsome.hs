@@ -277,13 +277,8 @@ handleLegalUnspecifiedOutputs BuildTargetEnv{..} target paths = do
   -- TODO: Verify nobody ever used this file as an input besides the
   -- creating job
   unless (null paths) $ Print.warn btePrinter (targetPos target) $
-    mconcat ["Leaked unspecified outputs: ", show paths, ", ", actionDesc]
-  action
-  where
-    (actionDesc, action) =
-      case optDeleteUnspecifiedOutputs (bsOpts bteBuildsome) of
-      Opts.DeleteUnspecifiedOutputs -> ("deleting", mapM_ removeFileOrDirectoryOrNothing paths)
-      Opts.DontDeleteUnspecifiedOutputs -> ("keeping", registerLeakedOutputs bteBuildsome (S.fromList paths))
+    mconcat ["Leaked unspecified outputs: ", show paths]
+  registerLeakedOutputs bteBuildsome (S.fromList paths)
 
 data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs (ColorText -> ByteString) Target [FilePath]
   deriving (Typeable)
@@ -312,51 +307,6 @@ verifyTargetInputs bte@BuildTargetEnv{..} inputs target
     "inputs" "" (S.fromList (targetAllInputs target))
     (inputs `S.union` bsPhoniesSet bteBuildsome) (targetPos target)
 
-warnLeakTargetOutputs :: Printer -> Target -> ColorText -> ColorText -> [FilePath] -> IO ()
-warnLeakTargetOutputs printer target outStr avoidSuffix outputs =
-  unless (null outputs) $
-  Print.warn printer (targetPos target) $ mconcat
-  [ "Leaking ", outStr, " outputs ", avoidSuffix, ": "
-  , show outputs
-  ]
-
-warnDeleteTargetOutputs ::
-  Printer -> TargetType output input ->
-  ColorText -> Map FilePath KeepsOldContent -> IO ()
-warnDeleteTargetOutputs printer target outStr outputMap = do
-  unless (null safeToDelete) $ do
-    Print.warn printer (targetPos target) $
-      "Deleting " <> outStr <> " outputs: " <> show safeToDelete
-    mapM_ removeFileOrDirectoryOrNothing safeToDelete
-  unless (M.null unsafeToDeleteMap) $ do
-    Print.warn printer (targetPos target) $
-      "Leaking " <> outStr <> " outputs (may have old content): " <>
-      show (M.keys unsafeToDeleteMap)
-  where
-    safeToDelete = M.keys safeToDeleteMap
-    (safeToDeleteMap, unsafeToDeleteMap) =
-      M.partition (== KeepsNoOldContent) outputMap
-
-cleanAfterFailure ::
-  Printer -> Target -> Opt ->
-  Map FilePath KeepsOldContent -> IO ()
-cleanAfterFailure printer target opt =
-  case optDeleteFailedCommandOutputs opt of
-  Opts.DeleteFailedOutputs ->
-    warnDeleteTargetOutputs printer target "failed command"
-  Opts.DontDeleteFailedOutputs ->
-    warnLeakTargetOutputs printer target "failed command" "(due to --no-delete-failed-outputs)" . M.keys
-
-cleanIllegalOutputs ::
-  Printer -> Target -> Opt ->
-  Map FilePath KeepsOldContent -> IO ()
-cleanIllegalOutputs printer target opt =
-  case optDeleteUnspecifiedOutputs opt of
-  Opts.DeleteUnspecifiedOutputs ->
-    warnDeleteTargetOutputs printer target "illegal"
-  Opts.DontDeleteUnspecifiedOutputs ->
-    warnLeakTargetOutputs printer target "illegal" "(due to --no-delete-unspecified)" . M.keys
-
 verifyTargetOutputs :: BuildTargetEnv -> Map FilePath KeepsOldContent -> Target -> IO ()
 verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
   -- Legal unspecified need to be kept/deleted according to policy:
@@ -374,9 +324,6 @@ verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
     Print.posMessage btePrinter (targetPos target) $ cError $
       "Illegal output files: " <> show (M.keys existingIllegalOutputs)
 
-    cleanIllegalOutputs btePrinter target opt existingIllegalOutputs
-    cleanAfterFailure btePrinter target opt $ outputs `M.intersection` specified
-
     E.throwIO $
       IllegalUnspecifiedOutputs (bsRender bteBuildsome) target $
       M.keys existingIllegalOutputs
@@ -384,7 +331,6 @@ verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
     (M.keysSet specified) (M.keysSet outputs `S.union` bsPhoniesSet bteBuildsome)
     (targetPos target)
   where
-    opt = bsOpts bteBuildsome
     Color.Scheme{..} = Color.scheme
     (unspecifiedOutputs, illegalOutputs) =
       M.partitionWithKey (\path _ -> MagicFiles.allowedUnspecifiedOutput path)
@@ -790,7 +736,6 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
   slaveStatsRef <- newIORef mempty
   let accessHandlers = fsAccessHandlers outputsRef inputsRef slaveStatsRef bte parCell target
   (time, stdOutputs) <-
-    cleanOnError outputsRef $
     FSHook.timedRunCommand hook rootPath shellCmd
     renderedTargetOutputs accessHandlers
   inputs <- readIORef inputsRef
@@ -808,10 +753,6 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     , rcrSlaveStats = slaveStats
     }
   where
-    cleanOnError outputsRef =
-      flip E.onException $
-      cleanAfterFailure btePrinter target (bsOpts bteBuildsome) . M.map fst =<<
-      readIORef outputsRef
     rootPath = bsRootPath bteBuildsome
     hook = bsFsHook bteBuildsome
     renderedTargetOutputs = cTarget $ show $ targetOutputs target

@@ -1,7 +1,5 @@
 module Buildsome.Opts
-  ( DeleteFailedOutputs(..)
-  , DeleteUnspecifiedOutputs(..)
-  , OverwriteUnregisteredOutputs(..)
+  ( OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)
   , KeepGoing(..)
   , Color(..)
@@ -19,8 +17,6 @@ import Options.Applicative
 import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
-data DeleteUnspecifiedOutputs = DeleteUnspecifiedOutputs | DontDeleteUnspecifiedOutputs
-data DeleteFailedOutputs = DeleteFailedOutputs | DontDeleteFailedOutputs
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
 data UpdateGitIgnore = UpdateGitIgnore | DontUpdateGitIgnore
 data KeepGoing = KeepGoing | DieQuickly
@@ -73,8 +69,6 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optParallelism :: Maybe Int
                , optUpdateGitIgnore :: UpdateGitIgnore
                , optColor :: Color
-               , optDeleteUnspecifiedOutputs :: DeleteUnspecifiedOutputs
-               , optDeleteFailedCommandOutputs :: DeleteFailedOutputs
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                , optKeepGoing :: KeepGoing
                , optChartsPath :: Maybe FilePath
@@ -151,13 +145,6 @@ get =
                 <|>
                 pure ColorDefault
               )
-          <*> flag DeleteUnspecifiedOutputs DontDeleteUnspecifiedOutputs
-              (short 'D' <>
-               long "no-delete-unspecified" <>
-               help "Delete unspecified outputs")
-          <*> flag DeleteFailedOutputs DontDeleteFailedOutputs
-              (long "no-delete-failed-outputs" <>
-               help "Do not delete failed command outputs")
           <*> flag DontOverwriteUnregisteredOutputs OverwriteUnregisteredOutputs
               (long "overwrite" <>
                help "Overwrite outputs not created by buildsome")
