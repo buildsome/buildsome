@@ -7,6 +7,7 @@ import Lib.FileDesc (FileContentDesc)
 import Lib.FilePath (FilePath)
 import Prelude hiding (FilePath)
 import qualified Buildsome.Db as Db
+import qualified Buildsome.Meddling as Meddling
 import qualified Lib.FileDesc as FileDesc
 import qualified System.Posix.ByteString as Posix
 
@@ -20,6 +21,11 @@ fileContentDescOfStat db path stat = do
         return $ Db.fcdcFileContentDesc oldCache
     _ -> do
       newFileContentDesc <- FileDesc.fileContentDescOfStat path stat
+
+      -- TODO: May be more optimal to delay the writeIRef until later
+      -- when we check the stat again once
+      Meddling.assertFileMTime path $ Just stat
+
       Db.writeIRef cacheIRef Db.FileContentDescCache
         { Db.fcdcModificationTime = Posix.modificationTimeHiRes stat
         , Db.fcdcFileContentDesc = newFileContentDesc
