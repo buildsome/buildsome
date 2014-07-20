@@ -66,18 +66,23 @@ atStateIncludeStack f state = state { stateIncludeStack = f (stateIncludeStack s
 atStateWriter :: (Writer -> Writer) -> State -> State
 atStateWriter f state = state { stateWriter = f (stateWriter state) }
 
+{-# INLINE tell #-}
 tell :: Monad m => Writer -> Parser m ()
 tell w = P.updateState $ atStateWriter $ mappend w
 
+{-# INLINE tellTarget #-}
 tellTarget :: Monad m => Target -> Parser m ()
 tellTarget x = tell mempty { writerTargets = [x] }
 
+{-# INLINE tellPattern #-}
 tellPattern :: Monad m => Pattern -> Parser m ()
 tellPattern x = tell mempty { writerPatterns = [x] }
 
+{-# INLINE tellWeakVar #-}
 tellWeakVar :: Monad m => VarName -> ByteString -> Parser m ()
 tellWeakVar varName defaultVal = tell mempty { writerWeakVars = M.singleton varName defaultVal }
 
+{-# INLINE updateConds #-}
 updateConds ::
   Monad m => (CondState -> Either String CondState) -> Parser m ()
 updateConds f = do
@@ -86,9 +91,11 @@ updateConds f = do
     Left err -> fail err
     Right r -> P.putState $ state { stateCond = r }
 
+{-# INLINE isCondTrue #-}
 isCondTrue :: Monad m => Parser m Bool
 isCondTrue = CondState.isTrue . stateCond <$> P.getState
 
+{-# INLINE whenCondTrue #-}
 whenCondTrue :: Monad m => Parser m () -> Parser m ()
 whenCondTrue act = do
   t <- isCondTrue
@@ -96,29 +103,37 @@ whenCondTrue act = do
 
 -----------
 
+{-# INLINE horizSpace #-}
 horizSpace :: Monad m => ParserG u m Char
 horizSpace = P.satisfy (`elem` " \t")
 
+{-# INLINE horizSpaces #-}
 horizSpaces :: Monad m => ParserG u m ()
 horizSpaces = P.skipMany horizSpace
 
+{-# INLINE horizSpaces1 #-}
 horizSpaces1 :: Monad m => ParserG u m ()
 horizSpaces1 = P.skipMany1 horizSpace
 
+{-# INLINE comment #-}
 comment :: Monad m => ParserG u m ()
 comment = void $ P.char '#' *> P.many (P.satisfy (/= '\n'))
 
+{-# INLINE newWord #-}
 newWord :: Monad m => ParserG u m ()
 newWord = P.lookAhead $ void $ P.satisfy p
   where
     p x = not (isAlphaNum x || '_' == x)
 
+{-# INLINE skipLineSuffix #-}
 skipLineSuffix :: Monad m => ParserG u m ()
 skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char '\n') <|> P.eof)
 
+{-# INLINE filepaths #-}
 filepaths :: Monad m => Parser m [FilePath]
 filepaths = BS8.words <$> interpolateVariables unescapedSequence ":#|\n"
 
+{-# INLINE filepaths1 #-}
 filepaths1 :: Monad m => Parser m [FilePath]
 filepaths1 = do
   paths <- BS8.words <$> interpolateVariables unescapedSequence ":#|\n"
@@ -126,11 +141,13 @@ filepaths1 = do
     then fail "need at least 1 file path"
     else return paths
 
+{-# INLINE escapeSequence #-}
 escapeSequence :: Monad m => ParserG u m ByteString
 escapeSequence = build <$> P.char '\\' <*> P.anyChar
   where
     build x y = BS8.singleton x <> BS8.singleton y
 
+{-# INLINE unescapedChar #-}
 unescapedChar :: Monad m => ParserG u m Char
 unescapedChar = P.char '\\' *> (unescape <$> P.anyChar)
   where
@@ -140,15 +157,19 @@ unescapedChar = P.char '\\' *> (unescape <$> P.anyChar)
     unescape '\n' = ' '
     unescape x = x
 
+{-# INLINE unescapedSequence #-}
 unescapedSequence :: Monad m => ParserG u m ByteString
 unescapedSequence = BS8.singleton <$> unescapedChar
 
+{-# INLINE isIdentChar #-}
 isIdentChar :: Char -> Bool
 isIdentChar x = isAlphaNum x || x `elem` "_.~"
 
+{-# INLINE ident #-}
 ident :: Monad m => ParserG u m ByteString
 ident = BS8.pack <$> P.many1 (P.satisfy isIdentChar)
 
+{-# INLINE metaVarId #-}
 metaVarId ::
   Monad m => [FilePath] -> [FilePath] -> [FilePath] ->
   Maybe FilePath ->
@@ -170,6 +191,7 @@ metaVarId outputPaths inputPaths ooInputPaths mStem =
     allInputs   toString = BS8.unwords $ map toString inputPaths
     allOOInputs toString = BS8.unwords $ map toString ooInputPaths
 
+{-# INLINE metaVarModifier #-}
 metaVarModifier :: Monad m => ParserG u m (FilePath -> FilePath)
 metaVarModifier =
   P.choice
@@ -177,6 +199,7 @@ metaVarModifier =
   , FilePath.takeFileName  <$ P.char 'F'
   ]
 
+{-# INLINE metaVariable #-}
 metaVariable ::
   Monad m => [FilePath] -> [FilePath] -> [FilePath] ->
   Maybe ByteString -> ParserG u m ByteString
@@ -189,6 +212,7 @@ metaVariable outputPaths inputPaths ooInputPaths mStem =
     vid = metaVarId outputPaths inputPaths ooInputPaths mStem
 
 -- Parse succeeds only if meta-variable, but preserve the meta-variable as is
+{-# INLINE preserveMetavar #-}
 preserveMetavar :: Monad m => ParserG u m ByteString
 preserveMetavar =
   fmap ("$" <>) $
@@ -197,12 +221,14 @@ preserveMetavar =
   where
     char4 a b c d = BS8.pack [a, b, c, d]
 
+{-# INLINE interpolateVariables #-}
 interpolateVariables :: Monad n => (forall u m. Monad m => ParserG u m ByteString) -> String -> Parser n ByteString
 interpolateVariables escapeParse stopChars = do
   varsEnv <- stateVars <$> P.getState
   let
     interpolate :: Monad m => Set ByteString -> ParserG u m ByteString
     interpolate visitedVarNames = interpolateString escapeParse stopChars (variable visitedVarNames <|> preserveMetavar)
+    {-# INLINE variable #-}
     variable :: Monad m => Set ByteString -> ParserG u m ByteString
     variable visitedVarNames = do
       -- '$' already parsed
@@ -221,18 +247,22 @@ interpolateVariables escapeParse stopChars = do
   interpolate S.empty
 
 -- Inside a single line
+{-# INLINE interpolateString #-}
 interpolateString :: Monad m => ParserG u m ByteString -> String -> ParserG u m ByteString -> ParserG u m ByteString
 interpolateString escapeParser stopChars dollarHandler =
   concatMany (literalString '\'' <|> doubleQuotes <|> interpolatedChar stopChars)
   where
     concatMany x = BS8.concat <$> P.many x
+    {-# INLINE doubleQuotes #-}
     doubleQuotes = doubleQuoted <$> P.char '"' <*> concatMany (interpolatedChar "\"\n") <*> P.char '"'
     doubleQuoted begin chars end = BS8.singleton begin <> chars <> BS8.singleton end
+    {-# INLINE interpolatedChar #-}
     interpolatedChar stopChars' = P.choice
       [ P.char '$' *> dollarHandler
       , escapeParser
       , BS8.singleton <$> P.noneOf stopChars'
       ]
+    {-# INLINE literalString #-}
     literalString delimiter = do
       x <- P.char delimiter
       str <- BS8.concat <$> P.many p
@@ -243,6 +273,7 @@ interpolateString escapeParser stopChars dollarHandler =
 
 type IncludePath = FilePath
 
+{-# INLINE includeLine #-}
 includeLine :: Monad m => Parser m IncludePath
 includeLine = do
   fileNameStr <-
@@ -252,6 +283,7 @@ includeLine = do
     [(path, "")] -> return path
     _ -> return fileNameStr
 
+{-# INLINE runInclude #-}
 runInclude :: MonadMakefileParser m => IncludePath -> Parser m ()
 runInclude rawIncludedPath = do
   includedPath <- computeIncludePath
@@ -272,6 +304,7 @@ runInclude rawIncludedPath = do
         state <- P.getState
         return $ stateRootDir state </> pathSuffix
 
+{-# INLINE returnToIncluder #-}
 returnToIncluder :: Monad m => Parser m ()
 returnToIncluder =
   P.eof *> do
@@ -288,6 +321,7 @@ returnToIncluder =
         -- read it here
         P.optional (P.char '\n') <?> "newline after include statement"
 
+{-# INLINE beginningOfLine #-}
 beginningOfLine :: MonadMakefileParser m => Parser m ()
 beginningOfLine = do
   mIncludePath <- P.optionMaybe includeLine
@@ -304,6 +338,7 @@ beginningOfLine = do
 -- Either way, we get to the beginning of a new line, and despite
 -- Parsec unconvinced, we do make progress in both, so it is safe for
 -- Applicative.many (P.many complains)
+{-# INLINE newline #-}
 newline :: MonadMakefileParser m => Parser m ()
 newline = (returnToIncluder <|> void (P.char '\n')) *> beginningOfLine
 
@@ -311,6 +346,7 @@ newline = (returnToIncluder <|> void (P.char '\n')) *> beginningOfLine
 -- whitespace-only lines, as long as we also eat all the way to
 -- the end of line (including the next newline if it exists)
 -- Always succeeds, but may eat nothing at all:
+{-# INLINE noiseLines #-}
 noiseLines :: MonadMakefileParser m => Parser m ()
 noiseLines =
   P.try (horizSpaces1 *> ((eol *> noiseLines) <|> properEof)) <|>
@@ -318,6 +354,7 @@ noiseLines =
   where
     eol = skipLineSuffix *> newline
 
+{-# INLINE cmdLine #-}
 cmdLine :: MonadMakefileParser m => Parser m ByteString
 cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t') *>
@@ -332,6 +369,7 @@ mkFilePattern path
   where
     (dir, file) = FilePath.splitFileName path
 
+{-# INLINE targetPattern #-}
 targetPattern :: MonadMakefileParser m => Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser m ()
 targetPattern pos outputPaths inputPaths orderOnlyInputs = do
   -- Meta-variable interpolation must happen later, so allow $ to
@@ -352,6 +390,7 @@ targetPattern pos outputPaths inputPaths orderOnlyInputs = do
     orderOnlyInputPats = map tryMakePattern orderOnlyInputs
     tryMakePattern path = maybe (InputPath path) InputPattern $ mkFilePattern path
 
+{-# INLINE interpolateCmds #-}
 interpolateCmds :: Maybe ByteString -> Target -> Target
 interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds pos) =
   tgt
@@ -369,6 +408,7 @@ interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds pos) =
       (metaVariable outputs inputs ooInputs mStem)
       <* skipLineSuffix
 
+{-# INLINE targetSimple #-}
 targetSimple :: MonadMakefileParser m => Pos.SourcePos -> [FilePath] -> [FilePath] -> [FilePath] -> Parser m ()
 targetSimple pos outputPaths inputPaths orderOnlyInputs = do
   cmdLines <- P.many cmdLine
@@ -382,6 +422,7 @@ targetSimple pos outputPaths inputPaths orderOnlyInputs = do
     }
 
 -- Parses the target's entire lines (excluding the pre/post newlines)
+{-# INLINE target #-}
 target :: MonadMakefileParser m => Parser m ()
 target = do
   pos <- P.getPosition
@@ -425,6 +466,7 @@ mkMakefile (Writer targets targetPatterns weakVars) =
     getPhonyInputs t = badPhony t "invalid"
     (phonyTargets, regularTargets) = partition ((".PHONY" `elem`) . targetOutputs) targets
 
+{-# INLINE properEof #-}
 properEof :: Monad m => Parser m ()
 properEof = do
   P.eof
@@ -437,6 +479,7 @@ properEof = do
 
 data OverrideVar = OverrideVar | DontOverrideVar
 
+{-# INLINE varAssignment #-}
 varAssignment :: Monad m => Parser m ()
 varAssignment = do
   (varName, overrideVar) <-
@@ -457,19 +500,23 @@ varAssignment = do
   whenCondTrue $ P.updateState $ atStateVars $
     M.alter (f overrideVar) varName
 
+{-# INLINE directive #-}
 directive :: Monad m => String -> Parser m a -> Parser m a
 directive str act = do
   P.try $ P.optional (P.char ' ' *> horizSpaces) *> P.string str *> newWord
   horizSpaces *> act <* skipLineSuffix
 
+{-# INLINE echoDirective #-}
 echoDirective :: MonadMakefileParser m => Parser m ()
 echoDirective = directive "echo" $ do
   str <- interpolateVariables unescapedSequence "#\n"
   whenCondTrue $ lift $ MakefileMonad.outPutStrLn $ "ECHO: " <> str
 
+{-# INLINE localsOpen #-}
 localsOpen :: Monad m => Parser m ()
 localsOpen = void $ P.updateState $ \state -> state { stateLocalsStack = stateVars state : stateLocalsStack state }
 
+{-# INLINE localsClose #-}
 localsClose :: Monad m => Parser m ()
 localsClose = do
   state <- P.getState
@@ -478,6 +525,7 @@ localsClose = do
     (oldVars:rest) ->
       P.putState $ state { stateLocalsStack = rest, stateVars = oldVars }
 
+{-# INLINE localDirective #-}
 localDirective :: Monad m => Parser m ()
 localDirective =
   directive "local" $
@@ -488,6 +536,7 @@ localDirective =
 
 data IfType = IfEq | IfNeq
 
+{-# INLINE ifeqDirective #-}
 ifeqDirective :: Monad m => String -> IfType -> Parser m ()
 ifeqDirective keyword ifType = directive keyword $ do
   _ <- P.char '('
@@ -503,14 +552,17 @@ ifeqDirective keyword ifType = directive keyword $ do
       IfEq -> (==)
       IfNeq -> (/=)
 
+{-# INLINE endifDirective #-}
 endifDirective :: Monad m => Parser m ()
 endifDirective =
   directive "endif" $ updateConds $ CondState.unnest "endif mismatched"
 
+{-# INLINE elseDirective #-}
 elseDirective :: Monad m => Parser m ()
 elseDirective =
   directive "else" $ updateConds (CondState.inverse "else mismatched")
 
+{-# INLINE conditionalStatement #-}
 conditionalStatement :: Monad m => Parser m ()
 conditionalStatement = P.choice
   [ ifeqDirective "ifeq" IfEq
@@ -519,6 +571,7 @@ conditionalStatement = P.choice
   , endifDirective
   ]
 
+{-# INLINE makefile #-}
 makefile :: MonadMakefileParser m => Parser m Makefile
 makefile =
   mkMakefile <$> do
@@ -548,6 +601,7 @@ rethrow errToStr act = do
       MakefileMonad.errPutStrLn $ BS8.pack $ errToStr err
       fail $ "Makefile parse failure"
 
+{-# INLINE parse #-}
 parse :: MonadMakefileParser m => FilePath -> Vars -> m Makefile
 parse absMakefilePath vars = do
   rethrow showErr $ join $ do
