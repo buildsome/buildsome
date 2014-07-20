@@ -18,25 +18,32 @@ import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs
+  deriving (Show)
 data UpdateGitIgnore = UpdateGitIgnore | DontUpdateGitIgnore
+  deriving (Show)
 data KeepGoing = KeepGoing | DieQuickly
+  deriving (Show)
 data Color = ColorDisable | ColorEnable | ColorDefault
+  deriving (Show)
 
 data PrintCommands
   = PrintCommandsNever
   | PrintCommandsForExecution {-default-}
   | PrintCommandsForAll
+  deriving (Show)
 
 data PrintOutputs
   = PrintOutputsAnyway
   | PrintOutputsNonEmpty
   | PrintOutputsIfStderr {-default-}
+  deriving (Show)
 
 data Verbosity = Verbosity
   { verbosityCommands :: PrintCommands
   , verbosityOutputs :: PrintOutputs
   , verbosityGeneral :: Bool
   }
+  deriving (Show)
 
 verbosityAll :: Verbosity
 verbosityAll = Verbosity
@@ -80,8 +87,10 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                -- TODO: YUCK, this should be an exclusive mode of operation!
                , optHelpFlags :: Bool
                }
+  deriving (Show)
 
 data Opts = GetVersion | Opts Opt
+  deriving (Show)
 
 opt :: Read a => Mod OptionFields a -> Parser (Maybe a)
 opt = optional . option
