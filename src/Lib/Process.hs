@@ -19,7 +19,7 @@ withProcess params =
   where
     terminate (mStdin, mStdout, mStderr, processHandle) = do
       (traverse_ . traverse_) hClose [mStdin, mStdout, mStderr]
-      terminateProcess processHandle
+      interruptProcessGroupOf processHandle
 
 -- | Get the outputs of a process with a given environment spec
 getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, BS.ByteString, BS.ByteString)
