@@ -105,7 +105,7 @@ whenCondTrue act = do
 
 {-# INLINE horizSpace #-}
 horizSpace :: Monad m => ParserG u m Char
-horizSpace = P.satisfy (`elem` " \t")
+horizSpace = P.satisfy (`elem` " ")
 
 {-# INLINE horizSpaces #-}
 horizSpaces :: Monad m => ParserG u m ()
@@ -117,7 +117,7 @@ horizSpaces1 = P.skipMany1 horizSpace
 
 {-# INLINE comment #-}
 comment :: Monad m => ParserG u m ()
-comment = void $ P.char '#' *> P.many (P.satisfy (/= '\n'))
+comment = void $ P.char '#' *> P.many (P.satisfy (`notElem` "\n"))
 
 {-# INLINE newWord #-}
 newWord :: Monad m => ParserG u m ()
@@ -260,7 +260,7 @@ interpolateString escapeParser stopChars dollarHandler =
     interpolatedChar stopChars' = P.choice
       [ P.char '$' *> dollarHandler
       , escapeParser
-      , BS8.singleton <$> P.noneOf stopChars'
+      , BS8.singleton <$> P.noneOf ('\t' : stopChars')
       ]
     {-# INLINE literalString #-}
     literalString delimiter = do
@@ -269,7 +269,7 @@ interpolateString escapeParser stopChars dollarHandler =
       y <- P.char delimiter
       return $ BS8.singleton x <> str <> BS8.singleton y
       where
-        p = escapeSequence <|> (BS8.singleton <$> P.satisfy (`notElem` ['\n', delimiter]))
+        p = escapeSequence <|> (BS8.singleton <$> P.satisfy (`notElem` ['\t', '\n', delimiter]))
 
 type IncludePath = FilePath
 
@@ -490,7 +490,7 @@ varAssignment = do
            (DontOverrideVar <$ P.string "?=")
          horizSpaces
          return (x, y)
-  value <- BS8.pack <$> P.many (unescapedChar <|> P.noneOf "#\n")
+  value <- BS8.pack <$> P.many (unescapedChar <|> P.noneOf "#\t\n")
   case overrideVar of
     OverrideVar -> return ()
     DontOverrideVar -> tellWeakVar varName value
