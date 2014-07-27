@@ -2,3 +2,4 @@
 /cbits/fs_override.so
 /.cabal-sandbox
 /cabal.sandbox.config
+/TAGS
