@@ -84,7 +84,10 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optWithouts :: [ByteString]
 
                , optVerbosity :: Verbosity
-               -- TODO: YUCK, this should be an exclusive mode of operation!
+                 -- In theory, --help-flags could be mutually
+                 -- exclusive with many other flags, but this would
+                 -- just make life more difficult for users, so it is
+                 -- allowed in conjunction
                , optHelpFlags :: Bool
                }
   deriving (Show)
