@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.Slave
   ( Slave, new
+  , target
   , str
   , wait, waitCatch
   , cancel
@@ -17,6 +18,7 @@ import Data.String (IsString(..))
 import Data.Time (DiffTime)
 import Lib.BuildMaps (TargetRep)
 import Lib.FilePath (FilePath)
+import Lib.Makefile (Target)
 import Lib.TimeInstances ()
 import Prelude hiding (FilePath)
 import qualified Control.Concurrent.Async as Async
@@ -27,25 +29,30 @@ import qualified Lib.Printer as Printer
 data When = FromCache | BuiltNow deriving Show
 
 data Stats = Stats
-  { statsSelfTime :: Map TargetRep (When, DiffTime)
+  { statsOfTarget :: Map TargetRep (When, DiffTime, [Target])
   , statsStdErr :: Set TargetRep
   } deriving (Show)
 
 instance Monoid Stats where
   mempty = Stats mempty mempty
-  mappend (Stats ax ay) (Stats bx by) = Stats
-    (ax `mappend` bx)
-    (ay `mappend` by)
+  mappend (Stats a1 a2) (Stats b1 b2) =
+    Stats
+    (a1 `mappend` b1)
+    (a2 `mappend` b2)
 
 data Slave = Slave
-  { slavePrinterId :: Printer.Id
+  { slaveTarget :: Target
+  , slavePrinterId :: Printer.Id
   , slaveOutputPaths :: [FilePath]
   , slaveExecution :: Async Stats
   }
 
-new :: Printer.Id -> [FilePath] -> IO Stats -> IO Slave
-new printerId outputPaths action =
-  Slave printerId outputPaths <$> Async.async action
+target :: Slave -> Target
+target = slaveTarget
+
+new :: Target -> Printer.Id -> [FilePath] -> IO Stats -> IO Slave
+new tgt printerId outputPaths action =
+  Slave tgt printerId outputPaths <$> Async.async action
 
 str :: (Monoid str, IsString str) => Slave -> str
 str slave =

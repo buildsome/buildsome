@@ -42,8 +42,7 @@ data Verbosity = Verbosity
   { verbosityCommands :: PrintCommands
   , verbosityOutputs :: PrintOutputs
   , verbosityGeneral :: Bool
-  }
-  deriving (Show)
+  } deriving (Show)
 
 verbosityAll :: Verbosity
 verbosityAll = Verbosity

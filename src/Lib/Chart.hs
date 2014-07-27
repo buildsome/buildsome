@@ -22,10 +22,10 @@ buildTimes stats =
  def { Chart._pie_data = dataPoints }
  where
   dataPoints =
-    let f (targetRep, (_when, count)) =
+    let f (targetRep, (_when, count, _deps)) =
           def { Chart._pitem_label = BS8.unpack $ BuildMaps.targetRepPath targetRep
               , Chart._pitem_value = realToFrac count }
-    in map f $ M.toList $ Slave.statsSelfTime stats
+    in map f $ M.toList $ Slave.statsOfTarget stats
 
 make :: Slave.Stats -> FilePath -> IO ()
 make stats filePath =

@@ -380,10 +380,10 @@ verifyFileDesc str filePath fileDesc existingVerify = do
     (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
     (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
 
-mkStats :: (Eq a, Monoid a) => TargetRep -> Slave.When -> DiffTime -> StdOutputs a -> Slave.Stats
-mkStats targetRep execTime selfTime stdOutputs =
+mkStats :: (Eq a, Monoid a) => TargetRep -> [Target] -> Slave.When -> DiffTime -> StdOutputs a -> Slave.Stats
+mkStats targetRep deps execTime selfTime stdOutputs =
   Slave.Stats
-  { Slave.statsSelfTime = M.singleton targetRep (execTime, selfTime)
+  { Slave.statsOfTarget = M.singleton targetRep (execTime, selfTime, deps)
   , Slave.statsStdErr =
     if mempty /= stdErr stdOutputs
     then S.singleton targetRep
@@ -396,7 +396,7 @@ tryApplyExecutionLog ::
   TargetRep -> Target -> Db.ExecutionLog ->
   IO (Either (ByteString, FilePath) Slave.Stats)
 tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.ExecutionLog {..} = do
-  nestedSlaveStats <- executionLogWaitForInputs bte parCell target el
+  (deps, nestedSlaveStats) <- executionLogWaitForInputs bte parCell target el
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
       verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
@@ -416,7 +416,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
       replayExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    let selfStats = mkStats targetRep Slave.FromCache elSelfTime elStdoutputs
+    let selfStats = mkStats targetRep deps Slave.FromCache elSelfTime elStdoutputs
     return $ mappend selfStats nestedSlaveStats
   where
     db = bsDb bteBuildsome
@@ -428,7 +428,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
       newDesc <- liftIO getDesc
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
 
-executionLogWaitForInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO Slave.Stats
+executionLogWaitForInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO ([Target], Slave.Stats)
 executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
@@ -444,8 +444,10 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
     targetOutputs target
 
   let allSlaves = speculativeSlaves ++ hintedSlaves
-  mappend targetParentsStats <$>
+  stats <-
+    mappend targetParentsStats <$>
     waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome allSlaves
+  return $ (map Slave.target allSlaves, stats)
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs target
@@ -562,7 +564,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
               bsParallelism bteBuildsome
             depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
             depPrinter <- Printer.newFrom btePrinter depPrinterId
-            Slave.new depPrinterId (targetOutputs target) $ annotate $ action depPrinter allocParCell
+            Slave.new target depPrinterId (targetOutputs target) $ annotate $ action depPrinter allocParCell
         putMVar mvar slave
         return slave
 
@@ -857,7 +859,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
         saveExecutionLog bteBuildsome target rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
 
         Print.targetTiming btePrinter "now" rcrSelfTime
-        let selfStats = mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs
+        let selfStats = mkStats targetRep (map Slave.target slaves) Slave.BuiltNow rcrSelfTime rcrStdOutputs
         return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
   where
     Color.Scheme{..} = Color.scheme
