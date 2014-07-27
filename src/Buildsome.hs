@@ -166,18 +166,18 @@ data BuildTargetEnv = BuildTargetEnv
 mkSlavesForPaths :: BuildTargetEnv -> Explicitness -> [FilePath] -> IO [Slave]
 mkSlavesForPaths bte explicitness = fmap concat . mapM (mkSlaves bte explicitness)
 
-want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO Slave.Stats
+want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO ([Target], Slave.Stats)
 want printer buildsome reason paths = do
   printStrLn printer $
     "Building: " <> ColorText.intercalate ", " (map (cTarget . show) paths)
-  (buildTime, slaveStats) <- timeIt $
-    fmap mconcat . mapM Slave.wait =<<
+  slaves <-
     mkSlavesForPaths BuildTargetEnv
     { bteBuildsome = buildsome
     , btePrinter = printer
     , bteReason = reason
     , bteParents = []
     } Explicit paths
+  (buildTime, slaveStats) <- timeIt $ mconcat <$> mapM Slave.wait slaves
   let stdErrs = Slave.statsStdErr slaveStats
       lastLinePrefix
         | not (S.null stdErrs) =
@@ -188,7 +188,7 @@ want printer buildsome reason paths = do
   printStrLn printer $ mconcat
     [ lastLinePrefix, ": "
     , cTiming (show buildTime <> " seconds"), " total." ]
-  return slaveStats
+  return (map Slave.target slaves, slaveStats)
   where
     Color.Scheme{..} = Color.scheme
 

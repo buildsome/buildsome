@@ -4,13 +4,13 @@ module Main (main) where
 import Buildsome (Buildsome)
 import Buildsome.Db (Db, Reason)
 import Buildsome.Opts (Opts(..), Opt(..))
+import Control.Applicative (Applicative(..), (<$>))
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.List (foldl')
 import Data.Maybe (mapMaybe)
 import Data.Monoid
 import Data.String (IsString(..))
-import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
 import GHC.Conc (setNumCapabilities, getNumProcessors)
 import Lib.ByteString (unprefixed)
@@ -27,6 +27,7 @@ import Prelude hiding (FilePath, show)
 import System.Posix.IO (stdOutput)
 import System.Posix.Terminal (queryTerminal)
 import qualified Buildsome
+import qualified Buildsome.ClangCommands as ClangCommands
 import qualified Buildsome.Color as Color
 import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
 import qualified Buildsome.Opts as Opts
@@ -38,7 +39,6 @@ import qualified Lib.ColorText as ColorText
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Makefile as Makefile
 import qualified Lib.Printer as Printer
-import qualified Lib.Slave as Slave
 import qualified Lib.Version as Version
 import qualified Prelude
 import qualified System.IO as IO
@@ -70,10 +70,26 @@ specifiedMakefile printer path = do
 data TargetsRequest = TargetsRequest
   { targetsRequestPaths :: [FilePath]
   , targetsRequestReason :: Reason
-  , targetsRequestChartPath :: Maybe FilePath
+  , targetsRequestExtraOutputs :: Opts.ExtraOutputs
   }
 
+ntraverseTargetsRequest ::
+  Applicative f =>
+  ([FilePath] -> f [FilePath]) ->
+  (Reason -> f Reason) ->
+  (Opts.ExtraOutputs -> f Opts.ExtraOutputs) ->
+  TargetsRequest -> f TargetsRequest
+ntraverseTargetsRequest
+  onTargetPaths onReason onExtraOutputs
+  (TargetsRequest paths reason extraOutputs)
+  = TargetsRequest <$> onTargetPaths paths <*> onReason reason <*> onExtraOutputs extraOutputs
+
 data Requested = RequestedClean | RequestedTargets TargetsRequest
+
+traverseRequested ::
+  Applicative f => (TargetsRequest -> f TargetsRequest) -> Requested -> f Requested
+traverseRequested _ RequestedClean = pure RequestedClean
+traverseRequested f (RequestedTargets x) = RequestedTargets <$> f x
 
 data BadCommandLine = BadCommandLine (ColorText -> ByteString) String deriving (Typeable)
 instance E.Exception BadCommandLine
@@ -83,22 +99,22 @@ instance Show BadCommandLine where
     where
       Color.Scheme{..} = Color.scheme
 
-getRequestedTargets :: Printer -> Maybe FilePath -> [ByteString] -> IO Requested
-getRequestedTargets printer (Just _) ["clean"] =
-  E.throwIO $ BadCommandLine (Printer.render printer) "Clean requested with charts"
-getRequestedTargets _ Nothing ["clean"] = return RequestedClean
-getRequestedTargets _ mChartPath [] = return $ RequestedTargets TargetsRequest
-  { targetsRequestPaths = ["default"]
-  , targetsRequestReason = "implicit 'default' target"
-  , targetsRequestChartPath = mChartPath }
-getRequestedTargets printer mChartPath ts
+getRequestedTargets :: Printer -> Opts.ExtraOutputs -> [ByteString] -> IO Requested
+getRequestedTargets _ _ ["clean"] = return RequestedClean
+getRequestedTargets printer extraOutputs ts
   | "clean" `elem` ts =
     E.throwIO $
     BadCommandLine (Printer.render printer) "Clean must be requested exclusively"
-  | otherwise = return $ RequestedTargets TargetsRequest
-  { targetsRequestPaths = ts
-  , targetsRequestReason = "explicit request from cmdline"
-  , targetsRequestChartPath = mChartPath }
+  | otherwise = do
+    return $ RequestedTargets TargetsRequest
+      { targetsRequestPaths = requestPaths
+      , targetsRequestReason = reason
+      , targetsRequestExtraOutputs = extraOutputs
+      }
+  where
+    (requestPaths, reason) = case ts of
+      [] -> (["default"], "implicit 'default' target")
+      _ -> (ts, "explicit request from cmdline")
 
 setBuffering :: IO ()
 setBuffering = do
@@ -135,8 +151,6 @@ parseMakefile printer db origMakefilePath finalMakefilePath vars = do
   return makefile
   where
     Color.Scheme{..} = Color.scheme
-
-type InOrigCwd = [FilePath] -> IO [FilePath]
 
 data MakefileScanFailed = MakefileScanFailed (ColorText -> ByteString) deriving (Typeable)
 instance E.Exception MakefileScanFailed
@@ -204,7 +218,7 @@ verifyValidFlags validFlags userFlags
 
 handleOpts ::
   Printer -> Opts ->
-  (Db -> Opt -> InOrigCwd -> Requested -> FilePath -> Makefile -> IO ()) -> IO ()
+  (Db -> Opt -> Requested -> FilePath -> Makefile -> IO ()) -> IO ()
 handleOpts printer GetVersion _ =
   Printer.rawPrintStrLn printer $ "buildsome " <> Version.version
 handleOpts printer (Opts opt) body = do
@@ -214,16 +228,26 @@ handleOpts printer (Opts opt) body = do
       maybe (E.throwIO (MakefileScanFailed (Printer.render printer))) return =<<
       scanFileUpwards standardMakeFilename
     Just path -> specifiedMakefile printer path
-  mChartsPath <- traverse FilePath.canonicalizePath $ optChartsPath opt
   (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
   let inOrigCwd =
+        FilePath.canonicalizePathAsRelative . (origCwd </>)
+      targetInOrigCwd =
+        FilePath.canonicalizePathAsRelative .
         case optMakefilePath opt of
         -- If we found the makefile by scanning upwards, prepend
         -- original cwd to avoid losing it:
-        Nothing -> mapM (FilePath.canonicalizePathAsRelative . (origCwd </>))
+        Nothing -> (origCwd </>)
         -- Otherwise: there's no useful original cwd:
-        Just _ -> return
-  requested <- getRequestedTargets printer mChartsPath $ optRequestedTargets opt
+        Just _ -> id
+  rawRequested <-
+    getRequestedTargets printer (optExtraOutputs opt) (optRequestedTargets opt)
+  requested <-
+    traverseRequested
+    (ntraverseTargetsRequest
+     (mapM targetInOrigCwd) -- <- on target paths
+     pure                   -- <- on reason
+     (Opts.extraOutputsAtFilePaths inOrigCwd) -- <- onExtraOutputs
+    ) rawRequested
   Buildsome.withDb finalMakefilePath $ \db -> do
     makefile <-
       parseMakefile printer db origMakefilePath finalMakefilePath (optVars opt)
@@ -232,20 +256,20 @@ handleOpts printer (Opts opt) body = do
       then showHelpFlags flags
       else do
         verifyValidFlags flags (optWiths opt ++ optWithouts opt)
-        body db opt inOrigCwd requested finalMakefilePath makefile
+        body db opt requested finalMakefilePath makefile
 
-makeChart :: Slave.Stats -> FilePath -> IO ()
-makeChart slaveStats filePath = do
-  putStrLn $ "Writing chart to " ++ show filePath
-  Chart.make slaveStats filePath
-
-handleRequested :: Buildsome -> Printer -> InOrigCwd -> Requested -> IO ()
-handleRequested buildsome printer inOrigCwd (RequestedTargets (TargetsRequest requestedTargets reason mChartPath)) = do
-  requestedTargetPaths <- inOrigCwd requestedTargets
-  slaveStats <- Buildsome.want printer buildsome reason requestedTargetPaths
-  maybe (return ()) (makeChart slaveStats) mChartPath
-
-handleRequested buildsome printer _ RequestedClean = Buildsome.clean printer buildsome
+handleRequested :: Buildsome -> Printer -> Requested -> IO ()
+handleRequested buildsome printer RequestedClean = Buildsome.clean printer buildsome
+handleRequested
+  buildsome printer
+  (RequestedTargets
+   (TargetsRequest requestedTargetPaths reason
+    (Opts.ExtraOutputs mChartPath mClangCommandsPath)))
+  = do
+    (rootTargets, slaveStats) <- Buildsome.want printer buildsome reason requestedTargetPaths
+    maybe (return ()) (Chart.make slaveStats) mChartPath
+    cwd <- Posix.getWorkingDirectory
+    maybe (return ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
 
 main :: IO ()
 main = do
@@ -254,8 +278,8 @@ main = do
   render <- getColorRender opts
   printer <- Printer.new render 0
   handleOpts printer opts $
-    \db opt inOrigCwd requested finalMakefilePath makefile -> do
+    \db opt requested finalMakefilePath makefile -> do
       installSigintHandler
       setBuffering
       Buildsome.with printer db finalMakefilePath makefile opt $ \buildsome ->
-        handleRequested buildsome printer inOrigCwd requested
+        handleRequested buildsome printer requested

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.BuildMaps
-  ( TargetRep(..)
+  ( TargetRep(..), computeTargetRep
   , DirectoryBuildMap(..)
   , BuildMaps(..)
   , make, find

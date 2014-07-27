@@ -28,7 +28,8 @@ buildTimes stats =
     in map f $ M.toList $ Slave.statsOfTarget stats
 
 make :: Slave.Stats -> FilePath -> IO ()
-make stats filePath =
+make stats filePath = do
+  putStrLn $ "Writing chart to " ++ show filePath
   void $ ChartCairo.renderableToFile fileOptions (Chart.toRenderable plot) $ BS8.unpack filePath
   where
     fileOptions = def

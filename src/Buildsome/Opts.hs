@@ -3,7 +3,9 @@ module Buildsome.Opts
   , UpdateGitIgnore(..)
   , KeepGoing(..)
   , Color(..)
-  , Opt(..), Opts(..), get
+  , Opt(..)
+  , ExtraOutputs(..), extraOutputsAtFilePaths
+  , Opts(..), get
   , PrintCommands(..)
   , PrintOutputs(..)
   , Verbosity(..)
@@ -12,6 +14,7 @@ module Buildsome.Opts
 import Control.Monad (liftM)
 import Data.ByteString (ByteString)
 import Data.List (intercalate)
+import Data.Traversable (traverse)
 import Lib.FilePath (FilePath)
 import Options.Applicative
 import Prelude hiding (FilePath)
@@ -70,6 +73,16 @@ parseVerbosity =
          help "Show buildsome's own execution details")
   )
 
+data ExtraOutputs = ExtraOutputs
+  { optChartsPath :: Maybe FilePath
+  , optClangCommandsPath :: Maybe FilePath
+  } deriving (Show)
+
+extraOutputsAtFilePaths ::
+  Applicative f => (FilePath -> f FilePath) -> ExtraOutputs -> f ExtraOutputs
+extraOutputsAtFilePaths f (ExtraOutputs a b) =
+  ExtraOutputs <$> traverse f a <*> traverse f b
+
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
                , optParallelism :: Maybe Int
@@ -77,7 +90,7 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optColor :: Color
                , optOverwriteUnregisteredOutputs :: OverwriteUnregisteredOutputs
                , optKeepGoing :: KeepGoing
-               , optChartsPath :: Maybe FilePath
+               , optExtraOutputs :: ExtraOutputs
                , optFsOverrideLdPreloadPath :: Maybe FilePath
                , optWiths :: [ByteString]
                , optWithouts :: [ByteString]
@@ -163,9 +176,14 @@ get =
               (short 'k' <>
                long "keep-going" <>
                help "Continue as much as possible after an error.")
-          <*> strOptional (long "charts" <>
-                           metavar "charts-file" <>
-                           help "File to write charts to")
+          <*> ( ExtraOutputs
+                <$> strOptional (long "charts" <>
+                                 metavar "charts-file" <>
+                                 help "File to write charts to")
+                <*> strOptional (long "clang-commands" <>
+                                 metavar "commands-file" <>
+                                 help "File to write clang commands to")
+              )
           <*> strOptional (long "fs-override" <>
                            metavar "path" <>
                            help "Path for fs_override.so")
