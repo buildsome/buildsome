@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Buildsome.Opts
   ( OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)
@@ -14,6 +15,7 @@ module Buildsome.Opts
 import Control.Monad (liftM)
 import Data.ByteString (ByteString)
 import Data.List (intercalate)
+import Data.Monoid (Monoid(..))
 import Data.Traversable (traverse)
 import Lib.FilePath (FilePath)
 import Options.Applicative
@@ -180,9 +182,10 @@ get =
                 <$> strOptional (long "charts" <>
                                  metavar "charts-file" <>
                                  help "File to write charts to")
-                <*> strOptional (long "clang-commands" <>
-                                 metavar "commands-file" <>
-                                 help "File to write clang commands to")
+                <*> ( fmap (emptyTo "compile_commands.json") <$>
+                      strOptional (long "clang-commands" <>
+                                   metavar "commands-file" <>
+                                   help "File to write clang commands to (defaults to \"compile_commands.json\")") )
               )
           <*> strOptional (long "fs-override" <>
                            metavar "path" <>
@@ -193,3 +196,7 @@ get =
                             help "Disable flags that are enabled by default"))
           <*> parseVerbosity
           <*> switch (long "help-flags" <> help "Get all flag variables assigned with ?=")
+
+emptyTo :: (Monoid a, Eq a) => a -> a -> a
+emptyTo x s | s == mempty = x
+            | otherwise = s
