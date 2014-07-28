@@ -15,7 +15,6 @@ module Buildsome.Opts
 import Control.Monad (liftM)
 import Data.ByteString (ByteString)
 import Data.List (intercalate)
-import Data.Monoid (Monoid(..))
 import Data.Traversable (traverse)
 import Lib.FilePath (FilePath)
 import Options.Applicative
@@ -112,11 +111,11 @@ data Opts = GetVersion | Opts Opt
 opt :: Read a => Mod OptionFields a -> Parser (Maybe a)
 opt = optional . option
 
-strOptional :: Mod OptionFields String -> Parser (Maybe ByteString)
-strOptional = (fmap . fmap) BS8.pack . optional . strOption
+optionalBsOpt :: Mod OptionFields String -> Parser (Maybe ByteString)
+optionalBsOpt = optional . bsOpt
 
-strOpt :: Mod OptionFields String -> Parser ByteString
-strOpt = fmap BS8.pack . strOption
+bsOpt :: Mod OptionFields String -> Parser ByteString
+bsOpt = fmap BS8.pack . strOption
 
 desc :: String
 desc = intercalate "\n"
@@ -141,10 +140,10 @@ get =
     versionParser = flag' GetVersion $ long "version" <> help "Get buildsome's version"
     optsParser =
       Opt <$> many (argument bytestr (metavar "targets"))
-          <*> strOptional (short 'f' <>
-                           long "file" <>
-                           metavar "file" <>
-                           help "Use file as a makefile.")
+          <*> optionalBsOpt (short 'f' <>
+                             long "file" <>
+                             metavar "file" <>
+                             help "Use file as a makefile.")
           <*> opt (short 'j' <>
                    long "parallelism" <>
                    help "How many commands to execute in parallel" <>
@@ -179,24 +178,25 @@ get =
                long "keep-going" <>
                help "Continue as much as possible after an error.")
           <*> ( ExtraOutputs
-                <$> strOptional (long "charts" <>
-                                 metavar "charts-file" <>
-                                 help "File to write charts to")
-                <*> ( fmap (emptyTo "compile_commands.json") <$>
-                      strOptional (long "clang-commands" <>
-                                   metavar "commands-file" <>
-                                   help "File to write clang commands to (defaults to \"compile_commands.json\")") )
+                <$> optionalBsOpt (long "charts" <>
+                                   metavar "charts-file" <>
+                                   help "File to write charts to")
+                <*> optional
+                    (bsOpt (long "clang-commands" <>
+                            metavar "commands-file" <>
+                            help "Write clang commands spec to given file")
+                     <|>
+                     flag' "compile_commands.json"
+                     (short 'C' <>
+                      help "Write clang commands spec to compile_commands.json")
+                    )
               )
-          <*> strOptional (long "fs-override" <>
-                           metavar "path" <>
-                           help "Path for fs_override.so")
-          <*> many (strOpt (metavar "flag" <> long "with" <>
-                            help "Enable flags that are disabled by default"))
-          <*> many (strOpt (metavar "flag" <> long "without" <>
-                            help "Disable flags that are enabled by default"))
+          <*> optionalBsOpt (long "fs-override" <>
+                             metavar "path" <>
+                             help "Path for fs_override.so")
+          <*> many (bsOpt (metavar "flag" <> long "with" <>
+                           help "Enable flags that are disabled by default"))
+          <*> many (bsOpt (metavar "flag" <> long "without" <>
+                           help "Disable flags that are enabled by default"))
           <*> parseVerbosity
           <*> switch (long "help-flags" <> help "Get all flag variables assigned with ?=")
-
-emptyTo :: (Monoid a, Eq a) => a -> a -> a
-emptyTo x s | s == mempty = x
-            | otherwise = s
