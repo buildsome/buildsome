@@ -248,7 +248,7 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
 makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
 makeChildSlaves bte@BuildTargetEnv{..} path
   | not (null childPatterns) =
-    fail "UNSUPPORTED: Read directory on directory with patterns"
+    fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome bteReason) ++ ")"
   | otherwise =
     traverse (getSlaveForTarget bte) $
     filter (not . isPhony . snd) childTargets
