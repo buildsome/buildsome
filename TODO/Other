@@ -1,3 +1,7 @@
+* "-k" should print errors ASAP and not at the end
+
+* "-C" should always generate the file at the root
+
 * scratch_problem_wip:
   * No longer need to track what's "safe to delete" (no deletions, yay!)
   * So now only need the output effect for determining scratch files:
