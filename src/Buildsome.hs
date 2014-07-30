@@ -9,6 +9,7 @@ import Buildsome.FileContentDescCache (fileContentDescOfStat)
 import Buildsome.Opts (Opt(..))
 import Control.Applicative ((<$>), Applicative(..))
 import Control.Concurrent (myThreadId)
+import Control.Concurrent.Async (async, wait)
 import Control.Concurrent.MVar
 import Control.Exception.Async (handleSync)
 import Control.Monad
@@ -37,6 +38,7 @@ import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
+import Lib.Once (once)
 import Lib.Parallelism (Parallelism)
 import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
@@ -876,11 +878,11 @@ registerOutputs = registerDbList Db.registeredOutputsRef
 registerLeakedOutputs :: Buildsome -> Set FilePath -> IO ()
 registerLeakedOutputs = registerDbList Db.leakedOutputsRef
 
-deleteRemovedOutputs :: Printer -> Buildsome -> IO ()
-deleteRemovedOutputs printer buildsome = do
+deleteRemovedOutputs :: Printer -> Db -> BuildMaps -> IO ()
+deleteRemovedOutputs printer db buildMaps = do
   toDelete <-
-    atomicModifyIORef' (Db.registeredOutputsRef (bsDb buildsome)) $
-    S.partition (isJust . BuildMaps.find (bsBuildMaps buildsome))
+    atomicModifyIORef' (Db.registeredOutputsRef db) $
+    S.partition (isJust . BuildMaps.find buildMaps)
   forM_ (S.toList toDelete) $ \path -> do
     Printer.rawPrintStrLn printer $ "Removing old output: " <> cPath (show path)
     removeFileOrDirectoryOrNothing path
@@ -919,20 +921,15 @@ disallowExceptions act prefix = act `E.catch` \e@E.SomeException {} -> do
   putStrLn $ prefix ++ show e
   E.throwIO e
 
-mkFastKillBuild :: Opts.KeepGoing -> IO (E.SomeException -> IO (), IO ())
-mkFastKillBuild Opts.KeepGoing = return (const (return ()), return ())
-mkFastKillBuild Opts.DieQuickly = do
-  tid <- myThreadId
-  killActionMVar <- newMVar (E.throwTo tid)
-  let fastKillBuild e =
-        modifyMVar killActionMVar $ \killAction -> do
-          killAction e
-          return (const (return ()), ())
-      disableFastKillBuild = E.uninterruptibleMask_ $ void $ swapMVar killActionMVar (const (return ()))
-  return (fastKillBuild, disableFastKillBuild)
-
 withDb :: FilePath -> (Db -> IO a) -> IO a
 withDb makefilePath = Db.with $ buildDbFilename makefilePath
+
+inKillableThread :: ((E.SomeException -> IO ()) -> IO a) -> IO a
+inKillableThread act = do
+  a <- async $ do
+    t <- myThreadId
+    act $ E.throwTo t
+  wait a
 
 with ::
   Printer -> Db -> FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
@@ -944,35 +941,40 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     freshPrinterIds <- Fresh.new 1
     buildId <- BuildId.new
     rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
-    (fastKillBuild, disableFastKillBuild) <- mkFastKillBuild optKeepGoing
     let
-      buildsome =
-        Buildsome
-        { bsOpts = opt
-        , bsMakefile = makefile
-        , bsPhoniesSet = S.fromList . map snd $ makefilePhonies makefile
-        , bsBuildId = buildId
-        , bsRootPath = rootPath
-        , bsBuildMaps = BuildMaps.make makefile
-        , bsDb = db
-        , bsFsHook = fsHook
-        , bsSlaveByTargetRep = slaveMapByTargetRep
-        , bsParallelism = parallelism
-        , bsFreshPrinterIds = freshPrinterIds
-        , bsFastKillBuild = fastKillBuild
-        , bsRender = Printer.render printer
-        }
-    deleteRemovedOutputs printer buildsome
-    body buildsome
-      -- We must not leak running slaves as we're not allowed to
-      -- access fsHook, db, etc after leaving here:
-      `E.onException` putStrLn "Shutting down"
-      `finally` disableFastKillBuild
-      `finally` (cancelAllSlaves printer buildsome
-                 `disallowExceptions` "BUG: Exception thrown at cancelAllSlaves: ")
-      -- Must update gitIgnore after all the slaves finished updating
-      -- the registered output lists:
-      `finally` maybeUpdateGitIgnore buildsome
+      buildMaps = BuildMaps.make makefile
+    deleteRemovedOutputs printer db buildMaps
+
+    inKillableThread $ \killThread -> do
+      killThreadOnce <- (void .) . (. killThread) <$> once
+      let
+        buildsome =
+          Buildsome
+          { bsOpts = opt
+          , bsMakefile = makefile
+          , bsPhoniesSet = S.fromList . map snd $ makefilePhonies makefile
+          , bsBuildId = buildId
+          , bsRootPath = rootPath
+          , bsBuildMaps = buildMaps
+          , bsDb = db
+          , bsFsHook = fsHook
+          , bsSlaveByTargetRep = slaveMapByTargetRep
+          , bsParallelism = parallelism
+          , bsFreshPrinterIds = freshPrinterIds
+          , bsFastKillBuild = case optKeepGoing of
+              Opts.KeepGoing -> const (return ())
+              Opts.DieQuickly -> killThreadOnce
+          , bsRender = Printer.render printer
+          }
+      body buildsome
+        -- We must not leak running slaves as we're not allowed to
+        -- access fsHook, db, etc after leaving here:
+        `E.onException` putStrLn "Shutting down"
+        `finally` (cancelAllSlaves printer buildsome
+                   `disallowExceptions` "BUG: Exception thrown at cancelAllSlaves: ")
+        -- Must update gitIgnore after all the slaves finished updating
+        -- the registered output lists:
+        `finally` maybeUpdateGitIgnore buildsome
   where
     maybeUpdateGitIgnore buildsome =
       case optUpdateGitIgnore of

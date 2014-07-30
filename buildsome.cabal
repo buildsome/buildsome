@@ -71,6 +71,7 @@ executable buildsome
                ,     Lib.Makefile.Parser
                ,     Lib.Makefile.Types
                ,     Lib.Makefile.VerifyPhonies
+               ,     Lib.Once
                ,     Lib.Parallelism
                ,     Lib.Parsec
                ,     Lib.PoolAlloc
