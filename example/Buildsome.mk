@@ -44,7 +44,7 @@ out/auto.h:
 out/subdir.list:
 	for a in 1 2
 	do
-		ls -l subdir > $@
+	    ls -l subdir > $@
 	done
 
 subdir/a:
