@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, OverloadedStrings #-}
 module Lib.Chart
   ( make
   ) where
@@ -9,6 +9,7 @@ import qualified Lib.Slave as Slave
 
 #ifdef WITH_CHARTS_SUPPORT
 
+import Data.Monoid ((<>))
 import Control.Monad (void)
 import Data.Default.Class (def)
 import qualified Data.ByteString.Char8 as BS8
@@ -28,10 +29,11 @@ buildTimes stats =
     in map f $ M.toList $ Slave.statsOfTarget stats
 
 make :: Slave.Stats -> FilePath -> IO ()
-make stats filePath = do
-  putStrLn $ "Writing chart to " ++ show filePath
-  void $ ChartCairo.renderableToFile fileOptions (Chart.toRenderable plot) $ BS8.unpack filePath
+make stats filePathBase = do
+  putStrLn $ "Writing chart to " ++ show pieChartFilePath
+  void $ ChartCairo.renderableToFile fileOptions (Chart.toRenderable plot) $ BS8.unpack pieChartFilePath
   where
+    pieChartFilePath = filePathBase <> ".svg"
     fileOptions = def
       { ChartCairo._fo_format = ChartCairo.SVG
       , ChartCairo._fo_size = (16384, 16384)
