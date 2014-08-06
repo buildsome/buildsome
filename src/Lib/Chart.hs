@@ -34,7 +34,7 @@ make stats filePath = do
   where
     fileOptions = def
       { ChartCairo._fo_format = ChartCairo.SVG
-      , ChartCairo._fo_size = (2048, 2048)
+      , ChartCairo._fo_size = (16384, 16384)
       }
     plot = def { Chart._pie_plot = buildTimes stats }
 
