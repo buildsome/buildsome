@@ -2,7 +2,7 @@ import Distribution.Simple
 import System.Process
 import System.Exit
 
-sources = ["cbits/fs_override.c", "cbits/canonize_path.c"]
+sources = ["cbits/fs_override.c", "cbits/canonize_path.c", "cbits/client.c"]
 
 main = defaultMainWithHooks simpleUserHooks
   { preBuild = \_ _ -> do

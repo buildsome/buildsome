@@ -105,6 +105,12 @@ instance E.Exception ProtocolError
 instance Show ProtocolError where
   show (ProtocolError msg) = "ProtocolError: " ++ msg
 
+data Need = HOOK | HINT
+fromNeedStr :: ByteString -> Need
+fromNeedStr "HOOK" = HOOK
+fromNeedStr "HINT" = HINT
+fromNeedStr x = error $ "Invalid hello message need str: " ++ show x
+
 serve :: Printer -> FSHook -> Socket -> IO ()
 serve printer fsHook conn = do
   mHelloLine <- recvFrame conn
@@ -125,7 +131,7 @@ serve printer fsHook conn = do
             Just (KillingJob _label) ->
               -- New connection created in the process of killing connections, ignore it
               return ()
-            Just (LiveJob job) -> handleJobConnection fullTidStr conn job
+            Just (LiveJob job) -> handleJobConnection fullTidStr conn job $ fromNeedStr needStr
             Just (CompletedJob label) ->
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
@@ -134,7 +140,7 @@ serve printer fsHook conn = do
               , ") received new connections after formal completion!"]
           where
             fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
-            [pidStr, tidStr, jobId] = BS8.split ':' pidJobId
+            [pidStr, tidStr, jobId, needStr] = BS8.split ':' pidJobId
 
 -- Except thread killed
 printRethrowExceptions :: String -> IO a -> IO a
@@ -265,8 +271,8 @@ withRegistered registry key val =
     register = atomicModifyIORef_ registry $ M.insert key val
     unregister = atomicModifyIORef_ registry $ M.delete key
 
-handleJobConnection :: String -> Socket -> RunningJob -> IO ()
-handleJobConnection tidStr conn job = do
+handleJobConnection :: String -> Socket -> RunningJob -> Need -> IO ()
+handleJobConnection tidStr conn job _need = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   connId <- Fresh.next $ jobFreshConnIds job

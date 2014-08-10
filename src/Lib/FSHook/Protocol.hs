@@ -233,4 +233,4 @@ parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloPrefix #-}
 helloPrefix :: ByteString
-helloPrefix = "PROTOCOL5: HELLO, I AM: "
+helloPrefix = "PROTOCOL6: HELLO, I AM: "

@@ -1,83 +1,18 @@
-#include "c.h"
 #include "writer.h"
 #include "canonize_path.h"
-#include <arpa/inet.h>
+#include "client.h"
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdarg.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <sys/un.h>
 #include <unistd.h>
 
 #include <errno.h>
-
-#define MAX_FRAME_SIZE 8192
-
-#define ENVVARS_PREFIX "BUILDSOME_"
-#define PROTOCOL_HELLO "PROTOCOL5: HELLO, I AM: "
-
-static int gettid(void)
-{
-    #ifdef __APPLE__
-        return pthread_mach_thread_np(pthread_self());
-    #else
-        return syscall(__NR_gettid);
-    #endif
-}
-
-static bool send_size(int fd, size_t size)
-{
-    uint32_t size32 = ntohl(size);
-    ssize_t send_rc = send(fd, PS(size32), 0);
-    return send_rc == sizeof size32;
-}
-
-static int connect_master(void)
-{
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    ASSERT(-1 != fd);
-
-    char *env_sockaddr = getenv(ENVVARS_PREFIX "MASTER_UNIX_SOCKADDR");
-    ASSERT(env_sockaddr);
-
-    char *env_job_id = getenv(ENVVARS_PREFIX "JOB_ID");
-    ASSERT(env_job_id);
-
-    struct sockaddr_un addr = {
-        .sun_family = AF_UNIX,
-    };
-    ASSERT(strlen(env_sockaddr) < sizeof addr.sun_path);
-    strcpy(addr.sun_path, env_sockaddr);
-
-    DEBUG("pid%d, tid%d: connecting \"%s\"", getpid(), gettid(), env_sockaddr);
-    int connect_rc = connect(fd, (struct sockaddr*) &addr, sizeof addr);
-    if(0 != connect_rc) {
-        close(fd);
-        return -1;
-    }
-
-    char hello[strlen(PROTOCOL_HELLO) + strlen(env_job_id) + 16]; /* TODO: Avoid magic 16 */
-    hello[sizeof hello-1] = 0;
-    int len = snprintf(hello, sizeof hello-1, PROTOCOL_HELLO "%d:%d:%s", getpid(), gettid(), env_job_id);
-    if(!send_size(fd, len)) return false;
-    ssize_t send_rc = send(fd, hello, len, 0);
-    if(send_rc != len) {
-        close(fd);
-        return -1;
-    }
-
-    return fd;
-}
 
 /* NOTE: This must be kept in sync with Protocol.hs */
 #define MAX_PATH 256
@@ -88,13 +23,6 @@ static struct {
     unsigned root_filter_length;
     char root_filter[MAX_PATH];
 } process_state = {-1U, "", -1U, ""};
-
-static __thread struct {
-    pid_t pid;                  /* TODO: Document that this identifies fork()ed threads */
-    int connection_fd;
-} thread_state = {-1, -1};
-
-static bool await_go(void) ATTR_WARN_UNUSED_RESULT;
 
 static void update_cwd(void)
 {
@@ -130,39 +58,9 @@ static void initialize_process_state(void)
     process_state.root_filter_length = len;
 }
 
-static int connection(void)
-{
-    pid_t pid = getpid();
-    if(pid != thread_state.pid) {
-        int fd = connect_master();
-        if(-1 == fd) return -1;
-        thread_state.connection_fd = fd;
-        thread_state.pid = pid;
-        if(!await_go()) return -1;
-    }
-    return thread_state.connection_fd;
-}
-
-static int assert_connection(void)
-{
-    ASSERT(getpid() == thread_state.pid);
-    return thread_state.connection_fd;
-}
-
-static bool send_connection(const char *buf, size_t size) ATTR_WARN_UNUSED_RESULT;
-static bool send_connection(const char *buf, size_t size)
-{
-    int fd = connection();
-    if(-1 == fd) return false;
-
-    if(!send_size(fd, size)) return false;
-    ssize_t rc = send(fd, buf, size, 0);
-    return rc == (ssize_t)size;
-}
-
 static void send_connection_await(const char *buf, size_t size, bool is_delayed)
 {
-    if(!send_connection(buf, size)) return;
+    if(!client__send_hooked(is_delayed, buf, size)) return;
     if(!is_delayed) return;
     bool res ATTR_UNUSED = await_go();
 }
@@ -253,7 +151,6 @@ struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_va
 
 #define SEND_MSG_AWAIT(_is_delayed, msg)                \
     ({                                                  \
-        (msg).is_delayed = (_is_delayed);               \
         send_connection_await(PS(msg), _is_delayed);    \
     })
 
@@ -266,20 +163,12 @@ struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_va
 #define DEFINE_MSG(msg, name)                   \
     initialize_process_state();                 \
     struct {                                    \
-        uint8_t is_delayed;                     \
         enum func func;                         \
         struct func_##name args;                \
     } __attribute__ ((packed))                  \
     msg = { .func = func_##name };
 
 #define CREATION_FLAGS (O_CREAT | O_EXCL)
-
-static bool await_go(void)
-{
-    char buf[2];
-    ssize_t rc = recv(assert_connection(), PS(buf), 0);
-    return 2 == rc && !memcmp("GO", PS(buf));
-}
 
 #define PATH_COPY(needs_await, dest, src)                               \
     do {                                                                \
@@ -326,14 +215,13 @@ static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *can
 
 #define CALL_WITH_OUTPUTS(msg, _is_delayed, ret_type, args, out_report_code) \
     ({                                                                  \
-        (msg).is_delayed = (_is_delayed);                               \
         if(_is_delayed) {                                               \
             send_connection_await(PS(msg), true);                       \
         }                                                               \
         ret_type result = SILENT_CALL_REAL args;                        \
         if(!_is_delayed) {                                              \
             do out_report_code while(0);                                \
-            bool ATTR_UNUSED res = send_connection(PS(msg));                 \
+            bool ATTR_UNUSED res = client__send_hooked(false, PS(msg)); \
             /* Can't stop me now, effect already happened, so just ignore */ \
             /* server-side rejects after-the-fact. */                   \
         }                                                               \
