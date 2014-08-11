@@ -50,6 +50,7 @@ executable buildsome
                ,     Lib.BuildId
                ,     Lib.BuildMaps
                ,     Lib.ByteString
+               ,     Lib.Cartesian
                ,     Lib.ColorText
                ,     Lib.Directory
                ,     Lib.Exception

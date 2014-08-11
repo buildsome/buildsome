@@ -16,6 +16,7 @@ import Data.Monoid (Monoid(..), (<>))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
+import Lib.Cartesian (cartesian)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile.CondState (CondState)
 import Lib.Makefile.Monad (MonadMakefileParser)
@@ -86,8 +87,7 @@ tellWeakVar :: Monad m => VarName -> ByteString -> Parser m ()
 tellWeakVar varName defaultVal = tell mempty { writerWeakVars = M.singleton varName defaultVal }
 
 RELEASE_INLINE(updateConds)
-updateConds ::
-  Monad m => (CondState -> Either String CondState) -> Parser m ()
+updateConds :: Monad m => (CondState -> Either String CondState) -> Parser m ()
 updateConds f = do
   state <- P.getState
   case f $ stateCond state of
@@ -134,12 +134,14 @@ skipLineSuffix = horizSpaces <* P.optional comment <* P.lookAhead (void (P.char 
 
 RELEASE_INLINE(filepaths)
 filepaths :: Monad m => Parser m [FilePath]
-filepaths = BS8.words <$> interpolateVariables unescapedSequence ":#|\n"
+filepaths = do
+  pos <- P.getPosition
+  BS8.words . cartesian pos <$> interpolateVariables unescapedSequence ":#|\n"
 
 RELEASE_INLINE(filepaths1)
 filepaths1 :: Monad m => Parser m [FilePath]
 filepaths1 = do
-  paths <- BS8.words <$> interpolateVariables unescapedSequence ":#|\n"
+  paths <- filepaths
   if null paths
     then fail "need at least 1 file path"
     else return paths
@@ -164,7 +166,6 @@ RELEASE_INLINE(unescapedSequence)
 unescapedSequence :: Monad m => ParserG u m ByteString
 unescapedSequence = BS8.singleton <$> unescapedChar
 
-RELEASE_INLINE(isIdentChar)
 isIdentChar :: Char -> Bool
 isIdentChar x = isAlphaNum x || x `elem` "_.~"
 
@@ -251,7 +252,8 @@ interpolateVariables escapeParse stopChars = do
 
 -- Inside a single line
 RELEASE_INLINE(interpolateString)
-interpolateString :: Monad m => ParserG u m ByteString -> String -> ParserG u m ByteString -> ParserG u m ByteString
+interpolateString ::
+  Monad m => ParserG u m ByteString -> String -> ParserG u m ByteString -> ParserG u m ByteString
 interpolateString escapeParser stopChars dollarHandler =
   concatMany (literalString '\'' <|> doubleQuotes <|> interpolatedChar stopChars)
   where
@@ -359,10 +361,11 @@ noiseLines =
 
 RELEASE_INLINE(cmdLine)
 cmdLine :: MonadMakefileParser m => Parser m ByteString
-cmdLine =
-  ( P.try (newline *> noiseLines *> P.char '\t') *>
-    interpolateVariables escapeSequence "#\n" <* skipLineSuffix
-  ) <?> "cmd line"
+cmdLine = do
+  ( P.try (newline *> noiseLines *> P.char '\t')
+    *> interpolateVariables escapeSequence "#\n"
+    <* skipLineSuffix
+    ) <?> "cmd line"
 
 mkFilePattern :: FilePath -> Maybe FilePattern
 mkFilePattern path
@@ -393,7 +396,6 @@ targetPattern pos outputPaths inputPaths orderOnlyInputs = do
     orderOnlyInputPats = map tryMakePattern orderOnlyInputs
     tryMakePattern path = maybe (InputPath path) InputPattern $ mkFilePattern path
 
-RELEASE_INLINE(interpolateCmds)
 interpolateCmds :: Maybe ByteString -> Target -> Target
 interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds pos) =
   tgt
@@ -512,7 +514,8 @@ directive str act = do
 RELEASE_INLINE(echoDirective)
 echoDirective :: MonadMakefileParser m => Parser m ()
 echoDirective = directive "echo" $ do
-  str <- interpolateVariables unescapedSequence "#\n"
+  pos <- P.getPosition
+  str <- cartesian pos <$> interpolateVariables unescapedSequence "#\n"
   whenCondTrue $ lift $ MakefileMonad.outPutStrLn $ "ECHO: " <> str
 
 RELEASE_INLINE(localsOpen)
