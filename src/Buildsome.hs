@@ -1,7 +1,9 @@
 {-# LANGUAGE DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Buildsome
   ( Buildsome, with, withDb
-  , clean, want
+  , clean
+  , BuiltTargets(..)
+  , want
   ) where
 
 import Buildsome.Db (Db, IRef(..), Reason)
@@ -165,10 +167,19 @@ data BuildTargetEnv = BuildTargetEnv
   , bteParents :: Parents
   }
 
+data BuiltTargets = BuiltTargets
+  { builtTargets :: [Target]
+  , builtStats :: Slave.Stats
+  }
+instance Monoid BuiltTargets where
+  mempty = BuiltTargets mempty mempty
+  mappend (BuiltTargets a1 b1) (BuiltTargets a2 b2) =
+    BuiltTargets (mappend a1 a2) (mappend b1 b2)
+
 mkSlavesForPaths :: BuildTargetEnv -> Explicitness -> [FilePath] -> IO [Slave]
 mkSlavesForPaths bte explicitness = fmap concat . mapM (mkSlaves bte explicitness)
 
-want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO ([Target], Slave.Stats)
+want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO BuiltTargets
 want printer buildsome reason paths = do
   printStrLn printer $
     "Building: " <> ColorText.intercalate ", " (map (cTarget . show) paths)
@@ -190,7 +201,7 @@ want printer buildsome reason paths = do
   printStrLn printer $ mconcat
     [ lastLinePrefix, ": "
     , cTiming (show buildTime <> " seconds"), " total." ]
-  return (map Slave.target slaves, slaveStats)
+  return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = slaveStats }
   where
     Color.Scheme{..} = Color.scheme
 
@@ -363,11 +374,13 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
 
 waitForSlaves ::
   Parallelism.Priority -> Printer -> Parallelism.Cell -> Buildsome ->
-  [Slave] -> IO Slave.Stats
+  [Slave] -> IO BuiltTargets
 waitForSlaves _ _ _ _ [] = return mempty
 waitForSlaves priority _printer parCell buildsome slaves =
-  Parallelism.withReleased priority parCell (bsParallelism buildsome) $
-  mconcat <$> mapM Slave.wait slaves
+  do  stats <-
+        Parallelism.withReleased priority parCell (bsParallelism buildsome) $
+        mconcat <$> mapM Slave.wait slaves
+      return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
 
 verifyFileDesc ::
   (IsString str, Monoid str, MonadIO m) =>
@@ -382,8 +395,11 @@ verifyFileDesc str filePath fileDesc existingVerify = do
     (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
     (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
 
-mkStats :: (Eq a, Monoid a) => TargetRep -> [Target] -> Slave.When -> DiffTime -> StdOutputs a -> Slave.Stats
-mkStats targetRep deps execTime selfTime stdOutputs =
+mkStats ::
+  (Eq a, Monoid a) =>
+  TargetRep -> Slave.When -> DiffTime -> StdOutputs a -> BuiltTargets -> Slave.Stats
+mkStats targetRep execTime selfTime stdOutputs (BuiltTargets deps stats) =
+  mappend stats
   Slave.Stats
   { Slave.statsOfTarget = M.singleton targetRep (execTime, selfTime, deps)
   , Slave.statsStdErr =
@@ -398,7 +414,7 @@ tryApplyExecutionLog ::
   TargetRep -> Target -> Db.ExecutionLog ->
   IO (Either (ByteString, FilePath) Slave.Stats)
 tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.ExecutionLog {..} = do
-  (deps, nestedSlaveStats) <- executionLogWaitForInputs bte parCell target el
+  builtTargets <- executionLogWaitForInputs bte parCell target el
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
       verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
@@ -418,8 +434,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
       replayExecutionLog bte target
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    let selfStats = mkStats targetRep deps Slave.FromCache elSelfTime elStdoutputs
-    return $ mappend selfStats nestedSlaveStats
+    return $ mkStats targetRep Slave.FromCache elSelfTime elStdoutputs builtTargets
   where
     db = bsDb bteBuildsome
     verifyMDesc _   _        _       Nothing        = return ()
@@ -430,7 +445,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
       newDesc <- liftIO getDesc
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
 
-executionLogWaitForInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO ([Target], Slave.Stats)
+executionLogWaitForInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO BuiltTargets
 executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
@@ -446,10 +461,8 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
     targetOutputs target
 
   let allSlaves = speculativeSlaves ++ hintedSlaves
-  stats <-
-    mappend targetParentsStats <$>
+  mappend targetParentsStats <$>
     waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome allSlaves
-  return $ (map Slave.target allSlaves, stats)
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs target
@@ -467,7 +480,7 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
 
 buildParentDirectories ::
   Parallelism.Priority -> BuildTargetEnv -> Parallelism.Cell -> Explicitness ->
-  [FilePath] -> IO Slave.Stats
+  [FilePath] -> IO BuiltTargets
 buildParentDirectories priority bte@BuildTargetEnv{..} parCell explicitness =
   waitForSlaves priority btePrinter parCell bteBuildsome . concat <=<
   mapM mkParentSlaves . filter (`notElem` ["", "/"])
@@ -608,7 +621,7 @@ data RunCmdResults = RunCmdResults
   , rcrStdOutputs :: StdOutputs ByteString
   , rcrInputs :: Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)
   , rcrOutputs :: Map FilePath (KeepsOldContent, Reason)
-  , rcrSlaveStats :: Slave.Stats
+  , rcrBuiltTargets :: BuiltTargets
   }
 
 outEffectToMaybe :: OutputEffect -> Maybe KeepsOldContent
@@ -667,32 +680,32 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
       | otherwise = b
 
 makeInputs ::
-  IORef Slave.Stats -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
+  IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
-makeInputs slaveStatsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
+makeInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
   do
     let allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
-    parentSlaveStats <-
+    parentBuiltTargets <-
       buildParentDirectories Parallelism.PriorityHigh bte parCell Implicit
       allPaths
     slaves <-
       fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
       mkSlavesForAccessType accessType bte { bteReason = accessDoc } Implicit path
-    mappendSlaveStats . mappend parentSlaveStats =<<
+    mappendBuiltTargets . mappend parentBuiltTargets =<<
       waitForSlaves Parallelism.PriorityHigh btePrinter parCell bteBuildsome
       slaves
     where
-      mappendSlaveStats stats = atomicModifyIORef_ slaveStatsRef $ mappend stats
+      mappendBuiltTargets x = atomicModifyIORef_ builtTargetsRef (mappend x)
 
 fsAccessHandlers ::
   IORef (Map FilePath (KeepsOldContent, Reason)) ->
   IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
-  IORef Slave.Stats ->
+  IORef BuiltTargets ->
   BuildTargetEnv ->
   Parallelism.Cell ->
   TargetType FilePath input ->
   FSHook.FSAccessHandlers
-fsAccessHandlers outputsRef inputsRef slaveStatsRef bte@BuildTargetEnv{..}
+fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
   parCell target =
     FSHook.FSAccessHandlers
     { delayedFSAccessHandler = fsDelayedAccessHandler
@@ -705,7 +718,7 @@ fsAccessHandlers outputsRef inputsRef slaveStatsRef bte@BuildTargetEnv{..}
 
     fsDelayedAccessHandler accessDoc rawInputs rawOutputs = do
       commonAccessHandler accessDoc rawInputs rawOutputs
-        FSHook.outputPath delayedOutputEffect $ makeInputs slaveStatsRef bte parCell accessDoc
+        FSHook.outputPath delayedOutputEffect $ makeInputs builtTargetsRef bte parCell accessDoc
 
     targetOutputsSet = S.fromList $ targetOutputs target
 
@@ -735,14 +748,14 @@ runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
 runCmd bte@BuildTargetEnv{..} parCell target = do
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef M.empty
-  slaveStatsRef <- newIORef mempty
-  let accessHandlers = fsAccessHandlers outputsRef inputsRef slaveStatsRef bte parCell target
+  builtTargetsRef <- newIORef mempty
+  let accessHandlers = fsAccessHandlers outputsRef inputsRef builtTargetsRef bte parCell target
   (time, stdOutputs) <-
     FSHook.timedRunCommand hook rootPath shellCmd
     renderedTargetOutputs accessHandlers
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
-  slaveStats <- readIORef slaveStatsRef
+  builtTargets <- readIORef builtTargetsRef
   return RunCmdResults
     { rcrStdOutputs = stdOutputs
     , rcrSelfTime = realToFrac time
@@ -752,7 +765,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
       -- really have a correct input stat/desc here for such inputs. However, outputs should always considered as mode-only inputs.
       inputs `M.difference` outputs
     , rcrOutputs = outputs
-    , rcrSlaveStats = slaveStats
+    , rcrBuiltTargets = builtTargets
     }
   where
     rootPath = bsRootPath bteBuildsome
@@ -837,7 +850,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
     case mSlaveStats of
       Just slaveStats -> return slaveStats
       Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
-        targetParentsStats <-
+        targetParentsBuilt <-
           buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
           targetOutputs target
 
@@ -849,7 +862,7 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
           mkSlavesForPaths bte
             { bteReason = "Hint from " <> cTarget (show (targetOutputs target))
             } Explicit $ targetAllInputs target
-        hintedStats <-
+        hintedBuilt <-
           waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome
           slaves
 
@@ -861,8 +874,8 @@ buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
         saveExecutionLog bteBuildsome target rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
 
         Print.targetTiming btePrinter "now" rcrSelfTime
-        let selfStats = mkStats targetRep (map Slave.target slaves) Slave.BuiltNow rcrSelfTime rcrStdOutputs
-        return $ mconcat [selfStats, targetParentsStats, hintedStats, rcrSlaveStats]
+        return $ mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs $
+          mconcat [targetParentsBuilt, hintedBuilt, rcrBuiltTargets]
   where
     Color.Scheme{..} = Color.scheme
     verbosityCommands = Opts.verbosityCommands verbosity

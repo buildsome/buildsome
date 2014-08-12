@@ -266,7 +266,8 @@ handleRequested
    (TargetsRequest requestedTargetPaths reason
     (Opts.ExtraOutputs mChartPath mClangCommandsPath)))
   = do
-    (rootTargets, slaveStats) <- Buildsome.want printer buildsome reason requestedTargetPaths
+    Buildsome.BuiltTargets rootTargets slaveStats <-
+      Buildsome.want printer buildsome reason requestedTargetPaths
     maybe (return ()) (Chart.make slaveStats) mChartPath
     cwd <- Posix.getWorkingDirectory
     maybe (return ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
