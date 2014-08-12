@@ -18,7 +18,6 @@ import qualified Data.Map as Map
 import qualified Lib.Directory as Dir
 import qualified Lib.Makefile as Makefile
 import qualified Lib.Makefile.Monad as MakefileMonad
-import qualified Lib.Makefile.Parser as MakefileParser
 import qualified System.Posix.ByteString as Posix
 
 mkFileDesc :: Db -> FilePath -> Maybe Posix.FileStatus -> IO (Db.FileDesc () FileContentDesc)
@@ -29,7 +28,7 @@ parse :: Db -> FilePath -> Vars -> IO (Map FilePath (Db.FileDesc () FileContentD
 parse db absMakefilePath vars = do
   (readFiles, putStrLns, res) <-
     MakefileMonad.runM $
-    MakefileParser.parse absMakefilePath vars
+    Makefile.parse absMakefilePath vars
   contentDescs <- Map.traverseWithKey (mkFileDesc db) readFiles
   -- This must come after:
   mapM_ (uncurry Meddling.assertFileMTime) $ Map.toList readFiles
