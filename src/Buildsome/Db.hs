@@ -149,4 +149,4 @@ data MakefileParseCache = MakefileParseCache
 instance Binary MakefileParseCache
 
 makefileParseCache :: Db -> IRef MakefileParseCache
-makefileParseCache = mkIRefKey "makefileParseCache"
+makefileParseCache = mkIRefKey "makefileParseCache_Schema.0"
