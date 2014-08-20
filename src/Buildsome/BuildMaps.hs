@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Lib.BuildMaps
+module Buildsome.BuildMaps
   ( TargetRep(..), computeTargetRep
   , DirectoryBuildMap(..)
   , BuildMaps(..)

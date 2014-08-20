@@ -1,21 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Lib.Slave
+module Buildsome.Slave
   ( Slave, new
   , target
   , str
   , wait, waitCatch
   , cancel
-  , When(..), Stats(..)
   ) where
 
+import Buildsome.Stats (Stats(..))
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async (Async)
-import Data.Map (Map)
 import Data.Monoid
-import Data.Set (Set)
 import Data.String (IsString(..))
-import Data.Time (DiffTime)
-import Lib.BuildMaps (TargetRep)
 import Lib.FilePath (FilePath)
 import Lib.Makefile (Target)
 import Lib.TimeInstances ()
@@ -23,21 +19,6 @@ import Prelude hiding (FilePath)
 import qualified Control.Concurrent.Async as Async
 import qualified Control.Exception as E
 import qualified Lib.Printer as Printer
-
--- TODO: Get this Stats business out of here and have "Slave a"?
-data When = FromCache | BuiltNow deriving Show
-
-data Stats = Stats
-  { statsOfTarget :: Map TargetRep (When, DiffTime, [Target])
-  , statsStdErr :: Set TargetRep
-  } deriving (Show)
-
-instance Monoid Stats where
-  mempty = Stats mempty mempty
-  mappend (Stats a1 a2) (Stats b1 b2) =
-    Stats
-    (a1 `mappend` b1)
-    (a2 `mappend` b2)
 
 data Slave = Slave
   { slaveTarget :: Target

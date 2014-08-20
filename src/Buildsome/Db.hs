@@ -11,6 +11,7 @@ module Buildsome.Db
   , MFileContentDesc, MakefileParseCache(..), makefileParseCache
   ) where
 
+import Buildsome.BuildId (BuildId)
 import Control.Applicative ((<$>))
 import Data.Binary (Binary(..))
 import Data.ByteString (ByteString)
@@ -21,7 +22,6 @@ import Data.Time.Clock (DiffTime)
 import Data.Time.Clock.POSIX (POSIXTime)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
-import Lib.BuildId (BuildId)
 import Lib.ColorText (ColorText)
 import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
 import Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)

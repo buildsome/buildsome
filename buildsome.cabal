@@ -31,24 +31,26 @@ executable buildsome
   ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000
   ghc-prof-options:  -threaded -auto-all -caf-all -O2 -rtsopts
   other-modules:     Buildsome
+               ,     Buildsome.BuildId
+               ,     Buildsome.BuildMaps
                ,     Buildsome.ClangCommands
                ,     Buildsome.Clean
                ,     Buildsome.Color
                ,     Buildsome.Db
                ,     Buildsome.FileContentDescCache
+               ,     Buildsome.MagicFiles
                ,     Buildsome.Meddling
                ,     Buildsome.MemoParseMakefile
-               ,     Buildsome.Print
-               ,     Buildsome.MagicFiles
                ,     Buildsome.Opts
+               ,     Buildsome.Print
+               ,     Buildsome.Slave
+               ,     Buildsome.Stats
                ,     Lib.AnnotatedException
                ,     Lib.AnsiConsoleUtils
                ,     Lib.Argv0
                ,     Lib.Async
                ,     Lib.AsyncContext
                ,     Lib.Binary
-               ,     Lib.BuildId
-               ,     Lib.BuildMaps
                ,     Lib.ByteString
                ,     Lib.Cartesian
                ,     Lib.ColorText
@@ -64,7 +66,6 @@ executable buildsome
                ,     Lib.Fresh
                ,     Lib.IORef
                ,     Lib.List
-               ,     Lib.Map
                ,     Lib.Makefile
                ,     Lib.Makefile.CondState
                ,     Lib.Makefile.InstantiatePattern
@@ -72,6 +73,7 @@ executable buildsome
                ,     Lib.Makefile.Parser
                ,     Lib.Makefile.Types
                ,     Lib.Makefile.VerifyPhonies
+               ,     Lib.Map
                ,     Lib.Once
                ,     Lib.Parallelism
                ,     Lib.Parsec
@@ -85,7 +87,6 @@ executable buildsome
                ,     Lib.Show
                ,     Lib.ShowBytes
                ,     Lib.Sigint
-               ,     Lib.Slave
                ,     Lib.Sock
                ,     Lib.StdOutputs
                ,     Lib.StringPattern
@@ -125,7 +126,7 @@ executable buildsome
 
   if flag(Charts)
     cpp-options:       -DWITH_CHARTS_SUPPORT
-    other-modules:     Lib.Chart
+    other-modules:     Buildsome.Chart
     build-depends:     Chart == 1.2.*
                  ,     Chart-cairo == 1.2.*
                  ,     data-default-class == 0.0.*

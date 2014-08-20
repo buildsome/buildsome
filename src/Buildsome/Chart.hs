@@ -1,17 +1,18 @@
 {-# LANGUAGE CPP, OverloadedStrings #-}
-module Lib.Chart
+module Buildsome.Chart
   ( make
   ) where
 
+import Buildsome.Stats (Stats(..))
 import Data.ByteString (ByteString)
 import Data.Map (Map)
 import Data.Monoid ((<>))
 import Lib.FilePath (FilePath)
 import Prelude hiding (FilePath)
+import qualified Buildsome.BuildMaps as BuildMaps
+import qualified Buildsome.Stats as Stats
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as M
-import qualified Lib.BuildMaps as BuildMaps
-import qualified Lib.Slave as Slave
 
 #ifdef WITH_CHARTS_SUPPORT
 
@@ -20,7 +21,7 @@ import Data.Default.Class (def)
 import qualified Graphics.Rendering.Chart as Chart
 import qualified Graphics.Rendering.Chart.Backend.Cairo as ChartCairo
 
-buildTimes :: Slave.Stats -> Chart.PieChart
+buildTimes :: Stats -> Chart.PieChart
 buildTimes stats =
  def { Chart._pie_data = dataPoints }
  where
@@ -28,9 +29,9 @@ buildTimes stats =
     let f (targetRep, (_when, count, _deps)) =
           def { Chart._pitem_label = BS8.unpack $ BuildMaps.targetRepPath targetRep
               , Chart._pitem_value = realToFrac count }
-    in map f $ M.toList $ Slave.statsOfTarget stats
+    in map f $ M.toList $ Stats.ofTarget stats
 
-makePieChart :: Slave.Stats -> FilePath -> IO ()
+makePieChart :: Stats -> FilePath -> IO ()
 makePieChart stats filePath = do
   putStrLn $ "Writing chart to " ++ show filePath
   void $ ChartCairo.renderableToFile fileOptions (Chart.toRenderable plot) $ BS8.unpack filePath
@@ -43,7 +44,7 @@ makePieChart stats filePath = do
 
 #else
 
-makePieChart :: Slave.Stats -> FilePath -> IO ()
+makePieChart :: Stats -> FilePath -> IO ()
 makePieChart _ _ = putStrLn "Re-build buildsome with the Charts flag enabled to get pie charts!"
 
 #endif
@@ -78,13 +79,13 @@ dotRenderGraph graphName (Graph nodes) = BS8.unlines $
       | dest <- dests
       ]
 
-statsGraph :: Slave.Stats -> Graph
+statsGraph :: Stats -> Graph
 statsGraph =
   Graph .
   M.map toNode .
   M.mapKeys BuildMaps.targetRepPath .
   M.filter hasDeps .
-  Slave.statsOfTarget
+  Stats.ofTarget
   where
     hasDeps (_when, _diffTime, deps) = not $ null deps
     toNode (_when, diffTime, deps) =
@@ -94,12 +95,12 @@ statsGraph =
       }
     targetAsByteString = BuildMaps.targetRepPath . BuildMaps.computeTargetRep
 
-makeDotChart :: Slave.Stats -> FilePath -> IO ()
+makeDotChart :: Stats -> FilePath -> IO ()
 makeDotChart stats filePath = do
   putStrLn $ "Writing dot file to " ++ show filePath
   BS8.writeFile (BS8.unpack filePath) $ dotRenderGraph "Dependencies" $ statsGraph stats
 
-make :: Slave.Stats -> FilePath -> IO ()
+make :: Stats -> FilePath -> IO ()
 make stats filePathBase = do
   makePieChart stats (filePathBase <> ".svg")
   makeDotChart stats (filePathBase <> ".dot")

@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
-module Lib.BuildId
+module Buildsome.BuildId
   ( BuildId(..), new
   ) where
 

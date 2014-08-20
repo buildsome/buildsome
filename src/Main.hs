@@ -27,6 +27,7 @@ import Prelude hiding (FilePath, show)
 import System.Posix.IO (stdOutput)
 import System.Posix.Terminal (queryTerminal)
 import qualified Buildsome
+import qualified Buildsome.Chart as Chart
 import qualified Buildsome.ClangCommands as ClangCommands
 import qualified Buildsome.Color as Color
 import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
@@ -34,7 +35,6 @@ import qualified Buildsome.Opts as Opts
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as M
-import qualified Lib.Chart as Chart
 import qualified Lib.ColorText as ColorText
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Makefile as Makefile

@@ -6,9 +6,13 @@ module Buildsome
   , want
   ) where
 
+import Buildsome.BuildId (BuildId)
+import Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Buildsome.Db (Db, IRef(..), Reason)
 import Buildsome.FileContentDescCache (fileContentDescOfStat)
 import Buildsome.Opts (Opt(..))
+import Buildsome.Slave (Slave)
+import Buildsome.Stats (Stats(Stats))
 import Control.Applicative ((<$>))
 import Control.Concurrent (myThreadId)
 import Control.Concurrent.Async (async, wait)
@@ -29,8 +33,6 @@ import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Traversable (traverse)
 import Data.Typeable (Typeable)
 import Lib.AnnotatedException (annotateException)
-import Lib.BuildId (BuildId)
-import Lib.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.Exception (finally)
@@ -46,13 +48,14 @@ import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
-import Lib.Slave (Slave)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
 import System.Exit (ExitCode(..))
 import System.Process (CmdSpec(..))
 import Text.Parsec (SourcePos)
+import qualified Buildsome.BuildId as BuildId
+import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
 import qualified Buildsome.Color as Color
 import qualified Buildsome.Db as Db
@@ -60,12 +63,12 @@ import qualified Buildsome.MagicFiles as MagicFiles
 import qualified Buildsome.Meddling as Meddling
 import qualified Buildsome.Opts as Opts
 import qualified Buildsome.Print as Print
+import qualified Buildsome.Slave as Slave
+import qualified Buildsome.Stats as Stats
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import qualified Lib.BuildId as BuildId
-import qualified Lib.BuildMaps as BuildMaps
 import qualified Lib.ColorText as ColorText
 import qualified Lib.Directory as Dir
 import qualified Lib.FSHook as FSHook
@@ -75,7 +78,6 @@ import qualified Lib.Map as LibMap
 import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
-import qualified Lib.Slave as Slave
 import qualified Lib.Timeout as Timeout
 import qualified Prelude
 import qualified System.IO as IO
@@ -167,7 +169,7 @@ data BuildTargetEnv = BuildTargetEnv
 
 data BuiltTargets = BuiltTargets
   { builtTargets :: [Target]
-  , builtStats :: Slave.Stats
+  , builtStats :: Stats
   }
 instance Monoid BuiltTargets where
   mempty = BuiltTargets mempty mempty
@@ -202,7 +204,7 @@ want printer buildsome reason paths = do
         }
   (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
     timeIt $ buildExplicit bte $ map SlaveRequestDirect paths
-  let stdErrs = Slave.statsStdErr $ builtStats builtTargets
+  let stdErrs = Stats.stdErr $ builtStats builtTargets
       lastLinePrefix
         | not (S.null stdErrs) =
           cWarning $ "Build Successful, but with STDERR from: " <>
@@ -911,7 +913,7 @@ buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
 
-buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Slave.Stats
+buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Stats
 buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
   redirectExceptions bteBuildsome $ do
     (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte parCell tdTarget
@@ -923,13 +925,13 @@ buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
         mSlaveStats <- findApplyExecutionLog bte parCell TargetDesc{..}
         (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
           case mSlaveStats of
-          Just res -> return (Slave.FromCache, res)
-          Nothing -> (,) Slave.BuiltNow <$> buildTargetReal bte parCell TargetDesc{..}
+          Just res -> return (Stats.FromCache, res)
+          Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte parCell TargetDesc{..}
         let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
         return $ stats <>
-          Slave.Stats
-          { Slave.statsOfTarget = M.singleton tdRep (whenBuilt, elSelfTime, deps)
-          , Slave.statsStdErr =
+          Stats
+          { Stats.ofTarget = M.singleton tdRep (whenBuilt, elSelfTime, deps)
+          , Stats.stdErr =
             if mempty /= stdErr elStdoutputs
             then S.singleton tdRep
             else S.empty
