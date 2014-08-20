@@ -318,9 +318,10 @@ verifyTargetInputs bte@BuildTargetEnv{..} inputs target
   | all (`S.member` bsPhoniesSet bteBuildsome)
     (targetOutputs target) = return () -- Phony target doesn't need real inputs
   | otherwise =
-    warnOverSpecified bte
-    "inputs" "" (S.fromList (targetAllInputs target))
-    (inputs `S.union` bsPhoniesSet bteBuildsome) (targetPos target)
+    warnOverSpecified bte "inputs" ""
+    (S.fromList (targetAllInputs target) `S.difference`
+     (inputs `S.union` bsPhoniesSet bteBuildsome))
+    (targetPos target)
 
 handleLegalUnspecifiedOutputs :: BuildTargetEnv -> TargetType output input -> [FilePath] -> IO ()
 handleLegalUnspecifiedOutputs BuildTargetEnv{..} target unspecifiedOutputs = do
@@ -347,9 +348,11 @@ verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
     E.throwIO $
       IllegalUnspecifiedOutputs (bsRender bteBuildsome) target $
       M.keys existingIllegalOutputs
-  warnOverSpecified bte "outputs" " (consider adding a .PHONY declaration)"
-    (M.keysSet specified) (M.keysSet outputs `S.union` bsPhoniesSet bteBuildsome)
-    (targetPos target)
+  let unusedOutputs =
+        M.keysSet specified `S.difference`
+        (M.keysSet outputs `S.union` bsPhoniesSet bteBuildsome)
+  warnOverSpecified bte "outputs" " (consider adding a .PHONY declaration)" unusedOutputs (targetPos target)
+  mapM_ removeFileOrDirectoryOrNothing $ S.toList unusedOutputs
   return $ M.intersection outputs specified
   where
     Color.Scheme{..} = Color.scheme
@@ -361,14 +364,13 @@ verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
 
 warnOverSpecified ::
   BuildTargetEnv -> ColorText -> ColorText ->
-  Set FilePath -> Set FilePath -> SourcePos -> IO ()
-warnOverSpecified BuildTargetEnv{..} str suffix specified used pos =
+  Set FilePath -> SourcePos -> IO ()
+warnOverSpecified BuildTargetEnv{..} str suffix unused pos =
   unless (S.null unused) $
   Print.warn btePrinter pos $ mconcat
   ["Over-specified ", str, ": ", cTarget (show (S.toList unused)), suffix]
   where
     Color.Scheme{..} = Color.scheme
-    unused = specified `S.difference` used
 
 replayExecutionLog ::
   BuildTargetEnv -> Target ->
@@ -831,8 +833,8 @@ redirectExceptions buildsome =
     bsFastKillBuild buildsome e
     E.throwIO e
 
-deleteTargetOutputs :: BuildTargetEnv -> TargetType FilePath input -> IO ()
-deleteTargetOutputs BuildTargetEnv{..} target = do
+deleteOldTargetOutputs :: BuildTargetEnv -> TargetType FilePath input -> IO ()
+deleteOldTargetOutputs BuildTargetEnv{..} target = do
   registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
   mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $
     targetOutputs target
@@ -858,8 +860,7 @@ buildTargetReal ::
   BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Db.ExecutionLog, BuiltTargets)
 buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
   Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
-    -- Delete the old target outputs (will be rebuilt)
-    deleteTargetOutputs bte tdTarget
+    deleteOldTargetOutputs bte tdTarget
 
     Print.executionCmd verbosityCommands btePrinter tdTarget
 
