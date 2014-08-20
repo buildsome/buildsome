@@ -20,7 +20,7 @@ import Control.Monad.Trans.Either
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, isJust, catMaybes)
+import Data.Maybe (fromMaybe, isJust, catMaybes, maybeToList)
 import Data.Monoid
 import Data.Set (Set)
 import Data.String (IsString(..))
@@ -188,12 +188,6 @@ assertExplicitInputsExist BuildTargetEnv{..} paths = do
     Left err | bteExplicitlyDemanded -> E.throwIO err
              | otherwise -> return ExplicitPathsNotBuilt
 
-buildExplicitDirectPaths :: BuildTargetEnv -> [FilePath] -> IO (ExplicitPathsBuilt, BuiltTargets)
-buildExplicitDirectPaths bte@BuildTargetEnv{..} paths = do
-  built <- waitForSlaves . concat =<< mapM (mkSlavesDirectAccess bte) paths
-  explicitPathsBuilt <- assertExplicitInputsExist bte paths
-  return (explicitPathsBuilt, built)
-
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO BuiltTargets
 want printer buildsome reason paths = do
   printStrLn printer $
@@ -206,7 +200,8 @@ want printer buildsome reason paths = do
         , bteParents = []
         , bteExplicitlyDemanded = True
         }
-  (buildTime, (ExplicitPathsBuilt, builtTargets)) <- timeIt $ buildExplicitDirectPaths bte paths
+  (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
+    timeIt $ buildExplicit bte $ map SlaveRequestDirect paths
   let stdErrs = Slave.statsStdErr $ builtStats builtTargets
       lastLinePrefix
         | not (S.null stdErrs) =
@@ -262,22 +257,24 @@ isPhony bs path = path `S.member` bsPhoniesSet bs
 targetIsPhony :: Buildsome -> Target -> Bool
 targetIsPhony bs = all (isPhony bs) . targetOutputs
 
-mkSlavesDirectAccess :: BuildTargetEnv -> FilePath -> IO [Slave]
-mkSlavesDirectAccess bte@BuildTargetEnv{..} path
-  | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
+slaveForDirectPath :: BuildTargetEnv -> FilePath -> IO (Maybe Slave)
+slaveForDirectPath bte@BuildTargetEnv{..} path
+  | FilePath.isAbsolute path =
+    -- Only project-relative paths may have output rules:
+    return Nothing
   | otherwise =
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
-  Nothing ->
-    return []
+  Nothing -> return Nothing
   Just (targetRep, targetKind, target) ->
-    (: []) <$>
+    Just <$>
     getSlaveForTarget
     bte { bteExplicitlyDemanded =
           bteExplicitlyDemanded || targetKind == BuildMaps.TargetSimple }
     (TargetDesc targetRep target)
 
-makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
-makeChildSlaves bte@BuildTargetEnv{..} path
+slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [Slave]
+slavesForChildrenOf bte@BuildTargetEnv{..} path
+  | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | not (null childPatterns) =
     fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome bteReason) ++ ")"
   | otherwise =
@@ -289,21 +286,34 @@ makeChildSlaves bte@BuildTargetEnv{..} path
     DirectoryBuildMap childTargets childPatterns =
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
 
-mkSlavesForAccessType ::
-  FSHook.AccessType -> BuildTargetEnv -> FilePath -> IO [Slave]
-mkSlavesForAccessType FSHook.AccessTypeFull = mkSlaves
-mkSlavesForAccessType FSHook.AccessTypeModeOnly = mkSlavesDirectAccess
-mkSlavesForAccessType FSHook.AccessTypeStat =
-  -- This is a (necessary) hack! See KNOWN_ISSUES: "stat of directories"
-  mkSlavesDirectAccess
+data SlaveRequest
+  = SlaveRequestDirect FilePath -- Just the direct path
+  | SlaveRequestFull FilePath   -- The path and all underneath it
+inputFilePath :: SlaveRequest -> FilePath
+inputFilePath (SlaveRequestDirect path) = path
+inputFilePath (SlaveRequestFull path) = path
 
-mkSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
-mkSlaves bte@BuildTargetEnv{..} path
-  | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
-  | otherwise = do
-  slaves <- mkSlavesDirectAccess bte path
-  childs <- makeChildSlaves bte { bteReason = bteReason <> " (Container directory)" } path
-  return $ slaves ++ childs
+slavesFor :: BuildTargetEnv -> SlaveRequest -> IO [Slave]
+slavesFor bte (SlaveRequestDirect path) = maybeToList <$> slaveForDirectPath bte path
+slavesFor bte@BuildTargetEnv{..} (SlaveRequestFull path) = do
+  mSlave <- slaveForDirectPath bte path
+  children <- slavesForChildrenOf bte { bteReason = bteReason <> " (Container directory)" } path
+  return $ maybeToList mSlave ++ children
+
+slaveReqForAccessType :: FSHook.AccessType -> FilePath -> SlaveRequest
+slaveReqForAccessType FSHook.AccessTypeFull = SlaveRequestFull
+slaveReqForAccessType FSHook.AccessTypeModeOnly = SlaveRequestDirect
+slaveReqForAccessType FSHook.AccessTypeStat =
+  -- This is a (necessary) hack! See KNOWN_ISSUES: "stat of directories"
+  SlaveRequestDirect
+
+
+buildExplicit :: BuildTargetEnv -> [SlaveRequest] -> IO (ExplicitPathsBuilt, BuiltTargets)
+buildExplicit bte@BuildTargetEnv{..} inputs = do
+  built <- waitForSlaves . concat =<< mapM (slavesFor bte) inputs
+  explicitPathsBuilt <- assertExplicitInputsExist bte $ map inputFilePath inputs
+  return (explicitPathsBuilt, built)
+
 
 data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs (ColorText -> ByteString) Target [FilePath]
   deriving (Typeable)
@@ -476,24 +486,36 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {.
       | inputPath `S.member` hinted = return []
       | otherwise = mkInputSlavesFor desc inputPath
     bteImplicit = bte { bteExplicitlyDemanded = False }
-    mkInputSlavesFor (Db.FileDescNonExisting depReason) =
-      mkSlavesDirectAccess bteImplicit { bteReason = depReason }
-    mkInputSlavesFor (Db.FileDescExisting (_mtime, inputDesc)) =
+    mkInputSlavesFor desc inputPath =
+      case fromFileDesc desc of
+        Nothing -> return []
+        Just (depReason, accessType) ->
+          slavesFor bteImplicit { bteReason = depReason } $
+          slaveReqForAccessType accessType inputPath
+    fromFileDesc (Db.FileDescNonExisting depReason) =
+      -- The access may be larger than mode-only, but we only need to
+      -- know if it exists or not because we only need to know whether
+      -- the execution log will be re-used or not, not more.
+      Just (depReason, FSHook.AccessTypeModeOnly)
+    fromFileDesc (Db.FileDescExisting (_mtime, inputDesc)) =
       case inputDesc of
-      Db.InputDesc { Db.idContentAccess = Just (depReason, _) } -> mkSlaves bteImplicit { bteReason = depReason }
-      Db.InputDesc { Db.idStatAccess = Just (depReason, _) } -> mkSlavesDirectAccess bteImplicit { bteReason = depReason }
-      Db.InputDesc { Db.idModeAccess = Just (depReason, _) } -> mkSlavesDirectAccess bteImplicit { bteReason = depReason }
-      Db.InputDesc Nothing Nothing Nothing -> const $ return []
+      Db.InputDesc { Db.idContentAccess = Just (depReason, _) } ->
+        Just (depReason, FSHook.AccessTypeFull)
+      Db.InputDesc { Db.idStatAccess = Just (depReason, _) } ->
+        Just (depReason, FSHook.AccessTypeModeOnly)
+      Db.InputDesc { Db.idModeAccess = Just (depReason, _) } ->
+        Just (depReason, FSHook.AccessTypeStat)
+      Db.InputDesc Nothing Nothing Nothing -> Nothing
 
 parentDirs :: [FilePath] -> [FilePath]
 parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
 
-buildDirectPaths :: (ColorText -> Reason) -> BuildTargetEnv -> [FilePath] -> IO BuiltTargets
-buildDirectPaths mkReason bte@BuildTargetEnv{..} = waitForSlaves . concat <=< mapM mkPath
+buildMany :: (ColorText -> Reason) -> BuildTargetEnv -> [SlaveRequest] -> IO BuiltTargets
+buildMany mkReason bte@BuildTargetEnv{..} = waitForSlaves . concat <=< mapM mkSlave
   where
     Color.Scheme{..} = Color.scheme
-    mkPath path =
-      mkSlavesDirectAccess bte { bteReason = mkReason (cTarget (show path)) } path
+    mkSlave req =
+      slavesFor bte { bteReason = mkReason (cTarget (show (inputFilePath req))) } req
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -683,18 +705,17 @@ makeImplicitInputs ::
 makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
   Parallelism.withReleased Parallelism.PriorityHigh parCell (bsParallelism bteBuildsome) $ do
     targetParentsBuilt <-
-      buildDirectPaths (("Container directory of: " <>) . (<> (" " <> accessDoc)))
-      bteImplicit $ parentDirs allPaths
+      buildMany (("Container directory of: " <>) . (<> (" " <> accessDoc)))
+      bteImplicit $ map SlaveRequestDirect $ parentDirs allPaths
 
-    slaves <-
-      fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
-      mkSlavesForAccessType accessType bteImplicit path
-
-    mappendBuiltTargets . mappend targetParentsBuilt =<< waitForSlaves slaves
+    inputsBuilt <-
+      buildMany (<> (": " <> accessDoc)) bteImplicit $ map slaveReqForHookInput inputs
+    atomicModifyIORef_ builtTargetsRef (<> (targetParentsBuilt <> inputsBuilt))
   where
+    slaveReqForHookInput (FSHook.Input accessType path) =
+      slaveReqForAccessType accessType path
     allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
-    bteImplicit = bte { bteExplicitlyDemanded = False, bteReason = accessDoc }
-    mappendBuiltTargets x = atomicModifyIORef_ builtTargetsRef (mappend x)
+    bteImplicit = bte { bteExplicitlyDemanded = False }
 
 fsAccessHandlers ::
   IORef (Map FilePath (KeepsOldContent, Reason)) ->
@@ -855,15 +876,17 @@ buildTargetHints ::
 buildTargetHints bte@BuildTargetEnv{..} parCell target =
   Parallelism.withReleased Parallelism.PriorityLow parCell (bsParallelism bteBuildsome) $ do
     let parentPaths = parentDirs $ targetOutputs target
-    targetParentsBuilt <- buildDirectPaths ("Container directory of output: " <>) bte parentPaths
+    targetParentsBuilt <-
+      buildMany ("Container directory of output: " <>) bte $
+      map SlaveRequestDirect parentPaths
     explicitParentsBuilt <- assertExplicitInputsExist bte parentPaths
     case explicitParentsBuilt of
       ExplicitPathsNotBuilt -> return (ExplicitPathsNotBuilt, targetParentsBuilt)
       ExplicitPathsBuilt -> do
         (explicitPathsBuilt, inputsBuilt) <-
-          buildExplicitDirectPaths
+          buildExplicit
             bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) } $
-            targetAllInputs target
+            map SlaveRequestDirect $ targetAllInputs target
         return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
   where
     Color.Scheme{..} = Color.scheme
