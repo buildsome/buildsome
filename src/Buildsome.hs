@@ -254,8 +254,8 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
     when (explicitness == Explicit) $ assertExists path $
       MissingRule (bsRender bteBuildsome) path bteReason bteParents
     return []
-  Just tgt@(_, target) -> do
-    slave <- getSlaveForTarget bte tgt
+  Just (targetRep, target) -> do
+    slave <- getSlaveForTarget bte $ TargetDesc targetRep target
     (: []) <$> case explicitness of
       Implicit -> return slave
       Explicit -> verifyFileGetsCreated slave
@@ -271,9 +271,10 @@ makeChildSlaves bte@BuildTargetEnv{..} path
     fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome bteReason) ++ ")"
   | otherwise =
     traverse (getSlaveForTarget bte) $
-    filter (not . isPhony . snd) childTargets
+    filter (not . isPhony . tdTarget) childTargetDescs
   where
     isPhony = all (`S.member` bsPhoniesSet bteBuildsome) . targetOutputs
+    childTargetDescs = map (uncurry TargetDesc) childTargets
     DirectoryBuildMap childTargets childPatterns =
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
 
@@ -417,13 +418,17 @@ mkStats targetRep execTime selfTime stdOutputs (BuiltTargets deps stats) =
     else S.empty
   }
 
+data TargetDesc = TargetDesc
+  { tdRep :: TargetRep
+  , tdTarget :: Target
+  }
 
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Cell ->
-  TargetRep -> Target -> Db.ExecutionLog ->
+  TargetDesc -> Db.ExecutionLog ->
   IO (Either (ByteString, FilePath) Slave.Stats)
-tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.ExecutionLog {..} = do
-  builtTargets <- executionLogWaitForInputs bte parCell target el
+tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} el@Db.ExecutionLog {..} = do
+  builtTargets <- executionLogWaitForInputs bte parCell tdTarget el
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
       verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
@@ -440,10 +445,10 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target el@Db.Execu
         verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
         verifyMDesc "output(content)" filePath (fileContentDescOfStat db filePath stat) oldMContentDesc
     liftIO $
-      replayExecutionLog bte target
+      replayExecutionLog bte tdTarget
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    return $ mkStats targetRep Slave.FromCache elSelfTime elStdoutputs builtTargets
+    return $ mkStats tdRep Slave.FromCache elSelfTime elStdoutputs builtTargets
   where
     db = bsDb bteBuildsome
     verifyMDesc _   _        _       Nothing        = return ()
@@ -502,18 +507,18 @@ buildParentDirectories priority bte@BuildTargetEnv{..} parCell explicitness =
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO (Maybe Slave.Stats)
-findApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target = do
-  mExecutionLog <- readIRef $ Db.executionLog target $ bsDb bteBuildsome
+findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Maybe Slave.Stats)
+findApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
+  mExecutionLog <- readIRef $ Db.executionLog tdTarget $ bsDb bteBuildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return Nothing
     Just executionLog -> do
-      res <- tryApplyExecutionLog bte parCell targetRep target executionLog
+      res <- tryApplyExecutionLog bte parCell TargetDesc{..} executionLog
       case res of
         Left (str, filePath) -> do
           printStrLn btePrinter $ bsRender bteBuildsome $ mconcat
-            [ "Execution log of ", cTarget (show (targetOutputs target))
+            [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
             , " did not match because ", fromBytestring8 str, ": "
             , cPath (show filePath)
             ]
@@ -546,9 +551,9 @@ panic render msg = do
   E.throwIO $ PanicError render msg
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: BuildTargetEnv -> (TargetRep, Target) -> IO Slave
-getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
-  | any ((== targetRep) . fst) bteParents =
+getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO Slave
+getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
+  | any ((== tdRep) . fst) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
@@ -556,21 +561,21 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
       atomicModifyIORef (bsSlaveByTargetRep bteBuildsome) $
       \oldSlaveMap ->
       -- TODO: Use a faster method to lookup&insert at the same time
-      case M.lookup targetRep oldSlaveMap of
+      case M.lookup tdRep oldSlaveMap of
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
       Nothing ->
-        ( M.insert targetRep newSlaveMVar oldSlaveMap
+        ( M.insert tdRep newSlaveMVar oldSlaveMap
         , mkSlave newSlaveMVar $ \printer allocParCell ->
           allocParCell $ \parCell -> restoreMask $ do
             let newBte = bte { bteParents = newParents, btePrinter = printer }
-            buildTarget newBte parCell targetRep target
+            buildTarget newBte parCell TargetDesc{..}
         )
     where
       Color.Scheme{..} = Color.scheme
       annotate =
         annotateException $ BS8.unpack $ bsRender bteBuildsome $
-        "build failure of " <> cTarget (show (targetOutputs target)) <> ":\n"
-      newParents = (targetRep, bteReason) : bteParents
+        "build failure of " <> cTarget (show (targetOutputs tdTarget)) <> ":\n"
+      newParents = (tdRep, bteReason) : bteParents
       panicHandler e@E.SomeException {} =
         panic (bsRender bteBuildsome) $ "FAILED during making of slave: " ++ show e
       mkSlave mvar action = do
@@ -581,7 +586,8 @@ getSlaveForTarget bte@BuildTargetEnv{..} (targetRep, target)
               bsParallelism bteBuildsome
             depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
             depPrinter <- Printer.newFrom btePrinter depPrinterId
-            Slave.new target depPrinterId (targetOutputs target) $ annotate $ action depPrinter allocParCell
+            Slave.new tdTarget depPrinterId (targetOutputs tdTarget) $
+              annotate $ action depPrinter allocParCell
         putMVar mvar slave
         return slave
 
@@ -846,38 +852,38 @@ redirectExceptions buildsome =
     bsFastKillBuild buildsome e
     E.throwIO e
 
-buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetRep -> Target -> IO Slave.Stats
-buildTarget bte@BuildTargetEnv{..} parCell targetRep target =
+buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Slave.Stats
+buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
   redirectExceptions bteBuildsome $ do
-    mSlaveStats <- findApplyExecutionLog bte parCell targetRep target
+    mSlaveStats <- findApplyExecutionLog bte parCell TargetDesc{..}
     case mSlaveStats of
       Just slaveStats -> return slaveStats
-      Nothing -> Print.targetWrap btePrinter bteReason target "BUILDING" $ do
+      Nothing -> Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
         targetParentsBuilt <-
           buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
-          targetOutputs target
+          targetOutputs tdTarget
 
         registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
         mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $
-          targetOutputs target
+          targetOutputs tdTarget
 
         slaves <-
           mkSlavesForPaths bte
-            { bteReason = "Hint from " <> cTarget (show (targetOutputs target))
-            } Explicit $ targetAllInputs target
+            { bteReason = "Hint from " <> cTarget (show (targetOutputs tdTarget))
+            } Explicit $ targetAllInputs tdTarget
         hintedBuilt <-
           waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome
           slaves
 
-        Print.executionCmd verbosityCommands btePrinter target
+        Print.executionCmd verbosityCommands btePrinter tdTarget
 
-        RunCmdResults{..} <- runCmd bte parCell target
+        RunCmdResults{..} <- runCmd bte parCell tdTarget
 
-        outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) target
-        saveExecutionLog bteBuildsome target rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
+        outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) tdTarget
+        saveExecutionLog bteBuildsome tdTarget rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
 
         Print.targetTiming btePrinter "now" rcrSelfTime
-        return $ mkStats targetRep Slave.BuiltNow rcrSelfTime rcrStdOutputs $
+        return $ mkStats tdRep Slave.BuiltNow rcrSelfTime rcrStdOutputs $
           mconcat [targetParentsBuilt, hintedBuilt, rcrBuiltTargets]
   where
     Color.Scheme{..} = Color.scheme
