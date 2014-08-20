@@ -1,3 +1,10 @@
+* buildParentDirectories should probably not happen on inputs, it's enough on outputs?
+
+* buildParentDirectories in the hints case should give a nice error if
+  target failed to build parent dir, so you don't get weird error or
+  even worse: wrongfully created dir from the child target build
+  (missing parent dir)
+
 * "-k" should print errors ASAP and not at the end
 
 * "-C" should always generate the file at the root
