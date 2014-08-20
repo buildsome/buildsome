@@ -429,10 +429,10 @@ data TargetDesc = TargetDesc
   }
 
 tryApplyExecutionLog ::
-  BuildTargetEnv -> Parallelism.Cell ->
+  BuiltTargets -> BuildTargetEnv -> Parallelism.Cell ->
   TargetDesc -> Db.ExecutionLog ->
   IO (Either (ByteString, FilePath) Slave.Stats)
-tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} el@Db.ExecutionLog {..} = do
+tryApplyExecutionLog hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} el@Db.ExecutionLog {..} = do
   builtTargets <- executionLogWaitForInputs bte parCell tdTarget el
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
@@ -453,7 +453,8 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} el@Db.Executi
       replayExecutionLog bte tdTarget
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    return $ mkStats tdRep Slave.FromCache elSelfTime elStdoutputs builtTargets
+    return $ mkStats tdRep Slave.FromCache elSelfTime elStdoutputs $
+      mconcat [builtTargets, hintedBuilt]
   where
     db = bsDb bteBuildsome
     verifyMDesc _   _        _       Nothing        = return ()
@@ -470,18 +471,7 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlave (M.toList elInputsDescs)
-
-  let hintReason = "Hint from " <> (cTarget . show . targetOutputs) target
-  hintedSlaves <-
-    mkSlavesForPaths bte { bteReason = hintReason } Explicit $ targetAllInputs target
-
-  targetParentsStats <-
-    buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
-    targetOutputs target
-
-  let allSlaves = speculativeSlaves ++ hintedSlaves
-  mappend targetParentsStats <$>
-    waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome allSlaves
+  waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome speculativeSlaves
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs target
@@ -512,14 +502,14 @@ buildParentDirectories priority bte@BuildTargetEnv{..} parCell explicitness =
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Maybe Slave.Stats)
-findApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
+findApplyExecutionLog :: BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Maybe Slave.Stats)
+findApplyExecutionLog hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
   mExecutionLog <- readIRef $ Db.executionLog tdTarget $ bsDb bteBuildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return Nothing
     Just executionLog -> do
-      res <- tryApplyExecutionLog bte parCell TargetDesc{..} executionLog
+      res <- tryApplyExecutionLog hintedBuilt bte parCell TargetDesc{..} executionLog
       case res of
         Left (str, filePath) -> do
           printStrLn btePrinter $ bsRender bteBuildsome $ mconcat
@@ -857,43 +847,60 @@ redirectExceptions buildsome =
     bsFastKillBuild buildsome e
     E.throwIO e
 
+deleteTargetOutputs :: BuildTargetEnv -> TargetType FilePath input -> IO ()
+deleteTargetOutputs BuildTargetEnv{..} target = do
+  registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
+  mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $
+    targetOutputs target
+
+buildTargetHints ::
+  BuildTargetEnv -> Parallelism.Cell -> TargetType FilePath FilePath -> IO BuiltTargets
+buildTargetHints bte@BuildTargetEnv{..} parCell target = do
+  targetParentsBuilt <-
+    buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
+    targetOutputs target
+
+  slaves <-
+    mkSlavesForPaths bte
+      { bteReason = "Hint from " <> cTarget (show (targetOutputs target))
+      } Explicit $ targetAllInputs target
+  inputsBuilt <- waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome
+    slaves
+  return $ targetParentsBuilt <> inputsBuilt
+  where
+    Color.Scheme{..} = Color.scheme
+
+buildTargetReal ::
+  BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Slave.Stats
+buildTargetReal hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} =
+  Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
+    -- Delete the old target outputs (will be rebuilt)
+    deleteTargetOutputs bte tdTarget
+
+    Print.executionCmd verbosityCommands btePrinter tdTarget
+
+    RunCmdResults{..} <- runCmd bte parCell tdTarget
+
+    outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) tdTarget
+    saveExecutionLog bteBuildsome tdTarget rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
+
+    Print.targetTiming btePrinter "now" rcrSelfTime
+    return $ mkStats tdRep Slave.BuiltNow rcrSelfTime rcrStdOutputs $
+      mconcat [hintedBuilt, rcrBuiltTargets]
+  where
+    verbosityCommands = Opts.verbosityCommands verbosity
+    verbosity = optVerbosity (bsOpts bteBuildsome)
+
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
   redirectExceptions bteBuildsome $ do
-    mSlaveStats <- findApplyExecutionLog bte parCell TargetDesc{..}
+    hintedBuilt <- buildTargetHints bte parCell tdTarget
+    mSlaveStats <- findApplyExecutionLog hintedBuilt bte parCell TargetDesc{..}
     case mSlaveStats of
       Just slaveStats -> return slaveStats
-      Nothing -> Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
-        targetParentsBuilt <-
-          buildParentDirectories Parallelism.PriorityLow bte parCell Explicit $
-          targetOutputs tdTarget
-
-        registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
-        mapM_ (removeOldOutput btePrinter bteBuildsome registeredOutputs) $
-          targetOutputs tdTarget
-
-        slaves <-
-          mkSlavesForPaths bte
-            { bteReason = "Hint from " <> cTarget (show (targetOutputs tdTarget))
-            } Explicit $ targetAllInputs tdTarget
-        hintedBuilt <-
-          waitForSlaves Parallelism.PriorityLow btePrinter parCell bteBuildsome
-          slaves
-
-        Print.executionCmd verbosityCommands btePrinter tdTarget
-
-        RunCmdResults{..} <- runCmd bte parCell tdTarget
-
-        outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) tdTarget
-        saveExecutionLog bteBuildsome tdTarget rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
-
-        Print.targetTiming btePrinter "now" rcrSelfTime
-        return $ mkStats tdRep Slave.BuiltNow rcrSelfTime rcrStdOutputs $
-          mconcat [targetParentsBuilt, hintedBuilt, rcrBuiltTargets]
+      Nothing -> buildTargetReal hintedBuilt bte parCell TargetDesc{..}
   where
     Color.Scheme{..} = Color.scheme
-    verbosityCommands = Opts.verbosityCommands verbosity
-    verbosity = optVerbosity (bsOpts bteBuildsome)
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =
