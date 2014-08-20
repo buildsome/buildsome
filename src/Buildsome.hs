@@ -96,7 +96,7 @@ data Buildsome = Buildsome
     -- dynamic:
   , bsDb :: Db
   , bsFsHook :: FSHook
-  , bsSlaveByTargetRep :: IORef (Map TargetRep (MVar Slave))
+  , bsSlaveByTargetRep :: IORef (Map TargetRep (MVar (Slave Stats)))
   , bsParallelism :: Parallelism
   , bsFreshPrinterIds :: Fresh Printer.Id
   , bsFastKillBuild :: E.SomeException -> IO ()
@@ -259,7 +259,7 @@ isPhony bs path = path `S.member` bsPhoniesSet bs
 targetIsPhony :: Buildsome -> Target -> Bool
 targetIsPhony bs = all (isPhony bs) . targetOutputs
 
-slaveForDirectPath :: BuildTargetEnv -> FilePath -> IO (Maybe Slave)
+slaveForDirectPath :: BuildTargetEnv -> FilePath -> IO (Maybe (Slave Stats))
 slaveForDirectPath bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path =
     -- Only project-relative paths may have output rules:
@@ -274,7 +274,7 @@ slaveForDirectPath bte@BuildTargetEnv{..} path
           bteExplicitlyDemanded || targetKind == BuildMaps.TargetSimple }
     (TargetDesc targetRep target)
 
-slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [Slave]
+slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [Slave Stats]
 slavesForChildrenOf bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | not (null childPatterns) =
@@ -295,7 +295,7 @@ inputFilePath :: SlaveRequest -> FilePath
 inputFilePath (SlaveRequestDirect path) = path
 inputFilePath (SlaveRequestFull path) = path
 
-slavesFor :: BuildTargetEnv -> SlaveRequest -> IO [Slave]
+slavesFor :: BuildTargetEnv -> SlaveRequest -> IO [Slave Stats]
 slavesFor bte (SlaveRequestDirect path) = maybeToList <$> slaveForDirectPath bte path
 slavesFor bte@BuildTargetEnv{..} (SlaveRequestFull path) = do
   mSlave <- slaveForDirectPath bte path
@@ -409,13 +409,13 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
 
 waitForSlavesWithParReleased ::
   Parallelism.Priority -> Parallelism.Cell -> Buildsome ->
-  [Slave] -> IO BuiltTargets
+  [Slave Stats] -> IO BuiltTargets
 waitForSlavesWithParReleased _ _ _ [] = return mempty
 waitForSlavesWithParReleased priority parCell buildsome slaves =
   Parallelism.withReleased priority parCell (bsParallelism buildsome) $
   waitForSlaves slaves
 
-waitForSlaves :: [Slave] -> IO BuiltTargets
+waitForSlaves :: [Slave Stats] -> IO BuiltTargets
 waitForSlaves slaves =
   do  stats <- mconcat <$> mapM Slave.wait slaves
       return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
@@ -565,7 +565,7 @@ panic render msg = do
   E.throwIO $ PanicError render msg
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO Slave
+getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO (Slave Stats)
 getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
   | any ((== tdRep) . fst) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents

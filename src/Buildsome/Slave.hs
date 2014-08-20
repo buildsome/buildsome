@@ -7,7 +7,6 @@ module Buildsome.Slave
   , cancel
   ) where
 
-import Buildsome.Stats (Stats(..))
 import Control.Applicative ((<$>))
 import Control.Concurrent.Async (Async)
 import Data.Monoid
@@ -20,30 +19,30 @@ import qualified Control.Concurrent.Async as Async
 import qualified Control.Exception as E
 import qualified Lib.Printer as Printer
 
-data Slave = Slave
+data Slave a = Slave
   { slaveTarget :: Target
   , slavePrinterId :: Printer.Id
   , slaveOutputPaths :: [FilePath]
-  , slaveExecution :: Async Stats
+  , slaveExecution :: Async a
   }
 
-target :: Slave -> Target
+target :: Slave a -> Target
 target = slaveTarget
 
-new :: Target -> Printer.Id -> [FilePath] -> IO Stats -> IO Slave
+new :: Target -> Printer.Id -> [FilePath] -> IO a -> IO (Slave a)
 new tgt printerId outputPaths action =
   Slave tgt printerId outputPaths <$> Async.async action
 
-str :: (Monoid str, IsString str) => Slave -> str
+str :: (Monoid str, IsString str) => Slave a -> str
 str slave =
   Printer.idStr (slavePrinterId slave) <> ": " <>
   fromString (show (slaveOutputPaths slave))
 
-wait :: Slave -> IO Stats
+wait :: Slave a -> IO a
 wait = Async.wait . slaveExecution
 
-waitCatch :: Slave -> IO (Either E.SomeException Stats)
+waitCatch :: Slave a -> IO (Either E.SomeException a)
 waitCatch = Async.waitCatch . slaveExecution
 
-cancel :: Slave -> IO ()
+cancel :: Slave a -> IO ()
 cancel = Async.cancel . slaveExecution
