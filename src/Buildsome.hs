@@ -410,30 +410,17 @@ verifyFileDesc str filePath fileDesc existingVerify = do
     (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
     (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
 
-mkStats ::
-  (Eq a, Monoid a) =>
-  TargetRep -> Slave.When -> DiffTime -> StdOutputs a -> BuiltTargets -> Slave.Stats
-mkStats targetRep execTime selfTime stdOutputs (BuiltTargets deps stats) =
-  mappend stats
-  Slave.Stats
-  { Slave.statsOfTarget = M.singleton targetRep (execTime, selfTime, deps)
-  , Slave.statsStdErr =
-    if mempty /= stdErr stdOutputs
-    then S.singleton targetRep
-    else S.empty
-  }
-
 data TargetDesc = TargetDesc
   { tdRep :: TargetRep
   , tdTarget :: Target
   }
 
 tryApplyExecutionLog ::
-  BuiltTargets -> BuildTargetEnv -> Parallelism.Cell ->
+  BuildTargetEnv -> Parallelism.Cell ->
   TargetDesc -> Db.ExecutionLog ->
-  IO (Either (ByteString, FilePath) Slave.Stats)
-tryApplyExecutionLog hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} el@Db.ExecutionLog {..} = do
-  builtTargets <- executionLogWaitForInputs bte parCell tdTarget el
+  IO (Either (ByteString, FilePath) (Db.ExecutionLog, BuiltTargets))
+tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@Db.ExecutionLog {..} = do
+  builtTargets <- executionLogWaitForInputs bte parCell tdTarget executionLog
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
       verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
@@ -453,8 +440,7 @@ tryApplyExecutionLog hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} e
       replayExecutionLog bte tdTarget
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
       elStdoutputs elSelfTime
-    return $ mkStats tdRep Slave.FromCache elSelfTime elStdoutputs $
-      mconcat [builtTargets, hintedBuilt]
+    return (executionLog, builtTargets)
   where
     db = bsDb bteBuildsome
     verifyMDesc _   _        _       Nothing        = return ()
@@ -502,15 +488,15 @@ buildParentDirectories priority bte@BuildTargetEnv{..} parCell explicitness =
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Maybe Slave.Stats)
-findApplyExecutionLog hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
+findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
+findApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
   mExecutionLog <- readIRef $ Db.executionLog tdTarget $ bsDb bteBuildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return Nothing
     Just executionLog -> do
-      res <- tryApplyExecutionLog hintedBuilt bte parCell TargetDesc{..} executionLog
-      case res of
+      eRes <- tryApplyExecutionLog bte parCell TargetDesc{..} executionLog
+      case eRes of
         Left (str, filePath) -> do
           printStrLn btePrinter $ bsRender bteBuildsome $ mconcat
             [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
@@ -518,7 +504,7 @@ findApplyExecutionLog hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} 
             , cPath (show filePath)
             ]
           return Nothing
-        Right stats -> return (Just stats)
+        Right res -> return (Just res)
   where
     Color.Scheme{..} = Color.scheme
 
@@ -777,11 +763,11 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     shellCmd = shellCmdVerify bte target ["HOME", "PATH"]
     Color.Scheme{..} = Color.scheme
 
-saveExecutionLog ::
+makeExecutionLog ::
   Buildsome -> Target ->
   Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
-  [FilePath] -> StdOutputs ByteString -> DiffTime -> IO ()
-saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
+  [FilePath] -> StdOutputs ByteString -> DiffTime -> IO Db.ExecutionLog
+makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
     forM outputs $ \outPath -> do
@@ -796,7 +782,7 @@ saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
             else Just <$> fileContentDescOfStat db outPath stat
           return $ Db.FileDescExisting $ Db.OutputDesc (fileStatDescOfStat stat) mContentDesc
       return (outPath, fileDesc)
-  writeIRef (Db.executionLog target (bsDb buildsome)) Db.ExecutionLog
+  return Db.ExecutionLog
     { elBuildId = bsBuildId buildsome
     , elCommand = targetCmds target
     , elInputsDescs = inputsDescs
@@ -871,8 +857,8 @@ buildTargetHints bte@BuildTargetEnv{..} parCell target = do
     Color.Scheme{..} = Color.scheme
 
 buildTargetReal ::
-  BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Slave.Stats
-buildTargetReal hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} =
+  BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Db.ExecutionLog, BuiltTargets)
+buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
   Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
     -- Delete the old target outputs (will be rebuilt)
     deleteTargetOutputs bte tdTarget
@@ -882,11 +868,11 @@ buildTargetReal hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} =
     RunCmdResults{..} <- runCmd bte parCell tdTarget
 
     outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) tdTarget
-    saveExecutionLog bteBuildsome tdTarget rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
+    executionLog <- makeExecutionLog bteBuildsome tdTarget rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
+    writeIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) executionLog
 
     Print.targetTiming btePrinter "now" rcrSelfTime
-    return $ mkStats tdRep Slave.BuiltNow rcrSelfTime rcrStdOutputs $
-      mconcat [hintedBuilt, rcrBuiltTargets]
+    return (executionLog, rcrBuiltTargets)
   where
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
@@ -894,11 +880,21 @@ buildTargetReal hintedBuilt bte@BuildTargetEnv{..} parCell TargetDesc{..} =
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
   redirectExceptions bteBuildsome $ do
-    hintedBuilt <- buildTargetHints bte parCell tdTarget
-    mSlaveStats <- findApplyExecutionLog hintedBuilt bte parCell TargetDesc{..}
-    case mSlaveStats of
-      Just slaveStats -> return slaveStats
-      Nothing -> buildTargetReal hintedBuilt bte parCell TargetDesc{..}
+    hintedBuiltTargets <- buildTargetHints bte parCell tdTarget
+    mSlaveStats <- findApplyExecutionLog bte parCell TargetDesc{..}
+    (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
+      case mSlaveStats of
+      Just res -> return (Slave.FromCache, res)
+      Nothing -> (,) Slave.BuiltNow <$> buildTargetReal bte parCell TargetDesc{..}
+    let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
+    return $ stats <>
+      Slave.Stats
+      { Slave.statsOfTarget = M.singleton tdRep (whenBuilt, elSelfTime, deps)
+      , Slave.statsStdErr =
+        if mempty /= stdErr elStdoutputs
+        then S.singleton tdRep
+        else S.empty
+      }
   where
     Color.Scheme{..} = Color.scheme
 
