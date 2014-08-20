@@ -43,6 +43,7 @@ data BuildMaps = BuildMaps
   }
 
 data TargetKind = TargetPattern | TargetSimple
+  deriving (Eq)
 
 find :: BuildMaps -> FilePath -> Maybe (TargetRep, TargetKind, Target)
 find (BuildMaps buildMap childrenMap) path =

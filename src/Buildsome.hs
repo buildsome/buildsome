@@ -162,6 +162,7 @@ data BuildTargetEnv = BuildTargetEnv
   , btePrinter :: Printer
   , bteReason :: Reason
   , bteParents :: Parents
+  , bteExplicitlyDemanded :: Bool
   }
 
 data BuiltTargets = BuiltTargets
@@ -176,13 +177,25 @@ instance Monoid BuiltTargets where
 mkSlavesForPaths :: BuildTargetEnv -> [FilePath] -> IO [Slave]
 mkSlavesForPaths bte = fmap concat . mapM (mkSlaves bte)
 
-buildPathsExplicitly :: BuildTargetEnv -> [FilePath] -> IO BuiltTargets
-buildPathsExplicitly bte@BuildTargetEnv{..} paths = do
+data ExplicitPathsBuilt = ExplicitPathsBuilt | ExplicitPathsNotBuilt
+
+assertExplicitInputsExist :: BuildTargetEnv -> [FilePath] -> IO ExplicitPathsBuilt
+assertExplicitInputsExist BuildTargetEnv{..} paths = do
+  res <-
+    runEitherT $ forM_ paths $ \path ->
+    unless (isPhony bteBuildsome path) $ do
+      doesExist <- liftIO $ FilePath.exists path
+      unless doesExist $ left $ MissingRule (bsRender bteBuildsome) path bteReason bteParents
+  case res of
+    Right () -> return ExplicitPathsBuilt
+    Left err | bteExplicitlyDemanded -> E.throwIO err
+             | otherwise -> return ExplicitPathsNotBuilt
+
+buildExplicitPaths :: BuildTargetEnv -> [FilePath] -> IO (ExplicitPathsBuilt, BuiltTargets)
+buildExplicitPaths bte@BuildTargetEnv{..} paths = do
   built <- waitForSlaves =<< mkSlavesForPaths bte paths
-  forM_ paths $ \path ->
-    unless (isPhony bteBuildsome path) $
-    assertExists path (MissingRule (bsRender bteBuildsome) path bteReason bteParents)
-  return built
+  explicitPathsBuilt <- assertExplicitInputsExist bte paths
+  return (explicitPathsBuilt, built)
 
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO BuiltTargets
 want printer buildsome reason paths = do
@@ -194,8 +207,9 @@ want printer buildsome reason paths = do
         , btePrinter = printer
         , bteReason = reason
         , bteParents = []
+        , bteExplicitlyDemanded = True
         }
-  (buildTime, builtTargets) <- timeIt $ buildPathsExplicitly bte paths
+  (buildTime, (ExplicitPathsBuilt, builtTargets)) <- timeIt $ buildExplicitPaths bte paths
   let stdErrs = Slave.statsStdErr $ builtStats builtTargets
       lastLinePrefix
         | not (S.null stdErrs) =
@@ -209,11 +223,6 @@ want printer buildsome reason paths = do
   return builtTargets
   where
     Color.Scheme{..} = Color.scheme
-
-assertExists :: E.Exception e => FilePath -> e -> IO ()
-assertExists path err = do
-  doesExist <- FilePath.exists path
-  unless doesExist $ E.throwIO err
 
 fromBytestring8 :: IsString str => ByteString -> str
 fromBytestring8 = fromString . BS8.unpack
@@ -263,15 +272,20 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} path
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing ->
     return []
-  Just (targetRep, _targetKind, target) ->
-    (: []) <$> getSlaveForTarget bte (TargetDesc targetRep target)
+  Just (targetRep, targetKind, target) ->
+    (: []) <$>
+    getSlaveForTarget
+    bte { bteExplicitlyDemanded =
+          bteExplicitlyDemanded || targetKind == BuildMaps.TargetSimple }
+    (TargetDesc targetRep target)
 
 makeChildSlaves :: BuildTargetEnv -> FilePath -> IO [Slave]
 makeChildSlaves bte@BuildTargetEnv{..} path
   | not (null childPatterns) =
     fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome bteReason) ++ ")"
   | otherwise =
-    traverse (getSlaveForTarget bte) $
+    -- Non-pattern targets here, so they're explicitly demanded
+    traverse (getSlaveForTarget bte { bteExplicitlyDemanded = True }) $
     filter (not . targetIsPhony bteBuildsome . tdTarget) childTargetDescs
   where
     childTargetDescs = map (uncurry TargetDesc) childTargets
@@ -420,7 +434,7 @@ tryApplyExecutionLog ::
   TargetDesc -> Db.ExecutionLog ->
   IO (Either (ByteString, FilePath) (Db.ExecutionLog, BuiltTargets))
 tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@Db.ExecutionLog {..} = do
-  builtTargets <- executionLogWaitForInputs bte parCell tdTarget executionLog
+  builtTargets <- executionLogBuildInputs bte parCell tdTarget executionLog
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
       verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
@@ -451,8 +465,8 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@
       newDesc <- liftIO getDesc
       when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
 
-executionLogWaitForInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO BuiltTargets
-executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
+executionLogBuildInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO BuiltTargets
+executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
@@ -464,13 +478,14 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
     mkInputSlave (inputPath, desc)
       | inputPath `S.member` hinted = return []
       | otherwise = mkInputSlaveFor desc inputPath
+    bteImplicit = bte { bteExplicitlyDemanded = False }
     mkInputSlaveFor (Db.FileDescNonExisting depReason) =
-      mkSlavesDirectAccess bte { bteReason = depReason }
+      mkSlavesDirectAccess bteImplicit { bteReason = depReason }
     mkInputSlaveFor (Db.FileDescExisting (_mtime, inputDesc)) =
       case inputDesc of
-      Db.InputDesc { Db.idContentAccess = Just (depReason, _) } -> mkSlaves bte { bteReason = depReason }
-      Db.InputDesc { Db.idStatAccess = Just (depReason, _) } -> mkSlavesDirectAccess bte { bteReason = depReason }
-      Db.InputDesc { Db.idModeAccess = Just (depReason, _) } -> mkSlavesDirectAccess bte { bteReason = depReason }
+      Db.InputDesc { Db.idContentAccess = Just (depReason, _) } -> mkSlaves bteImplicit { bteReason = depReason }
+      Db.InputDesc { Db.idStatAccess = Just (depReason, _) } -> mkSlavesDirectAccess bteImplicit { bteReason = depReason }
+      Db.InputDesc { Db.idModeAccess = Just (depReason, _) } -> mkSlavesDirectAccess bteImplicit { bteReason = depReason }
       Db.InputDesc Nothing Nothing Nothing -> const $ return []
 
 buildParentDirectories ::
@@ -668,22 +683,23 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
       | ax < bx = a
       | otherwise = b
 
-makeInputs ::
+makeImplicitInputs ::
   IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
-makeInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
+makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
   do
     let allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
     parentBuiltTargets <-
-      buildParentDirectories Parallelism.PriorityHigh bte parCell
+      buildParentDirectories Parallelism.PriorityHigh bteImplicit parCell
       allPaths
     slaves <-
       fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
-      mkSlavesForAccessType accessType bte { bteReason = accessDoc } path
+      mkSlavesForAccessType accessType bteImplicit path
     mappendBuiltTargets . mappend parentBuiltTargets =<<
       waitForSlavesWithParReleased Parallelism.PriorityHigh parCell bteBuildsome
       slaves
     where
+      bteImplicit = bte { bteExplicitlyDemanded = False, bteReason = accessDoc }
       mappendBuiltTargets x = atomicModifyIORef_ builtTargetsRef (mappend x)
 
 fsAccessHandlers ::
@@ -707,7 +723,8 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
 
     fsDelayedAccessHandler accessDoc rawInputs rawOutputs = do
       commonAccessHandler accessDoc rawInputs rawOutputs
-        FSHook.outputPath delayedOutputEffect $ makeInputs builtTargetsRef bte parCell accessDoc
+        FSHook.outputPath delayedOutputEffect $
+        makeImplicitInputs builtTargetsRef bte parCell accessDoc
 
     targetOutputsSet = S.fromList $ targetOutputs target
 
@@ -840,19 +857,19 @@ deleteOldTargetOutputs BuildTargetEnv{..} target = do
     targetOutputs target
 
 buildTargetHints ::
-  BuildTargetEnv -> Parallelism.Cell -> TargetType FilePath FilePath -> IO BuiltTargets
+  BuildTargetEnv -> Parallelism.Cell -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
 buildTargetHints bte@BuildTargetEnv{..} parCell target = do
   targetParentsBuilt <-
     buildParentDirectories Parallelism.PriorityLow bte parCell $
     targetOutputs target
 
-  inputsBuilt <-
+  (explicitPathsBuilt, inputsBuilt) <-
     Parallelism.withReleased Parallelism.PriorityLow parCell (bsParallelism bteBuildsome) $
-    buildPathsExplicitly
+    buildExplicitPaths
       bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) } $
       targetAllInputs target
 
-  return $ targetParentsBuilt <> inputsBuilt
+  return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
   where
     Color.Scheme{..} = Color.scheme
 
@@ -879,21 +896,26 @@ buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Slave.Stats
 buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
   redirectExceptions bteBuildsome $ do
-    hintedBuiltTargets <- buildTargetHints bte parCell tdTarget
-    mSlaveStats <- findApplyExecutionLog bte parCell TargetDesc{..}
-    (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
-      case mSlaveStats of
-      Just res -> return (Slave.FromCache, res)
-      Nothing -> (,) Slave.BuiltNow <$> buildTargetReal bte parCell TargetDesc{..}
-    let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
-    return $ stats <>
-      Slave.Stats
-      { Slave.statsOfTarget = M.singleton tdRep (whenBuilt, elSelfTime, deps)
-      , Slave.statsStdErr =
-        if mempty /= stdErr elStdoutputs
-        then S.singleton tdRep
-        else S.empty
-      }
+    (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte parCell tdTarget
+    case explicitPathsBuilt of
+      ExplicitPathsNotBuilt ->
+        -- Failed to build our hints when allowed, just leave with collected stats
+        return $ builtStats hintedBuiltTargets
+      ExplicitPathsBuilt -> do
+        mSlaveStats <- findApplyExecutionLog bte parCell TargetDesc{..}
+        (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
+          case mSlaveStats of
+          Just res -> return (Slave.FromCache, res)
+          Nothing -> (,) Slave.BuiltNow <$> buildTargetReal bte parCell TargetDesc{..}
+        let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
+        return $ stats <>
+          Slave.Stats
+          { Slave.statsOfTarget = M.singleton tdRep (whenBuilt, elSelfTime, deps)
+          , Slave.statsStdErr =
+            if mempty /= stdErr elStdoutputs
+            then S.singleton tdRep
+            else S.empty
+          }
   where
     Color.Scheme{..} = Color.scheme
 
