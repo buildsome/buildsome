@@ -105,7 +105,7 @@ getRequestedTargets printer extraOutputs ts
   | "clean" `elem` ts =
     E.throwIO $
     BadCommandLine (Printer.render printer) "Clean must be requested exclusively"
-  | otherwise = do
+  | otherwise =
     return $ RequestedTargets TargetsRequest
       { targetsRequestPaths = requestPaths
       , targetsRequestReason = reason

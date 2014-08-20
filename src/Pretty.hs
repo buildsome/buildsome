@@ -3,8 +3,7 @@
 module Pretty () where
 
 import Data.ByteString (ByteString)
-import Data.Time (DiffTime)
-import Data.Time (NominalDiffTime)
+import Data.Time (DiffTime, NominalDiffTime)
 import Lib.BuildId (BuildId(..))
 import Lib.ColorText (ColorText)
 import Lib.FileDesc (FileModeDesc(..), FileStatDesc(..), FileContentDesc(..))

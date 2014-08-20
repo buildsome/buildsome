@@ -437,7 +437,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@
   builtTargets <- executionLogBuildInputs bte parCell tdTarget executionLog
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
-      verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) -> do
+      verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
         when (Posix.modificationTimeHiRes stat /= mtime) $ do
           let verify str getDesc mPair = verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
           verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
@@ -717,11 +717,11 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
     , undelayedFSAccessHandler = fsUndelayedAccessHandler
     }
   where
-    fsUndelayedAccessHandler accessDoc rawInputs rawOutputs = do
+    fsUndelayedAccessHandler accessDoc rawInputs rawOutputs =
       commonAccessHandler accessDoc rawInputs rawOutputs
         FSHook.outPath (return . undelayedOutputEffect) $ \_ _ -> return ()
 
-    fsDelayedAccessHandler accessDoc rawInputs rawOutputs = do
+    fsDelayedAccessHandler accessDoc rawInputs rawOutputs =
       commonAccessHandler accessDoc rawInputs rawOutputs
         FSHook.outputPath delayedOutputEffect $
         makeImplicitInputs builtTargetsRef bte parCell accessDoc

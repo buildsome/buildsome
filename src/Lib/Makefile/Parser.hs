@@ -361,7 +361,7 @@ noiseLines =
 
 RELEASE_INLINE(cmdLine)
 cmdLine :: MonadMakefileParser m => Parser m ByteString
-cmdLine = do
+cmdLine =
   ( P.try (newline *> noiseLines *> P.char '\t')
     *> interpolateVariables escapeSequence "#\n"
     <* skipLineSuffix
@@ -605,11 +605,11 @@ rethrow errToStr act = do
     Right x -> return x
     Left err -> do
       MakefileMonad.errPutStrLn $ BS8.pack $ errToStr err
-      fail $ "Makefile parse failure"
+      fail "Makefile parse failure"
 
 RELEASE_INLINE(parse)
 parse :: MonadMakefileParser m => FilePath -> Vars -> m Makefile
-parse absMakefilePath vars = do
+parse absMakefilePath vars =
   rethrow showErr $ join $ do
     input <- rethrow show $ MakefileMonad.tryReadFile absMakefilePath
     return $ P.runParserT makefile initialState (BS8.unpack absMakefilePath) input

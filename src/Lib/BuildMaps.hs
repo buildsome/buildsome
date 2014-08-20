@@ -62,9 +62,10 @@ find (BuildMaps buildMap childrenMap) path =
       targets ->
         error $ BS8.unpack $ mconcat
         [ "Multiple matching patterns for: ", BS8.pack (show path), "\n"
-        , BS8.unlines $ map BS8.unwords $
+        , BS8.unlines $
           map
-          ( map (StringPattern.toString . Makefile.filePatternFile) .
+          ( BS8.unwords .
+            map (StringPattern.toString . Makefile.filePatternFile) .
             targetOutputs . fst
           )
           targets

@@ -95,4 +95,4 @@ runM :: M a -> IO (ReadFiles, [PutStrLn], a)
 runM (M act) = do
   (res, w) <- runStateT act mempty
   readFiles <- Map.traverseWithKey mergeAllFileStatuses (wReadFiles w)
-  return $ (readFiles, wPutStrLns w, res)
+  return (readFiles, wPutStrLns w, res)

@@ -85,7 +85,7 @@ printStrLn (Printer pid toBS indentRef) str = do
 
 {-# INLINE rawPrintStrLn #-}
 rawPrintStrLn :: Printable str => Printer -> str -> IO ()
-rawPrintStrLn (Printer _ toBS _) str = putStrLn toBS str
+rawPrintStrLn (Printer _ toBS _) = putStrLn toBS
 
 data ColorScheme = ColorScheme
   { cException :: ColorText -> ColorText

@@ -23,7 +23,6 @@ null (StdOutputs out err) = mempty == out && mempty == err
 str :: (Eq a, Monoid a, IsString a) => StdOutputs a -> Maybe a
 str (StdOutputs out err)
   | mempty == out && mempty == err = Nothing
-  | otherwise = Just $ mconcat $ intersperse "\n" $ concat
-  [ [ out | mempty /= out ]
-  , [ err | mempty /= err ]
-  ]
+  | otherwise = Just $ mconcat $ intersperse "\n" $
+  [ out | mempty /= out ] ++
+  [ err | mempty /= err ]
