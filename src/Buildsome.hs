@@ -44,7 +44,6 @@ import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
 import Lib.Once (once)
 import Lib.Parallelism (Parallelism)
-import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
@@ -178,13 +177,26 @@ instance Monoid BuiltTargets where
 
 data ExplicitPathsBuilt = ExplicitPathsBuilt | ExplicitPathsNotBuilt
 
+data ExplicitFileMissing = ExplicitFileMissing (ColorText -> ByteString) FilePath Parents
+  deriving (Typeable)
+instance E.Exception ExplicitFileMissing
+instance Show ExplicitFileMissing where
+  show (ExplicitFileMissing render path parents) =
+    BS8.unpack $ render $ cError $ mconcat
+    [ "ERROR: ", cTarget (show path), " is explicitly demanded but is missing. Rule is either missing or failed to build the output. Dependency chains:\n"
+    , showParents parents
+    ]
+    where
+      Color.Scheme{..} = Color.scheme
+
 assertExplicitInputsExist :: BuildTargetEnv -> [FilePath] -> IO ExplicitPathsBuilt
 assertExplicitInputsExist BuildTargetEnv{..} paths = do
   res <-
     runEitherT $ forM_ paths $ \path ->
     unless (isPhony bteBuildsome path) $ do
       doesExist <- liftIO $ FilePath.exists path
-      unless doesExist $ left $ MissingRule (bsRender bteBuildsome) path bteReason bteParents
+      unless doesExist $ left $
+        ExplicitFileMissing (bsRender bteBuildsome) path bteParents
   case res of
     Right () -> return ExplicitPathsBuilt
     Left err | bteExplicitlyDemanded -> E.throwIO err
@@ -227,31 +239,6 @@ showParents = mconcat . map showParent
     showParent (targetRep, reason) =
       mconcat ["\n-> ", cTarget (show targetRep), " (", reason, ")"]
     Color.Scheme{..} = Color.scheme
-
-data MissingRule = MissingRule (ColorText -> ByteString) FilePath Reason Parents
-  deriving (Typeable)
-instance E.Exception MissingRule
-instance Show MissingRule where
-  show (MissingRule render path reason parents) =
-    BS8.unpack $ render $ cError $ mconcat
-    [ "ERROR: No rule to build ", cTarget (show path), " (", reason, "), needed by:\n"
-    , showParents parents
-    ]
-    where
-      Color.Scheme{..} = Color.scheme
-
-data TargetNotCreated = TargetNotCreated (ColorText -> ByteString) FilePath Target
-  deriving (Typeable)
-instance E.Exception TargetNotCreated
-instance Show TargetNotCreated where
-  show (TargetNotCreated render path target) =
-    BS8.unpack $ render $ cError $ mconcat
-    [ (fromString . showPos . targetPos) target
-    , ": "
-    , cTarget (show path)
-    , " explicitly demanded but was not created by its target rule" ]
-    where
-      Color.Scheme{..} = Color.scheme
 
 isPhony :: Buildsome -> FilePath -> Bool
 isPhony bs path = path `S.member` bsPhoniesSet bs
