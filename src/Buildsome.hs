@@ -795,6 +795,7 @@ saveExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
       return (outPath, fileDesc)
   writeIRef (Db.executionLog target (bsDb buildsome)) Db.ExecutionLog
     { elBuildId = bsBuildId buildsome
+    , elCommand = targetCmds target
     , elInputsDescs = inputsDescs
     , elOutputsDescs = M.fromList outputDescPairs
     , elStdoutputs = stdOutputs

@@ -40,7 +40,7 @@ import qualified Lib.Makefile as Makefile
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.14"
+schemaVersion = "schema.ver.15"
 
 data Db = Db
   { dbSophia :: Sophia.Db
@@ -77,6 +77,7 @@ instance Binary OutputDesc
 
 data ExecutionLog = ExecutionLog
   { elBuildId :: BuildId
+  , elCommand :: ByteString -- Mainly for debugging
   , elInputsDescs :: Map FilePath (FileDesc Reason (POSIXTime, InputDesc))
   , elOutputsDescs :: Map FilePath (FileDesc () OutputDesc)
   , elStdoutputs :: StdOutputs ByteString
