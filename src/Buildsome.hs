@@ -245,6 +245,12 @@ instance Show TargetNotCreated where
     where
       Color.Scheme{..} = Color.scheme
 
+isPhony :: Buildsome -> FilePath -> Bool
+isPhony bs path = path `S.member` bsPhoniesSet bs
+
+targetIsPhony :: Buildsome -> Target -> Bool
+targetIsPhony bs = all (isPhony bs) . targetOutputs
+
 mkSlavesDirectAccess :: BuildTargetEnv -> Explicitness -> FilePath -> IO [Slave]
 mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
@@ -261,7 +267,7 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
       Explicit -> verifyFileGetsCreated slave
       where
         verifyFileGetsCreated slave
-          | path `elem` (map snd . makefilePhonies . bsMakefile) bteBuildsome = return slave
+          | isPhony bteBuildsome path = return slave
           | otherwise =
             Slave.wrap (<* assertExists path (TargetNotCreated (bsRender bteBuildsome) path target)) slave
 
@@ -271,9 +277,8 @@ makeChildSlaves bte@BuildTargetEnv{..} path
     fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome bteReason) ++ ")"
   | otherwise =
     traverse (getSlaveForTarget bte) $
-    filter (not . isPhony . tdTarget) childTargetDescs
+    filter (not . targetIsPhony bteBuildsome . tdTarget) childTargetDescs
   where
-    isPhony = all (`S.member` bsPhoniesSet bteBuildsome) . targetOutputs
     childTargetDescs = map (uncurry TargetDesc) childTargets
     DirectoryBuildMap childTargets childPatterns =
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
