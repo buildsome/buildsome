@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Lib.BuildId
-  ( BuildId, new
+  ( BuildId(..), new
   ) where
 
 import Control.Applicative ((<$>))

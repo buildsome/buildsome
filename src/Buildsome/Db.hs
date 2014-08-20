@@ -60,7 +60,7 @@ data InputDesc = InputDesc
   { idModeAccess :: Maybe (Reason, FileModeDesc)
   , idStatAccess :: Maybe (Reason, FileStatDesc)
   , idContentAccess :: Maybe (Reason, FileContentDesc)
-  } deriving (Generic)
+  } deriving (Generic, Show)
 instance Binary InputDesc
 
 data FileDesc ne e
@@ -72,7 +72,7 @@ instance (Binary ne, Binary e) => Binary (FileDesc ne e)
 data OutputDesc = OutputDesc
   { odStatDesc :: FileStatDesc
   , odContentDesc :: Maybe FileContentDesc -- Nothing if directory
-  } deriving (Generic)
+  } deriving (Generic, Show)
 instance Binary OutputDesc
 
 data ExecutionLog = ExecutionLog
@@ -81,7 +81,7 @@ data ExecutionLog = ExecutionLog
   , elOutputsDescs :: Map FilePath (FileDesc () OutputDesc)
   , elStdoutputs :: StdOutputs ByteString
   , elSelfTime :: DiffTime
-  } deriving (Generic)
+  } deriving (Generic, Show)
 instance Binary ExecutionLog
 
 registeredOutputsRef :: Db -> IORef (Set FilePath)
