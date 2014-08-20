@@ -1,0 +1,9 @@
+#!/bin/bash
+rm a.result a.input default
+set -e
+
+cp -f Buildsome.mk1 Buildsome.mk
+buildsome --disable-color
+rm -f a.input
+cp -f Buildsome.mk2 Buildsome.mk
+buildsome --disable-color
