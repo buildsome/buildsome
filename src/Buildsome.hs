@@ -174,9 +174,6 @@ instance Monoid BuiltTargets where
   mappend (BuiltTargets a1 b1) (BuiltTargets a2 b2) =
     BuiltTargets (mappend a1 a2) (mappend b1 b2)
 
-mkSlavesForPaths :: BuildTargetEnv -> [FilePath] -> IO [Slave]
-mkSlavesForPaths bte = fmap concat . mapM (mkSlaves bte)
-
 data ExplicitPathsBuilt = ExplicitPathsBuilt | ExplicitPathsNotBuilt
 
 assertExplicitInputsExist :: BuildTargetEnv -> [FilePath] -> IO ExplicitPathsBuilt
@@ -191,9 +188,9 @@ assertExplicitInputsExist BuildTargetEnv{..} paths = do
     Left err | bteExplicitlyDemanded -> E.throwIO err
              | otherwise -> return ExplicitPathsNotBuilt
 
-buildExplicitPaths :: BuildTargetEnv -> [FilePath] -> IO (ExplicitPathsBuilt, BuiltTargets)
-buildExplicitPaths bte@BuildTargetEnv{..} paths = do
-  built <- waitForSlaves =<< mkSlavesForPaths bte paths
+buildExplicitDirectPaths :: BuildTargetEnv -> [FilePath] -> IO (ExplicitPathsBuilt, BuiltTargets)
+buildExplicitDirectPaths bte@BuildTargetEnv{..} paths = do
+  built <- waitForSlaves . concat =<< mapM (mkSlavesDirectAccess bte) paths
   explicitPathsBuilt <- assertExplicitInputsExist bte paths
   return (explicitPathsBuilt, built)
 
@@ -209,7 +206,7 @@ want printer buildsome reason paths = do
         , bteParents = []
         , bteExplicitlyDemanded = True
         }
-  (buildTime, (ExplicitPathsBuilt, builtTargets)) <- timeIt $ buildExplicitPaths bte paths
+  (buildTime, (ExplicitPathsBuilt, builtTargets)) <- timeIt $ buildExplicitDirectPaths bte paths
   let stdErrs = Slave.statsStdErr $ builtStats builtTargets
       lastLinePrefix
         | not (S.null stdErrs) =
@@ -491,8 +488,8 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {.
 parentDirs :: [FilePath] -> [FilePath]
 parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
 
-buildPaths :: (ColorText -> Reason) -> BuildTargetEnv -> [FilePath] -> IO BuiltTargets
-buildPaths mkReason bte@BuildTargetEnv{..} = waitForSlaves . concat <=< mapM mkPath
+buildDirectPaths :: (ColorText -> Reason) -> BuildTargetEnv -> [FilePath] -> IO BuiltTargets
+buildDirectPaths mkReason bte@BuildTargetEnv{..} = waitForSlaves . concat <=< mapM mkPath
   where
     Color.Scheme{..} = Color.scheme
     mkPath path =
@@ -686,8 +683,8 @@ makeImplicitInputs ::
 makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
   Parallelism.withReleased Parallelism.PriorityHigh parCell (bsParallelism bteBuildsome) $ do
     targetParentsBuilt <-
-      buildPaths (("Container directory of: " <>) . (<> (" " <> accessDoc))) bteImplicit $
-      parentDirs allPaths
+      buildDirectPaths (("Container directory of: " <>) . (<> (" " <> accessDoc)))
+      bteImplicit $ parentDirs allPaths
 
     slaves <-
       fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
@@ -858,13 +855,13 @@ buildTargetHints ::
 buildTargetHints bte@BuildTargetEnv{..} parCell target =
   Parallelism.withReleased Parallelism.PriorityLow parCell (bsParallelism bteBuildsome) $ do
     let parentPaths = parentDirs $ targetOutputs target
-    targetParentsBuilt <- buildPaths ("Container directory of output: " <>) bte parentPaths
+    targetParentsBuilt <- buildDirectPaths ("Container directory of output: " <>) bte parentPaths
     explicitParentsBuilt <- assertExplicitInputsExist bte parentPaths
     case explicitParentsBuilt of
       ExplicitPathsNotBuilt -> return (ExplicitPathsNotBuilt, targetParentsBuilt)
       ExplicitPathsBuilt -> do
         (explicitPathsBuilt, inputsBuilt) <-
-          buildExplicitPaths
+          buildExplicitDirectPaths
             bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) } $
             targetAllInputs target
         return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
