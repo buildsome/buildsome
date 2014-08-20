@@ -213,13 +213,22 @@ assertExists path err = do
 fromBytestring8 :: IsString str => ByteString -> str
 fromBytestring8 = fromString . BS8.unpack
 
-data MissingRule = MissingRule (ColorText -> ByteString) FilePath Reason
+showParents :: Parents -> ColorText
+showParents = mconcat . map showParent
+  where
+    showParent (targetRep, reason) =
+      mconcat ["\n-> ", cTarget (show targetRep), " (", reason, ")"]
+    Color.Scheme{..} = Color.scheme
+
+data MissingRule = MissingRule (ColorText -> ByteString) FilePath Reason Parents
   deriving (Typeable)
 instance E.Exception MissingRule
 instance Show MissingRule where
-  show (MissingRule render path reason) =
+  show (MissingRule render path reason parents) =
     BS8.unpack $ render $ cError $ mconcat
-    ["ERROR: No rule to build ", cTarget (show path), " (", reason, ")"]
+    [ "ERROR: No rule to build ", cTarget (show path), " (", reason, "), needed by:\n"
+    , showParents parents
+    ]
     where
       Color.Scheme{..} = Color.scheme
 
@@ -243,7 +252,7 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing -> do
     when (explicitness == Explicit) $ assertExists path $
-      MissingRule (bsRender bteBuildsome) path bteReason
+      MissingRule (bsRender bteBuildsome) path bteReason bteParents
     return []
   Just tgt@(_, target) -> do
     slave <- getSlaveForTarget bte tgt
@@ -513,20 +522,13 @@ findApplyExecutionLog bte@BuildTargetEnv{..} parCell targetRep target = do
   where
     Color.Scheme{..} = Color.scheme
 
-showParents :: (ColorText -> ByteString) -> Parents -> ByteString
-showParents render = render . mconcat . map showParent
-  where
-    showParent (targetRep, reason) =
-      mconcat ["\n-> ", cTarget (show targetRep), " (", reason, ")"]
-    Color.Scheme{..} = Color.scheme
-
 data TargetDependencyLoop = TargetDependencyLoop (ColorText -> ByteString) Parents
   deriving (Typeable)
 instance E.Exception TargetDependencyLoop
 instance Show TargetDependencyLoop where
   show (TargetDependencyLoop render parents) =
     BS8.unpack $ render $ cError $ fromBytestring8 $
-    "Target loop: " <> showParents render parents
+    "Target loop: " <> render (showParents parents)
     where
       Color.Scheme{..} = Color.scheme
 
