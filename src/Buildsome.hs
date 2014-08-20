@@ -470,36 +470,33 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {.
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
-  speculativeSlaves <- concat <$> mapM mkInputSlave (M.toList elInputsDescs)
+  speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
   waitForSlavesWithParReleased Parallelism.PriorityLow parCell bteBuildsome speculativeSlaves
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs target
-    mkInputSlave (inputPath, desc)
+    mkInputSlaves (inputPath, desc)
       | inputPath `S.member` hinted = return []
-      | otherwise = mkInputSlaveFor desc inputPath
+      | otherwise = mkInputSlavesFor desc inputPath
     bteImplicit = bte { bteExplicitlyDemanded = False }
-    mkInputSlaveFor (Db.FileDescNonExisting depReason) =
+    mkInputSlavesFor (Db.FileDescNonExisting depReason) =
       mkSlavesDirectAccess bteImplicit { bteReason = depReason }
-    mkInputSlaveFor (Db.FileDescExisting (_mtime, inputDesc)) =
+    mkInputSlavesFor (Db.FileDescExisting (_mtime, inputDesc)) =
       case inputDesc of
       Db.InputDesc { Db.idContentAccess = Just (depReason, _) } -> mkSlaves bteImplicit { bteReason = depReason }
       Db.InputDesc { Db.idStatAccess = Just (depReason, _) } -> mkSlavesDirectAccess bteImplicit { bteReason = depReason }
       Db.InputDesc { Db.idModeAccess = Just (depReason, _) } -> mkSlavesDirectAccess bteImplicit { bteReason = depReason }
       Db.InputDesc Nothing Nothing Nothing -> const $ return []
 
-buildParentDirectories ::
-  Parallelism.Priority -> BuildTargetEnv -> Parallelism.Cell ->
-  [FilePath] -> IO BuiltTargets
-buildParentDirectories priority bte@BuildTargetEnv{..} parCell =
-  waitForSlavesWithParReleased priority parCell bteBuildsome . concat <=<
-  mapM mkParentSlaves . filter (`notElem` ["", "/"])
+parentDirs :: [FilePath] -> [FilePath]
+parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
+
+buildPaths :: (ColorText -> Reason) -> BuildTargetEnv -> [FilePath] -> IO BuiltTargets
+buildPaths mkReason bte@BuildTargetEnv{..} = waitForSlaves . concat <=< mapM mkPath
   where
     Color.Scheme{..} = Color.scheme
-    mkParentSlaves path =
-      mkSlavesDirectAccess bte
-      { bteReason = "Container directory of: " <> cTarget (show path)
-      } (FilePath.takeDirectory path)
+    mkPath path =
+      mkSlavesDirectAccess bte { bteReason = mkReason (cTarget (show path)) } path
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
@@ -687,20 +684,20 @@ makeImplicitInputs ::
   IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
 makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
-  do
-    let allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
-    parentBuiltTargets <-
-      buildParentDirectories Parallelism.PriorityHigh bteImplicit parCell
-      allPaths
+  Parallelism.withReleased Parallelism.PriorityHigh parCell (bsParallelism bteBuildsome) $ do
+    targetParentsBuilt <-
+      buildPaths (("Container directory of: " <>) . (<> (" " <> accessDoc))) bteImplicit $
+      parentDirs allPaths
+
     slaves <-
       fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
       mkSlavesForAccessType accessType bteImplicit path
-    mappendBuiltTargets . mappend parentBuiltTargets =<<
-      waitForSlavesWithParReleased Parallelism.PriorityHigh parCell bteBuildsome
-      slaves
-    where
-      bteImplicit = bte { bteExplicitlyDemanded = False, bteReason = accessDoc }
-      mappendBuiltTargets x = atomicModifyIORef_ builtTargetsRef (mappend x)
+
+    mappendBuiltTargets . mappend targetParentsBuilt =<< waitForSlaves slaves
+  where
+    allPaths = map FSHook.inputPath inputs ++ map FSHook.outputPath outputs
+    bteImplicit = bte { bteExplicitlyDemanded = False, bteReason = accessDoc }
+    mappendBuiltTargets x = atomicModifyIORef_ builtTargetsRef (mappend x)
 
 fsAccessHandlers ::
   IORef (Map FilePath (KeepsOldContent, Reason)) ->
@@ -858,18 +855,19 @@ deleteOldTargetOutputs BuildTargetEnv{..} target = do
 
 buildTargetHints ::
   BuildTargetEnv -> Parallelism.Cell -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
-buildTargetHints bte@BuildTargetEnv{..} parCell target = do
-  targetParentsBuilt <-
-    buildParentDirectories Parallelism.PriorityLow bte parCell $
-    targetOutputs target
-
-  (explicitPathsBuilt, inputsBuilt) <-
-    Parallelism.withReleased Parallelism.PriorityLow parCell (bsParallelism bteBuildsome) $
-    buildExplicitPaths
-      bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) } $
-      targetAllInputs target
-
-  return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
+buildTargetHints bte@BuildTargetEnv{..} parCell target =
+  Parallelism.withReleased Parallelism.PriorityLow parCell (bsParallelism bteBuildsome) $ do
+    let parentPaths = parentDirs $ targetOutputs target
+    targetParentsBuilt <- buildPaths ("Container directory of output: " <>) bte parentPaths
+    explicitParentsBuilt <- assertExplicitInputsExist bte parentPaths
+    case explicitParentsBuilt of
+      ExplicitPathsNotBuilt -> return (ExplicitPathsNotBuilt, targetParentsBuilt)
+      ExplicitPathsBuilt -> do
+        (explicitPathsBuilt, inputsBuilt) <-
+          buildExplicitPaths
+            bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) } $
+            targetAllInputs target
+        return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
   where
     Color.Scheme{..} = Color.scheme
 
