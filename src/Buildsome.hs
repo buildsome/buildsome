@@ -383,10 +383,10 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
   (M.fromSet (const KeepsNoOldContent) outputs) target
 
 waitForSlavesWithParReleased ::
-  Parallelism.Priority -> Printer -> Parallelism.Cell -> Buildsome ->
+  Parallelism.Priority -> Parallelism.Cell -> Buildsome ->
   [Slave] -> IO BuiltTargets
-waitForSlavesWithParReleased _ _ _ _ [] = return mempty
-waitForSlavesWithParReleased priority _printer parCell buildsome slaves =
+waitForSlavesWithParReleased _ _ _ [] = return mempty
+waitForSlavesWithParReleased priority parCell buildsome slaves =
   Parallelism.withReleased priority parCell (bsParallelism buildsome) $
   waitForSlaves slaves
 
@@ -455,7 +455,7 @@ executionLogWaitForInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog 
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlave (M.toList elInputsDescs)
-  waitForSlavesWithParReleased Parallelism.PriorityLow btePrinter parCell bteBuildsome speculativeSlaves
+  waitForSlavesWithParReleased Parallelism.PriorityLow parCell bteBuildsome speculativeSlaves
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs target
@@ -475,7 +475,7 @@ buildParentDirectories ::
   Parallelism.Priority -> BuildTargetEnv -> Parallelism.Cell ->
   [FilePath] -> IO BuiltTargets
 buildParentDirectories priority bte@BuildTargetEnv{..} parCell =
-  waitForSlavesWithParReleased priority btePrinter parCell bteBuildsome . concat <=<
+  waitForSlavesWithParReleased priority parCell bteBuildsome . concat <=<
   mapM mkParentSlaves . filter (`notElem` ["", "/"])
   where
     Color.Scheme{..} = Color.scheme
@@ -679,7 +679,7 @@ makeInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outpu
       fmap concat $ forM inputs $ \(FSHook.Input accessType path) ->
       mkSlavesForAccessType accessType bte { bteReason = accessDoc } path
     mappendBuiltTargets . mappend parentBuiltTargets =<<
-      waitForSlavesWithParReleased Parallelism.PriorityHigh btePrinter parCell bteBuildsome
+      waitForSlavesWithParReleased Parallelism.PriorityHigh parCell bteBuildsome
       slaves
     where
       mappendBuiltTargets x = atomicModifyIORef_ builtTargetsRef (mappend x)
