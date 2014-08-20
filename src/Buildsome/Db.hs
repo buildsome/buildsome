@@ -15,6 +15,7 @@ import Buildsome.BuildId (BuildId)
 import Control.Applicative ((<$>))
 import Data.Binary (Binary(..))
 import Data.ByteString (ByteString)
+import Data.Default (def)
 import Data.IORef
 import Data.Map (Map)
 import Data.Set (Set)
@@ -35,15 +36,15 @@ import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Set as S
-import qualified Database.Sophia as Sophia
+import qualified Database.LevelDB.Base as LevelDB
 import qualified Lib.Makefile as Makefile
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.15"
+schemaVersion = "schema.ver.16"
 
 data Db = Db
-  { dbSophia :: Sophia.Db
+  { dbLevel :: LevelDB.DB
   , dbRegisteredOutputs :: IORef (Set FilePath)
   , dbLeakedOutputs :: IORef (Set FilePath)
   }
@@ -92,24 +93,23 @@ leakedOutputsRef :: Db -> IORef (Set FilePath)
 leakedOutputsRef = dbLeakedOutputs
 
 setKey :: Binary a => Db -> ByteString -> a -> IO ()
-setKey db key val = Sophia.setValue (dbSophia db) key $ encode val
+setKey db key val = LevelDB.put (dbLevel db) def key $ encode val
 
 getKey :: Binary a => Db -> ByteString -> IO (Maybe a)
-getKey db key = fmap decode <$> Sophia.getValue (dbSophia db) key
+getKey db key = fmap decode <$> LevelDB.get (dbLevel db) def key
 
 deleteKey :: Db -> ByteString -> IO ()
-deleteKey db = Sophia.delValue (dbSophia db)
+deleteKey db = LevelDB.delete (dbLevel db) def
 
 with :: FilePath -> (Db -> IO a) -> IO a
 with rawDbPath body = do
   dbPath <- makeAbsolutePath rawDbPath
   createDirectories dbPath
-  Sophia.withEnv $ \env -> do
-    Sophia.openDir env Sophia.ReadWrite Sophia.AllowCreation (BS8.unpack (dbPath </> schemaVersion))
-    Sophia.withDb env $ \db ->
+  E.bracket (LevelDB.open (BS8.unpack (dbPath </> schemaVersion)) def { LevelDB.createIfMissing = True }) LevelDB.close $
+    \levelDb ->
       withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
       withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
-      body (Db db registeredOutputs leakedOutputs)
+      body (Db levelDb registeredOutputs leakedOutputs)
   where
     withIORefFile path =
       E.bracket (newIORef =<< decodeFileOrEmpty path)
@@ -118,7 +118,9 @@ with rawDbPath body = do
       BS8.writeFile (BS8.unpack (path <.> "tmp")) .
         BS8.unlines . S.toList =<< readIORef ref
       Posix.rename (path <.> "tmp") path
-    decodeFileOrEmpty path = (S.fromList . BS8.lines <$> BS8.readFile (BS8.unpack path)) `catchDoesNotExist` return S.empty
+    decodeFileOrEmpty path =
+      (S.fromList . BS8.lines <$> BS8.readFile (BS8.unpack path))
+      `catchDoesNotExist` return S.empty
 
 data IRef a = IRef
   { readIRef :: IO (Maybe a)
