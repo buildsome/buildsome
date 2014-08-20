@@ -5,7 +5,6 @@ module Lib.Slave
   , str
   , wait, waitCatch
   , cancel
-  , wrap
   , When(..), Stats(..)
   ) where
 
@@ -67,8 +66,3 @@ waitCatch = Async.waitCatch . slaveExecution
 
 cancel :: Slave -> IO ()
 cancel = Async.cancel . slaveExecution
-
-wrap :: (IO Stats -> IO Stats) -> Slave -> IO Slave
-wrap f slave = do
-  wrappedExecution <- (Async.async . f . Async.wait . slaveExecution) slave
-  return slave { slaveExecution = wrappedExecution }
