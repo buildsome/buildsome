@@ -260,7 +260,7 @@ mkSlavesDirectAccess bte@BuildTargetEnv{..} explicitness path
     when (explicitness == Explicit) $ assertExists path $
       MissingRule (bsRender bteBuildsome) path bteReason bteParents
     return []
-  Just (targetRep, target) -> do
+  Just (targetRep, _targetKind, target) -> do
     slave <- getSlaveForTarget bte $ TargetDesc targetRep target
     (: []) <$> case explicitness of
       Implicit -> return slave

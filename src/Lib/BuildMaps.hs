@@ -3,7 +3,9 @@ module Lib.BuildMaps
   ( TargetRep(..), computeTargetRep
   , DirectoryBuildMap(..)
   , BuildMaps(..)
-  , make, find
+  , make
+  , TargetKind(..)
+  , find
   , findDirectory
   ) where
 
@@ -40,12 +42,16 @@ data BuildMaps = BuildMaps
   , _bmChildrenMap :: Map FilePath DirectoryBuildMap
   }
 
-find :: BuildMaps -> FilePath -> Maybe (TargetRep, Target)
+data TargetKind = TargetPattern | TargetSimple
+
+find :: BuildMaps -> FilePath -> Maybe (TargetRep, TargetKind, Target)
 find (BuildMaps buildMap childrenMap) path =
-  -- Allow specific/direct matches to override pattern matches
-  directMatch `mplus` patternMatch
+  -- Allow specific/simple matches to override pattern matches
+  (set TargetSimple <$> simpleMatch) `mplus`
+  (set TargetPattern <$> patternMatch)
   where
-    directMatch = path `M.lookup` buildMap
+    set kind (rep, tgt) = (rep, kind, tgt)
+    simpleMatch = path `M.lookup` buildMap
     patterns = dbmPatterns $ M.findWithDefault mempty (takeDirectory path) childrenMap
     instantiate pattern = (,) pattern <$> Makefile.instantiatePatternByOutput path pattern
     patternMatch =
