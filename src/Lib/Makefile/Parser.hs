@@ -19,7 +19,7 @@ import Lib.ByteString (unprefixed)
 import Lib.Cartesian (cartesian)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile.CondState (CondState)
-import Lib.Makefile.Monad (MonadMakefileParser)
+import Lib.Makefile.MonadClass (MonadMakefileParser)
 import Lib.Makefile.Types
 import Lib.Parsec (showErr, showPos)
 import Prelude hiding (FilePath)
@@ -30,7 +30,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Makefile.CondState as CondState
-import qualified Lib.Makefile.Monad as MakefileMonad
+import qualified Lib.Makefile.MonadClass as MakefileMonad
 import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos

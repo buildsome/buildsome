@@ -1,7 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, DeriveGeneric #-}
 module Lib.Makefile.Monad
-  ( MonadMakefileParser(..)
-  , PutStrLn, runPutStrLn
+  ( PutStrLn, runPutStrLn
   , M, runM
   ) where
 
@@ -15,24 +14,14 @@ import Data.Monoid (Monoid(..))
 import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus)
 import Lib.FilePath (FilePath)
+import Lib.Makefile.MonadClass (MonadMakefileParser(..))
 import Prelude hiding (FilePath)
 import qualified Buildsome.Meddling as Meddling
-import qualified Control.Exception as E
 import qualified Control.Monad.Trans.State as State
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
-
-class Monad m => MonadMakefileParser m where
-  outPutStrLn :: ByteString -> m ()
-  errPutStrLn :: ByteString -> m ()
-  tryReadFile :: FilePath -> m (Either E.SomeException ByteString)
-
-instance MonadMakefileParser IO where
-  outPutStrLn = BS8.putStrLn
-  errPutStrLn = BS8.hPutStrLn IO.stderr
-  tryReadFile = E.try . BS8.readFile . BS8.unpack
 
 -- Specific Monad type for makefile parsing that tracks all inputs/outputs:
 data PutStrLnTarget = Out | Err deriving (Generic, Show)
