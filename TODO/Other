@@ -1,9 +1,5 @@
-* Need to have each slave be responsible for its own explicit creation verification
-
-  * That means Slaves need to return whether they succeeded in building the targets when they are not mandatory
-
-  * If the verification fails, what to do? Need all slaves to return
-    whether they succeeded in building
+* Have the slavesFor* function[s] return what it did, rather than a simple list,
+  the reasons, path, and whether/which target was found for each.
 
 * "-k" should print errors ASAP and not at the end
 
