@@ -68,6 +68,7 @@ import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import qualified Lib.Cmp as Cmp
 import qualified Lib.ColorText as ColorText
 import qualified Lib.Directory as Dir
 import qualified Lib.FSHook as FSHook
@@ -435,7 +436,8 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
       verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
         when (Posix.modificationTimeHiRes stat /= mtime) $ do
-          let verify str getDesc mPair = verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
+          let verify str getDesc mPair =
+                verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
           verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
           verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
           verify "content" (fileContentDescOfStat db filePath stat) mContentAccess
@@ -459,7 +461,11 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@
 
     verifyDesc str filePath getDesc oldDesc = do
       newDesc <- liftIO getDesc
-      when (oldDesc /= newDesc) $ left (str, filePath) -- fail entire computation
+      case Cmp.cmp oldDesc newDesc of
+        Cmp.Equals -> return ()
+        Cmp.NotEquals reasons ->
+          -- fail entire computation
+          left (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
 executionLogBuildInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO BuiltTargets
 executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
