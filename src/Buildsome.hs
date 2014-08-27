@@ -107,9 +107,9 @@ cancelAllSlaves :: Printer -> Buildsome -> IO ()
 cancelAllSlaves printer bs = go 0
   where
     Color.Scheme{..} = Color.scheme
-    timeoutWarning time slave =
+    timeoutWarning str time slave =
       Timeout.warning time $
-      mconcat ["Slave ", Slave.str slave, " did not cancel in ", show time, "!"]
+      mconcat ["Slave ", Slave.str slave, " did not ", str, " in ", show time, "!"]
     go alreadyCancelled = do
       curSlaveMap <- readIORef $ bsSlaveByTargetRep bs
       slaves <-
@@ -121,9 +121,9 @@ cancelAllSlaves printer bs = go 0
         readMVar mvar
       let count = length slaves
       unless (alreadyCancelled >= count) $ do
-        forM_ slaves $ \slave -> timeoutWarning (Timeout.millis 100) slave $
+        forM_ slaves $ \slave -> timeoutWarning "cancel" (Timeout.millis 100) slave $
           Slave.cancel slave
-        forM_ slaves $ \slave -> timeoutWarning (Timeout.seconds 2) slave $
+        forM_ slaves $ \slave -> timeoutWarning "finish" (Timeout.seconds 2) slave $
           Slave.waitCatch slave
         -- Make sure to cancel any potential new slaves that were
         -- created during cancellation
