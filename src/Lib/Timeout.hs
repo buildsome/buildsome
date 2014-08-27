@@ -6,6 +6,7 @@ module Lib.Timeout
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (withAsync)
+import Control.Monad (forever)
 import Data.ByteString (ByteString)
 import Data.Monoid ((<>))
 import Data.Time (DiffTime, picosecondsToDiffTime, secondsToDiffTime)
@@ -31,6 +32,6 @@ warning :: DiffTime -> ByteString -> IO a -> IO a
 warning timeout errMsg action =
   withAsync timeoutMsg $ const action
   where
-    timeoutMsg = do
+    timeoutMsg = forever $ do
       threadDelay $ floor $ 1000000.0 * timeout
       BS8.hPutStrLn stderr $ "TIMEOUT: " <> errMsg
