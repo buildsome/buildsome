@@ -48,7 +48,6 @@ executable buildsome
                ,     Lib.AnnotatedException
                ,     Lib.AnsiConsoleUtils
                ,     Lib.Argv0
-               ,     Lib.Async
                ,     Lib.AsyncContext
                ,     Lib.Binary
                ,     Lib.ByteString
