@@ -1,3 +1,6 @@
+* BUG: .. (in target paths, etc) from project root should be an error,
+  not equal project root
+
 * Have the slavesFor* function[s] return what it did, rather than a simple list,
   the reasons, path, and whether/which target was found for each.
 
