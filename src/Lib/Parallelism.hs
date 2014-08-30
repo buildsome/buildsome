@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Lib.Parallelism
   ( ParId
   , Parallelism, new
@@ -8,9 +9,9 @@ module Lib.Parallelism
   ) where
 
 import Control.Concurrent.MVar
-import Control.Exception.Async (catchSync, isAsynchronous)
 import Control.Monad
 import Data.IORef
+import Lib.Exception (bracket, bracket_, finally)
 import Lib.IORef (atomicModifyIORef_)
 import Lib.PoolAlloc (PoolAlloc, Priority(..))
 import qualified Control.Exception as E
@@ -28,8 +29,7 @@ import qualified Lib.PoolAlloc as PoolAlloc
 type ParId = Int
 
 data CellState
-  = CellKilled -- ^ async exception received during re-allocation
-  | CellReleased Int (MVar ()) -- ^ Release overdraft and mvar to publish alloc result when allocation succeeds
+  = CellReleased Int (MVar ()) -- ^ Release overdraft and mvar to publish alloc result when allocation succeeds
   | CellAlloced ParId
   | CellAllocating (MVar ())
 
@@ -39,56 +39,41 @@ type Parallelism = PoolAlloc ParId
 new :: ParId -> IO Parallelism
 new n = PoolAlloc.new [1..n]
 
+-- MUST be called under proper masking to avoid losing result bracket
+-- which MUST be invoked to avoid a leak!
 startAlloc :: Priority -> Parallelism -> IO ((Cell -> IO r) -> IO r)
 startAlloc priority parallelism = do
   alloc <- PoolAlloc.startAlloc priority parallelism
-  return $ E.bracket (newIORef . CellAlloced =<< alloc) (release parallelism)
+  return $ bracket (newIORef . CellAlloced =<< alloc) (release parallelism)
 
 release :: Parallelism -> Cell -> IO ()
-release parallelism cell = do
-  mvar <- newEmptyMVar
-  E.mask_ $ join $ atomicModifyIORef cell $ \cellState ->
-    case cellState of
-    CellReleased n oldMVar -> (CellReleased (n + 1) oldMVar, return ())
-    CellAlloced parId      -> (CellReleased 0          mvar, PoolAlloc.release parallelism parId)
-    CellAllocating oldMVar -> (CellAllocating       oldMVar, readMVar oldMVar >> release parallelism cell)
-    CellKilled             -> (CellKilled                  , return ())
-
-onSyncException :: IO a -> IO () -> IO a
-onSyncException body handler =
-  body `catchSync` \e -> do
-    handler
-    E.throwIO e
-
-onAsyncException :: IO a -> IO () -> IO a
-onAsyncException body handler =
-  body `E.catch` \e -> do
-    when (isAsynchronous e) handler
-    E.throwIO e
+release parallelism cell = go
+  where
+    go = do
+      mvar <- newEmptyMVar
+      E.mask_ $ do
+        join $ atomicModifyIORef cell $ \cellState ->
+          case cellState of
+          CellReleased n oldMVar -> (CellReleased (n + 1) oldMVar, return ())
+          CellAlloced parId      -> (CellReleased 0          mvar, PoolAlloc.release parallelism parId)
+          CellAllocating oldMVar -> (cellState, readMVar oldMVar >> go)
 
 -- | Release the currently held item, run given action, then regain
 -- new item instead
 withReleased :: Priority -> Cell -> Parallelism -> IO a -> IO a
-withReleased priority cell parallelism body =
-  E.mask $ \restore -> do
-    release parallelism cell
-    res <- protectAsync (restore body `onSyncException` realloc)
-    protectAsync realloc
-    return res
+withReleased priority cell parallelism =
+  bracket_ (release parallelism cell) realloc
   where
-    protectAsync = (`onAsyncException` writeIORef cell CellKilled)
     setAlloced parId = atomicModifyIORef_ cell $ \cellState ->
       case cellState of
-      CellKilled -> CellKilled
       CellAllocating _ -> CellAlloced parId
       _ -> error "Somebody touched the cell when it was in CellAllocating?!"
     actualAlloc mvar =
       (PoolAlloc.alloc priority parallelism >>= setAlloced)
-      `E.finally` putMVar mvar ()
+      `finally` putMVar mvar ()
     realloc =
       join $ atomicModifyIORef cell $ \cellState ->
       case cellState of
-      CellKilled -> (CellKilled, return ()) -- TODO: Throw an error here?
       CellReleased 0 mvar -> (CellAllocating mvar, actualAlloc mvar)
       CellReleased n mvar -> (CellReleased (n-1) mvar, return ())
       CellAllocating mvar -> (CellAllocating mvar, readMVar mvar >> realloc)

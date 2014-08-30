@@ -16,7 +16,7 @@ import Data.Monoid
 import Data.String (IsString(..))
 import Lib.ByteString (chopTrailingNewline)
 import Lib.ColorText (ColorText)
-import Lib.Exception (onException)
+import Lib.Exception (onExceptionWith)
 import Lib.Makefile (TargetType(..), Target)
 import Lib.Parsec (showPos)
 import Lib.Printer (Printer, printStrLn)
@@ -102,7 +102,7 @@ delimitMultiline xs
 
 replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Verbosity -> a -> IO () -> IO ()
 replay printer target stdOutputs verbosity selfTime action = do
-  action `onException` \e -> do
+  action `onExceptionWith` \e -> do
     printStrLn printer $ "REPLAY for target " <> cTarget (show (targetOutputs target))
     cmd printer target
     targetStdOutputs printer target stdOutputs

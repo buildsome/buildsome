@@ -31,6 +31,7 @@ import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.ColorText (ColorText)
+import Lib.Exception (finally, bracket_, onException)
 import Lib.FSHook.AccessType (AccessType(..))
 import Lib.FSHook.OutputBehavior (KeepsOldContent(..), OutputEffect(..), OutputBehavior(..))
 import Lib.FSHook.Protocol (IsDelayed(..))
@@ -84,7 +85,7 @@ type JobLabel = ColorText
 
 data RunningJob = RunningJob
   { jobLabel :: JobLabel
-  , jobActiveConnections :: IORef (Map Int (ThreadId, MVar ()))
+  , jobActiveConnections :: IORef (Map Int (ThreadId, IO ()))
   , jobFreshConnIds :: Fresh Int
   , jobThreadId :: ThreadId
   , jobFSAccessHandlers :: FSAccessHandlers
@@ -131,7 +132,8 @@ serve printer fsHook conn = do
             Just (KillingJob _label) ->
               -- New connection created in the process of killing connections, ignore it
               return ()
-            Just (LiveJob job) -> handleJobConnection fullTidStr conn job $ fromNeedStr needStr
+            Just (LiveJob job) ->
+              (handleJobConnection fullTidStr conn job $ fromNeedStr needStr)
             Just (CompletedJob label) ->
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
@@ -148,7 +150,7 @@ printRethrowExceptions msg =
   E.handle $ \e -> do
     case E.fromException e of
       Just E.ThreadKilled -> return ()
-      _ -> hPutStrLn stderr $ msg ++ show e
+      _ -> E.uninterruptibleMask_ $ hPutStrLn stderr $ msg ++ show (e :: E.SomeException)
     E.throwIO e
 
 with :: Printer -> FilePath -> (FSHook -> IO a) -> IO a
@@ -175,7 +177,7 @@ with printer ldPreloadPath body = do
             -- during a send-message, which may cause a protocol error
             printRethrowExceptions "Job connection failed: " $
             serve printer fsHook conn
-            `E.finally` Sock.close conn
+            `finally` Sock.close conn
       body fsHook
 
 {-# INLINE sendGo #-}
@@ -262,11 +264,13 @@ wrapHandler job conn isDelayed handler =
       Delayed -> sendGo conn
       NotDelayed -> return ()
   where
-    forwardExceptions = handleSync $ \e@E.SomeException {} -> E.throwTo (jobThreadId job) e
+    forwardExceptions =
+      handleSync $ \e@E.SomeException {} ->
+      E.throwTo (jobThreadId job) e
 
 withRegistered :: Ord k => IORef (Map k a) -> k -> a -> IO r -> IO r
 withRegistered registry key val =
-  E.bracket_ register unregister
+  bracket_ register unregister
   where
     register = atomicModifyIORef_ registry $ M.insert key val
     unregister = atomicModifyIORef_ registry $ M.delete key
@@ -279,8 +283,8 @@ handleJobConnection tidStr conn job _need = do
   tid <- myThreadId
 
   connFinishedMVar <- newEmptyMVar
-  (`E.finally` putMVar connFinishedMVar ()) $
-    withRegistered (jobActiveConnections job) connId (tid, connFinishedMVar) $ do
+  (`finally` putMVar connFinishedMVar ()) $
+    withRegistered (jobActiveConnections job) connId (tid, readMVar connFinishedMVar) $ do
       sendGo conn
       recvLoop_ (handleJobMsg tidStr conn job <=< Protocol.parseMsg) conn
 
@@ -326,7 +330,7 @@ withRunningJob :: FSHook -> JobId -> RunningJob -> IO r -> IO r
 withRunningJob fsHook jobId job body = do
   setJob (LiveJob job)
   (body <* setJob (CompletedJob (jobLabel job)))
-    `E.onException` setJob (KillingJob (jobLabel job))
+    `onException` setJob (KillingJob (jobLabel job))
   where
     registry = fsHookRunningJobs fsHook
     setJob = atomicModifyIORef_ registry . M.insert jobId
@@ -351,13 +355,13 @@ runCommand fsHook rootFilter cmd label fsAccessHandlers = do
             }
   -- Don't leak connections still running our handlers once we leave!
   let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
-  (`E.finally` onActiveConnections awaitConnection) $
-    (`E.onException` onActiveConnections killConnection) $
+  (`finally` onActiveConnections awaitConnection) $
+    (`onException` onActiveConnections killConnection) $
     withRunningJob fsHook jobId job $
     cmd (mkEnvVars fsHook rootFilter jobId)
   where
-    killConnection (tid, _mvar) = killThread tid
-    awaitConnection (_tid, mvar) = readMVar mvar
+    killConnection (tid, _awaitConn) = killThread tid
+    awaitConnection (_tid, awaitConn) = awaitConn
 
 data CannotFindOverrideSharedObject = CannotFindOverrideSharedObject deriving (Show, Typeable)
 instance E.Exception CannotFindOverrideSharedObject

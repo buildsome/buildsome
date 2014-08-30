@@ -1,6 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, RankNTypes #-}
 module Buildsome.Slave
-  ( Slave, new
+  ( Slave, newWithUnmask
   , target
   , str
   , wait, waitCatch
@@ -29,9 +29,9 @@ data Slave a = Slave
 target :: Slave a -> Target
 target = slaveTarget
 
-new :: Target -> Printer.Id -> [FilePath] -> IO a -> IO (Slave a)
-new tgt printerId outputPaths action =
-  Slave tgt printerId outputPaths <$> Async.async action
+newWithUnmask :: Target -> Printer.Id -> [FilePath] -> ((forall b. IO b -> IO b) -> IO a) -> IO (Slave a)
+newWithUnmask tgt printerId outputPaths action =
+  Slave tgt printerId outputPaths <$> Async.asyncWithUnmask action
 
 str :: (Monoid str, IsString str) => Slave a -> str
 str slave =

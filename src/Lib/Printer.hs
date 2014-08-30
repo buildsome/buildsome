@@ -1,27 +1,45 @@
 {-# LANGUAGE OverloadedStrings, FlexibleInstances, RecordWildCards #-}
 module Lib.Printer
-  ( Id, idStr
+  ( Id, idStr, strLn
   , Printable
   , Printer, new, newFrom, render
   , printStrLn, rawPrintStrLn
   , printWrap
   , ColorScheme(..)
+  , rawPrintWrap, rawPrinterWrap
+  , putLn
   ) where
 
 import Control.Applicative ((<$>))
+import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Monoid
 import Data.String (IsString(..))
 import Lib.ColorText (ColorText)
-import Lib.Exception (onException)
+import Lib.Exception (onExceptionWith, bracket_)
 import Prelude hiding (lines, putStrLn)
 import Text.Printf (printf)
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.List as List
+import qualified GHC.IO.Exception as G
 import qualified Lib.ColorText as ColorText
 import qualified Prelude
+
+ignoreResourceVanished :: IO () -> IO ()
+ignoreResourceVanished act = do
+  res <- E.try act
+  case res of
+    Right x -> return x
+    Left e@(G.IOError { G.ioe_type = t }) ->
+      unless (t == G.ResourceVanished) $ E.throwIO e
+
+wrapOutputCall :: IO () -> IO ()
+wrapOutputCall = E.uninterruptibleMask_ . ignoreResourceVanished
+
+putLn :: String -> IO ()
+putLn = wrapOutputCall . Prelude.putStrLn
 
 type Id = Int
 
@@ -55,7 +73,7 @@ instance Printable ColorText where
   {-# INLINE putStrLn #-}
 
 data Printer = Printer
-  { _printerId :: Id
+  { printerId :: Id
   , printerRender :: ColorText -> ByteString
   , printerIndentLevelRef :: IORef Int
   }
@@ -76,16 +94,19 @@ newFrom (Printer _id toBS indentRef) pid =
 idStr :: IsString str => Id -> str
 idStr = fromString . printf "T%03d"
 
+strLn :: (Monoid str, IsString str) => Printer -> str -> str
+strLn printer str = idStr (printerId printer) <> ": " <> str
+
 {-# INLINE printStrLn #-}
 printStrLn :: Printable str => Printer -> str -> IO ()
 printStrLn (Printer pid toBS indentRef) str = do
   indentLevel <- readIORef indentRef
   let prefix = idStr pid <> " " <> mconcat (replicate indentLevel "  ")
-  putStrLn toBS $ intercalate "\n" $ map (prefix <>) $ lines str
+  wrapOutputCall $ putStrLn toBS $ intercalate "\n" $ map (prefix <>) $ lines str
 
 {-# INLINE rawPrintStrLn #-}
 rawPrintStrLn :: Printable str => Printer -> str -> IO ()
-rawPrintStrLn (Printer _ toBS _) = putStrLn toBS
+rawPrintStrLn (Printer _ toBS _) = wrapOutputCall . putStrLn toBS
 
 data ColorScheme = ColorScheme
   { cException :: ColorText -> ColorText
@@ -97,7 +118,7 @@ printWrap :: ColorScheme -> Printer -> ColorText -> ColorText -> IO a -> IO a
 printWrap ColorScheme{..} printer str entryMsg body = do
   printStrLn printer before
   res <-
-    wrappedBody `onException` \e ->
+    wrappedBody `onExceptionWith` \e ->
     printStrLn printer $ after $ cException $
     "EXCEPTION: " <> fromString ((concat . take 1 . lines . show) e)
   printStrLn printer $ after $ cOk "OK"
@@ -105,6 +126,15 @@ printWrap ColorScheme{..} printer str entryMsg body = do
   where
     indentLevel  = printerIndentLevelRef printer
     addIndent d  = modifyIORef indentLevel (+d)
-    wrappedBody  = E.bracket_ (addIndent 1) (addIndent (-1)) body
+    wrappedBody  = bracket_ (addIndent 1) (addIndent (-1)) body
     before       = mconcat ["{ ", str, " ", entryMsg]
     after suffix = mconcat ["} ", str, " ", suffix]
+
+{-# INLINE rawPrintWrap #-}
+rawPrintWrap :: String -> IO a -> IO a
+rawPrintWrap str = bracket_ (putLn (str ++ "{")) (putLn (str ++ "}"))
+
+{-# INLINE rawPrinterWrap #-}
+rawPrinterWrap :: Printer -> String -> IO a -> IO a
+rawPrinterWrap printer str =
+  bracket_ (printStrLn printer (str ++ "{")) (printStrLn printer (str ++ "}"))

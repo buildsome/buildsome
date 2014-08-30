@@ -11,7 +11,7 @@ instance Show AnnotatedException where
 instance E.Exception AnnotatedException
 
 annotateException :: String -> IO a -> IO a
-annotateException str = (`E.catch` wrapper)
+annotateException str = E.handle wrapper
   where
     wrapper e@E.SomeException {} = E.throwIO (AnnotatedException str e)
 

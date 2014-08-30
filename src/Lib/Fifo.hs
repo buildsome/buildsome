@@ -2,8 +2,10 @@ module Lib.Fifo
   ( Fifo
   , empty, null
   , enqueue, dequeue
+  , extract
   ) where
 
+import Data.List (partition)
 import Prelude hiding (null)
 
 data Fifo a = Fifo
@@ -17,6 +19,12 @@ null _ = False
 
 empty :: Fifo a
 empty = Fifo [] []
+
+extract :: (a -> Bool) -> Fifo a -> (Fifo a, [a])
+extract p (Fifo new old) = (Fifo newF oldF, newT ++ oldT)
+  where
+    (newT, newF) = partition p new
+    (oldT, oldF) = partition p old
 
 enqueue :: a -> Fifo a -> Fifo a
 enqueue x (Fifo new old) = Fifo (x:new) old

@@ -25,6 +25,7 @@ import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
 import Lib.ColorText (ColorText)
 import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
+import Lib.Exception (bracket)
 import Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Makefile (Makefile)
@@ -32,7 +33,6 @@ import Lib.Makefile.Monad (PutStrLn)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeInstances ()
 import Prelude hiding (FilePath)
-import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Set as S
@@ -101,19 +101,22 @@ getKey db key = fmap decode <$> LevelDB.get (dbLevel db) def key
 deleteKey :: Db -> ByteString -> IO ()
 deleteKey db = LevelDB.delete (dbLevel db) def
 
+openDb :: FilePath -> IO LevelDB.DB
+openDb dbPath =
+  LevelDB.open (BS8.unpack (dbPath </> schemaVersion))
+  def { LevelDB.createIfMissing = True }
+
 with :: FilePath -> (Db -> IO a) -> IO a
 with rawDbPath body = do
   dbPath <- makeAbsolutePath rawDbPath
   createDirectories dbPath
-  E.bracket (LevelDB.open (BS8.unpack (dbPath </> schemaVersion)) def { LevelDB.createIfMissing = True }) LevelDB.close $
-    \levelDb ->
-      withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
-      withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
-      body (Db levelDb registeredOutputs leakedOutputs)
+  bracket (openDb dbPath) LevelDB.close $ \levelDb ->
+    withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
+    withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
+    body (Db levelDb registeredOutputs leakedOutputs)
   where
     withIORefFile path =
-      E.bracket (newIORef =<< decodeFileOrEmpty path)
-                (E.uninterruptibleMask_ . writeBack path)
+      bracket (newIORef =<< decodeFileOrEmpty path) (writeBack path)
     writeBack path ref = do
       BS8.writeFile (BS8.unpack (path <.> "tmp")) .
         BS8.unlines . S.toList =<< readIORef ref

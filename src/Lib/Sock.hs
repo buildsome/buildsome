@@ -7,10 +7,10 @@ import Control.Applicative ((<$>))
 import Data.Monoid
 import Data.Word (Word32)
 import Lib.Binary (decode)
+import Lib.Exception (bracket, bracket_)
 import Lib.FilePath (FilePath)
 import Network.Socket (Socket)
 import Prelude hiding (FilePath)
-import qualified Control.Exception as E
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Network.Socket as Sock
@@ -47,7 +47,7 @@ recvLoop_ f sock = go
 
 withUnixStreamListener :: FilePath -> (Socket -> IO a) -> IO a
 withUnixStreamListener path body =
-  E.bracket (Sock.socket Sock.AF_UNIX Sock.Stream 0) Sock.close $ \sock ->
-  E.bracket_ (Sock.bind sock (Sock.SockAddrUnix (BS8.unpack path))) (Posix.removeLink path) $ do
+  bracket (Sock.socket Sock.AF_UNIX Sock.Stream 0) Sock.close $ \sock ->
+  bracket_ (Sock.bind sock (Sock.SockAddrUnix (BS8.unpack path))) (Posix.removeLink path) $ do
     Sock.listen sock 5
     body sock

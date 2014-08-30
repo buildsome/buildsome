@@ -6,6 +6,7 @@ module Lib.AsyncContext
 import Control.Concurrent.Async
 import Data.IORef
 import Data.IntMap (IntMap)
+import Lib.Exception (finally, onException)
 import Lib.Fresh (Fresh)
 import Lib.IORef (atomicModifyIORef'_)
 import qualified Control.Exception as E
@@ -21,14 +22,17 @@ new :: (AsyncContext -> IO a) -> IO a
 new body = do
   freshNames <- Fresh.new 0
   cancelActionsVar <- newIORef IntMap.empty
-  body (AsyncContext freshNames cancelActionsVar) `E.finally` do
+  body (AsyncContext freshNames cancelActionsVar) `finally` do
     cancelActions <- atomicModifyIORef cancelActionsVar $ \x -> (error "Attempt to use AsyncContext when it is finalized", x)
     sequence_ $ IntMap.elems cancelActions
 
 spawn :: AsyncContext -> IO a -> IO (Async a)
 spawn (AsyncContext freshNames cancelActionsVar) act = do
   name <- Fresh.next freshNames
-  E.mask $ \restore -> do
-    actAsync <- async $ restore act `E.finally` atomicModifyIORef'_ cancelActionsVar (IntMap.delete name)
+  E.mask_ $ do
+    actAsync <-
+      asyncWithUnmask $
+      \unmask -> unmask act
+                 `onException` atomicModifyIORef'_ cancelActionsVar (IntMap.delete name)
     atomicModifyIORef'_ cancelActionsVar $ IntMap.insert name (cancel actAsync)
     return actAsync

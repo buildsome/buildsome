@@ -1,11 +1,11 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, RankNTypes #-}
 module Lib.Timeout
   ( warning
   , picos, nanos, micros, millis, seconds
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.Async (withAsyncWithUnmask)
 import Control.Monad (forever)
 import Data.ByteString (ByteString)
 import Data.Monoid ((<>))
@@ -30,8 +30,9 @@ seconds = secondsToDiffTime
 
 warning :: DiffTime -> ByteString -> IO a -> IO a
 warning timeout errMsg action =
-  withAsync timeoutMsg $ const action
+  withAsyncWithUnmask timeoutMsg $ const action
   where
-    timeoutMsg = forever $ do
+    timeoutMsg :: (forall a. IO a -> IO a) -> IO ()
+    timeoutMsg unmask = unmask $ forever $ do
       threadDelay $ floor $ 1000000.0 * timeout
       BS8.hPutStrLn stderr $ "TIMEOUT: " <> errMsg

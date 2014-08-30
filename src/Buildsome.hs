@@ -14,8 +14,8 @@ import Buildsome.Opts (Opt(..))
 import Buildsome.Slave (Slave)
 import Buildsome.Stats (Stats(Stats))
 import Control.Applicative ((<$>))
-import Control.Concurrent (myThreadId)
-import Control.Concurrent.Async (async, wait)
+import Control.Concurrent (ThreadId, myThreadId, forkIO)
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Concurrent.MVar
 import Control.Exception.Async (handleSync)
 import Control.Monad
@@ -35,7 +35,7 @@ import Data.Typeable (Typeable)
 import Lib.AnnotatedException (annotateException)
 import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
-import Lib.Exception (finally)
+import Lib.Exception (onException, finally, logErrors, handle)
 import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..), KeepsOldContent(..))
 import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
@@ -44,7 +44,7 @@ import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
 import Lib.Once (once)
 import Lib.Parallelism (Parallelism)
-import Lib.Printer (Printer, printStrLn)
+import Lib.Printer (Printer, printStrLn, putLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
 import Lib.StdOutputs (StdOutputs(..))
@@ -104,7 +104,7 @@ data Buildsome = Buildsome
   }
 
 cancelAllSlaves :: Printer -> Buildsome -> IO ()
-cancelAllSlaves printer bs = go 0
+cancelAllSlaves printer bs = go M.empty
   where
     Color.Scheme{..} = Color.scheme
     timeoutWarning str time slave =
@@ -112,26 +112,28 @@ cancelAllSlaves printer bs = go 0
       mconcat ["Slave ", Slave.str slave, " did not ", str, " in ", show time, "!"]
     go alreadyCancelled = do
       curSlaveMap <- readIORef $ bsSlaveByTargetRep bs
-      slaves <-
-        forM (M.toList curSlaveMap) $
-        \(targetRep, mvar) ->
-        Timeout.warning (Timeout.millis 100)
-        (Printer.render printer
-         ("Slave MVar for " <> cTarget (show targetRep) <> " not populated in 100 millis!")) $
-        readMVar mvar
-      let count = length slaves
-      unless (alreadyCancelled >= count) $ do
-        forM_ slaves $ \slave -> timeoutWarning "cancel" (Timeout.millis 100) slave $
-          Slave.cancel slave
-        forM_ slaves $ \slave -> timeoutWarning "finish" (Timeout.seconds 2) slave $
-          Slave.waitCatch slave
+      let nonCancelledSlaveMap = curSlaveMap `M.difference` alreadyCancelled
+      unless (M.null nonCancelledSlaveMap) $ do
+        slaves <-
+          flip M.traverseWithKey nonCancelledSlaveMap $
+          \targetRep mvar ->
+          Timeout.warning (Timeout.millis 100)
+          (Printer.render printer
+           ("Slave MVar for " <> cTarget (show targetRep) <> " not populated in 100 millis!")) $
+          readMVar mvar
+        _ <-
+          (flip mapConcurrently slaves $ \slave ->
+            timeoutWarning "cancel" (Timeout.millis 1000) slave $ Slave.cancel slave)
+          `logErrors` "cancel of slaves failed: "
+        _ <- flip mapConcurrently slaves $ \slave ->
+          timeoutWarning "finish" (Timeout.seconds 2) slave $ Slave.waitCatch slave
         -- Make sure to cancel any potential new slaves that were
         -- created during cancellation
-        go count
+        go curSlaveMap
 
-verbosePutStrln :: Buildsome -> String -> IO ()
-verbosePutStrln buildsome str =
-  when verbose $ putStrLn str
+verbosePutLn :: Buildsome -> String -> IO ()
+verbosePutLn buildsome str =
+  when verbose $ putLn str
   where
     verbose = Opts.verbosityGeneral $ optVerbosity $ bsOpts buildsome
 
@@ -143,7 +145,7 @@ updateGitIgnore buildsome makefilePath = do
       gitIgnorePath = dir </> ".gitignore"
       gitIgnoreBasePath = dir </> gitignoreBaseName
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
-  verbosePutStrln buildsome "Updating .gitignore"
+  verbosePutLn buildsome "Updating .gitignore"
   base <- Dir.catchDoesNotExist
           (fmap BS8.lines $ BS8.readFile $  BS8.unpack gitIgnoreBasePath)
           $ return []
@@ -554,7 +556,7 @@ instance Show PanicError where
 
 panic :: (ColorText -> ByteString) -> String -> IO a
 panic render msg = do
-  IO.hPutStrLn IO.stderr msg
+  IO.hPutStrLn IO.stderr $ "PANIC: " ++ msg
   E.throwIO $ PanicError render msg
 
 -- Find existing slave for target, or spawn a new one
@@ -564,7 +566,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
   | otherwise = do
     newSlaveMVar <- newEmptyMVar
-    E.mask $ \restoreMask -> join $
+    E.mask_ $ join $
       atomicModifyIORef (bsSlaveByTargetRep bteBuildsome) $
       \oldSlaveMap ->
       -- TODO: Use a faster method to lookup&insert at the same time
@@ -572,8 +574,10 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
       Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
       Nothing ->
         ( M.insert tdRep newSlaveMVar oldSlaveMap
-        , mkSlave newSlaveMVar $ \printer allocParCell ->
-          allocParCell $ \parCell -> restoreMask $ do
+        , mkSlave newSlaveMVar $ \unmask printer allocParCell ->
+          -- Must remain masked through allocParCell so it gets a
+          -- chance to handle alloc/exception!
+          allocParCell $ \parCell -> unmask $ do
             let newBte = bte { bteParents = newParents, btePrinter = printer }
             buildTarget newBte parCell TargetDesc{..}
         )
@@ -585,18 +589,26 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
       newParents = (tdRep, bteReason) : bteParents
       panicHandler e@E.SomeException {} =
         panic (bsRender bteBuildsome) $ "FAILED during making of slave: " ++ show e
-      mkSlave mvar action = do
-        slave <-
-          E.handle panicHandler $ do
-            allocParCell <-
-              Parallelism.startAlloc Parallelism.PriorityLow $
-              bsParallelism bteBuildsome
-            depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
-            depPrinter <- Printer.newFrom btePrinter depPrinterId
-            Slave.new tdTarget depPrinterId (targetOutputs tdTarget) $
-              annotate $ action depPrinter allocParCell
-        putMVar mvar slave
-        return slave
+      mkSlave mvar action =
+        -- TODO: Remove uninterruptibleMask_?
+        E.uninterruptibleMask $ \restoreUninterruptible -> do
+          slave <-
+            -- Everything under handle is synchronous, so should not
+            -- be interruptible. There shouldn't be a danger of a sync
+            -- or async exception here, so the putMVar is supposed to be
+            -- guaranteed.
+            handle (\e -> putMVar mvar (error ("Failed to create slave: " ++ show e)) >> panicHandler e) $ do
+              depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
+              depPrinter <- Printer.newFrom btePrinter depPrinterId
+              -- NOTE: allocParCell MUST be called to avoid leak!
+              allocParCell <-
+                Parallelism.startAlloc Parallelism.PriorityLow $
+                bsParallelism bteBuildsome
+              restoreUninterruptible $ -- This only restores to interruptible mask as above!
+                Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
+                \unmask -> annotate $ action unmask depPrinter allocParCell
+          putMVar mvar slave
+          return slave
 
 data UnregisteredOutputFileExists = UnregisteredOutputFileExists (ColorText -> ByteString) FilePath
   deriving (Typeable)
@@ -698,7 +710,8 @@ makeImplicitInputs ::
   IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
 makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
-  Parallelism.withReleased Parallelism.PriorityHigh parCell (bsParallelism bteBuildsome) $ do
+  Parallelism.withReleased Parallelism.PriorityHigh parCell (bsParallelism bteBuildsome) $
+  do
     targetParentsBuilt <-
       buildMany (("Container directory of: " <>) . (<> (" " <> accessDoc)))
       bteImplicit $ map SlaveRequestDirect $ parentDirs allPaths
@@ -729,12 +742,12 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
   where
     fsUndelayedAccessHandler accessDoc rawInputs rawOutputs =
       commonAccessHandler accessDoc rawInputs rawOutputs
-        FSHook.outPath (return . undelayedOutputEffect) $ \_ _ -> return ()
+      FSHook.outPath (return . undelayedOutputEffect) $ \_ _ -> return ()
 
     fsDelayedAccessHandler accessDoc rawInputs rawOutputs =
       commonAccessHandler accessDoc rawInputs rawOutputs
-        FSHook.outputPath delayedOutputEffect $
-        makeImplicitInputs builtTargetsRef bte parCell accessDoc
+      FSHook.outputPath delayedOutputEffect $
+      makeImplicitInputs builtTargetsRef bte parCell accessDoc
 
     targetOutputsSet = S.fromList $ targetOutputs target
 
@@ -767,8 +780,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
   builtTargetsRef <- newIORef mempty
   let accessHandlers = fsAccessHandlers outputsRef inputsRef builtTargetsRef bte parCell target
   (time, stdOutputs) <-
-    FSHook.timedRunCommand hook rootPath shellCmd
-    renderedTargetOutputs accessHandlers
+    FSHook.timedRunCommand hook rootPath shellCmd renderedTargetOutputs accessHandlers
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
   builtTargets <- readIORef builtTargetsRef
@@ -980,20 +992,11 @@ shellCmdVerify BuildTargetEnv{..} target inheritEnvs newEnvs = do
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
 
-disallowExceptions :: IO a -> String -> IO a
-disallowExceptions act prefix = act `E.catch` \e@E.SomeException {} -> do
-  putStrLn $ prefix ++ show e
-  E.throwIO e
-
 withDb :: FilePath -> (Db -> IO a) -> IO a
 withDb makefilePath = Db.with $ buildDbFilename makefilePath
 
-inKillableThread :: ((E.SomeException -> IO ()) -> IO a) -> IO a
-inKillableThread act = do
-  a <- async $ do
-    t <- myThreadId
-    act $ E.throwTo t
-  wait a
+throwToAsync :: ThreadId -> E.SomeException -> IO ()
+throwToAsync threadId exception = void $ forkIO $ E.throwTo threadId exception
 
 with ::
   Printer -> Db -> FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
@@ -1009,36 +1012,36 @@ with printer db makefilePath makefile opt@Opt{..} body = do
       buildMaps = BuildMaps.make makefile
     deleteRemovedOutputs printer db buildMaps
 
-    inKillableThread $ \killThread -> do
-      killThreadOnce <- (void .) . (. killThread) <$> once
-      let
-        buildsome =
-          Buildsome
-          { bsOpts = opt
-          , bsMakefile = makefile
-          , bsPhoniesSet = S.fromList . map snd $ makefilePhonies makefile
-          , bsBuildId = buildId
-          , bsRootPath = rootPath
-          , bsBuildMaps = buildMaps
-          , bsDb = db
-          , bsFsHook = fsHook
-          , bsSlaveByTargetRep = slaveMapByTargetRep
-          , bsParallelism = parallelism
-          , bsFreshPrinterIds = freshPrinterIds
-          , bsFastKillBuild = case optKeepGoing of
-              Opts.KeepGoing -> const (return ())
-              Opts.DieQuickly -> killThreadOnce
-          , bsRender = Printer.render printer
-          }
-      body buildsome
-        -- We must not leak running slaves as we're not allowed to
-        -- access fsHook, db, etc after leaving here:
-        `E.onException` putStrLn "Shutting down"
-        `finally` (cancelAllSlaves printer buildsome
-                   `disallowExceptions` "BUG: Exception thrown at cancelAllSlaves: ")
-        -- Must update gitIgnore after all the slaves finished updating
-        -- the registered output lists:
-        `finally` maybeUpdateGitIgnore buildsome
+    threadId <- myThreadId
+    killThreadOnce <- (void .) . (. throwToAsync threadId) <$> once
+    let
+      buildsome =
+        Buildsome
+        { bsOpts = opt
+        , bsMakefile = makefile
+        , bsPhoniesSet = S.fromList . map snd $ makefilePhonies makefile
+        , bsBuildId = buildId
+        , bsRootPath = rootPath
+        , bsBuildMaps = buildMaps
+        , bsDb = db
+        , bsFsHook = fsHook
+        , bsSlaveByTargetRep = slaveMapByTargetRep
+        , bsParallelism = parallelism
+        , bsFreshPrinterIds = freshPrinterIds
+        , bsFastKillBuild = case optKeepGoing of
+            Opts.KeepGoing -> const (return ())
+            Opts.DieQuickly -> killThreadOnce
+        , bsRender = Printer.render printer
+        }
+    ((body buildsome
+      `onException` putLn "Shutting down")
+      -- We must not leak running slaves as we're not allowed to
+      -- access fsHook, db, etc after leaving here:
+      `finally` (cancelAllSlaves printer buildsome
+                 `logErrors` "BUG: Exception from cancelAllSlaves: "))
+      -- Must update gitIgnore after all the slaves finished updating
+      -- the registered output lists:
+      `finally` maybeUpdateGitIgnore buildsome
   where
     maybeUpdateGitIgnore buildsome =
       case optUpdateGitIgnore of

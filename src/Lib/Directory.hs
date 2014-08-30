@@ -10,6 +10,7 @@ module Lib.Directory
 
 import Control.Applicative ((<$>))
 import Control.Monad
+import Lib.Exception (bracket)
 import Lib.FilePath (FilePath, (</>))
 import Prelude hiding (FilePath)
 import System.IO.Error
@@ -65,7 +66,7 @@ removeFileOrDirectory path =
 
 getDirectoryContents :: FilePath -> IO [FilePath]
 getDirectoryContents path =
-  E.bracket (Posix.openDirStream path) Posix.closeDirStream go
+  bracket (Posix.openDirStream path) Posix.closeDirStream go
   where
     go dirStream = do
       fn <- Posix.readDirStream dirStream

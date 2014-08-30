@@ -2,6 +2,7 @@ module Lib.PriorityQueue
   ( Priority(..)
   , PriorityQueue
   , empty, null, enqueue, dequeue
+  , extract
   ) where
 
 import Prelude hiding (null)
@@ -32,3 +33,9 @@ dequeue :: PriorityQueue a -> Maybe (PriorityQueue a, (Priority, a))
 dequeue (PriorityQueue low high) =
   ((( PriorityQueue  low ) *** (,) PriorityHigh) <$> Fifo.dequeue high) <|>
   (((`PriorityQueue` high) *** (,) PriorityLow ) <$> Fifo.dequeue low)
+
+extract :: (a -> Bool) -> PriorityQueue a -> (PriorityQueue a, [a])
+extract p (PriorityQueue low high) = (PriorityQueue low' high', lows++highs)
+  where
+    (low', lows) = Fifo.extract p low
+    (high', highs) = Fifo.extract p high
