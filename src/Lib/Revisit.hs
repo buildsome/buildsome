@@ -2,23 +2,23 @@ module Lib.Revisit
   ( M, avoid, run
   ) where
 
-import Control.Applicative ((<$>))
-import Control.Monad.Trans.State (State, evalState)
+import Control.Monad (liftM)
+import Control.Monad.Trans.State (StateT, evalStateT)
 import Data.Set (Set)
 import qualified Control.Monad.Trans.State as State
 import qualified Data.Set as Set
 
 -- Visited:
-type M e = State (Set e)
+type M e m = StateT (Set e) m
 
-avoid :: Ord e => e -> M e a -> M e (Maybe a)
+avoid :: (Monad m, Ord e) => e -> M e m a -> M e m (Maybe a)
 avoid rep act = do
   visited <- State.get
   if rep `Set.member` visited
     then return Nothing
     else do
       State.modify $ Set.insert rep
-      Just <$> act
+      liftM Just act
 
-run :: M e a -> a
-run = flip evalState Set.empty
+run :: Monad m => M e m a -> m a
+run = flip evalStateT Set.empty

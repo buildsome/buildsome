@@ -36,6 +36,7 @@ executable buildsome
                ,     Buildsome.ClangCommands
                ,     Buildsome.Clean
                ,     Buildsome.Color
+               ,     Buildsome.CompatMakefile
                ,     Buildsome.Db
                ,     Buildsome.FileContentDescCache
                ,     Buildsome.MagicFiles

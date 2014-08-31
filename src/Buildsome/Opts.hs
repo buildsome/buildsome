@@ -5,6 +5,7 @@ module Buildsome.Opts
   , KeepGoing(..)
   , Color(..)
   , Opt(..)
+  , CompatMakefile(..)
   , ExtraOutputs(..), extraOutputsAtFilePaths
   , Opts(..), get
   , PrintCommands(..)
@@ -74,15 +75,19 @@ parseVerbosity =
          help "Show buildsome's own execution details")
   )
 
+data CompatMakefile = NoCompatMakefile | CompatMakefile
+  deriving (Eq, Ord, Show)
+
 data ExtraOutputs = ExtraOutputs
   { optChartsPath :: Maybe FilePath
   , optClangCommandsPath :: Maybe FilePath
+  , optCompatMakefile :: CompatMakefile
   } deriving (Show)
 
 extraOutputsAtFilePaths ::
   Applicative f => (FilePath -> f FilePath) -> ExtraOutputs -> f ExtraOutputs
-extraOutputsAtFilePaths f (ExtraOutputs a b) =
-  ExtraOutputs <$> traverse f a <*> traverse f b
+extraOutputsAtFilePaths f (ExtraOutputs a b c) =
+  ExtraOutputs <$> traverse f a <*> traverse f b <*> pure c
 
 data Opt = Opt { optRequestedTargets :: [FilePath]
                , optMakefilePath :: Maybe FilePath
@@ -190,6 +195,9 @@ get =
                      (short 'C' <>
                       help "Write clang commands spec to compile_commands.json")
                     )
+                <*> flag NoCompatMakefile CompatMakefile
+                    (short 'M' <> long "compat-makefile" <>
+                     help "Generate compatibility Makefile")
               )
           <*> optionalBsOpt (long "fs-override" <>
                              metavar "path" <>

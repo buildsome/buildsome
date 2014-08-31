@@ -30,6 +30,7 @@ import qualified Buildsome
 import qualified Buildsome.Chart as Chart
 import qualified Buildsome.ClangCommands as ClangCommands
 import qualified Buildsome.Color as Color
+import qualified Buildsome.CompatMakefile as CompatMakefile
 import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
 import qualified Buildsome.Opts as Opts
 import qualified Control.Exception as E
@@ -264,13 +265,16 @@ handleRequested
   buildsome printer
   (RequestedTargets
    (TargetsRequest requestedTargetPaths reason
-    (Opts.ExtraOutputs mChartPath mClangCommandsPath)))
+    (Opts.ExtraOutputs mChartPath mClangCommandsPath compatMakefile)))
   = do
     Buildsome.BuiltTargets rootTargets slaveStats <-
       Buildsome.want printer buildsome reason requestedTargetPaths
     maybe (return ()) (Chart.make slaveStats) mChartPath
     cwd <- Posix.getWorkingDirectory
     maybe (return ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
+    case compatMakefile of
+      Opts.NoCompatMakefile -> return ()
+      Opts.CompatMakefile -> CompatMakefile.make cwd slaveStats rootTargets "compat-makefile"
 
 main :: IO ()
 main = do
