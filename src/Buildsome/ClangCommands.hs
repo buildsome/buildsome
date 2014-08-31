@@ -5,40 +5,25 @@ module Buildsome.ClangCommands
 
 import Buildsome.BuildMaps (TargetRep)
 import Buildsome.Stats (Stats)
-import Control.Applicative ((<$>))
-import Control.Monad.Trans.State (State, evalState)
 import Data.Aeson ((.=))
 import Data.Aeson.Encode.Pretty (encodePretty)
 import Data.Maybe (fromMaybe)
-import Data.Set (Set)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile (TargetType(..), Target)
+import Lib.Revisit (M)
 import Prelude hiding (FilePath)
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Stats as Stats
-import qualified Control.Monad.Trans.State as State
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as BS8L
 import qualified Data.Map as Map
-import qualified Data.Set as Set
+import qualified Lib.Revisit as Revisit
 
--- Visited:
-type M = State (Set TargetRep)
-
-avoidRevisit :: TargetRep -> M a -> M (Maybe a)
-avoidRevisit rep act = do
-  visited <- State.get
-  if rep `Set.member` visited
-    then return Nothing
-    else do
-      State.modify $ Set.insert rep
-      Just <$> act
-
-buildCommands :: FilePath -> Stats -> Target -> M [Aeson.Value]
+buildCommands :: FilePath -> Stats -> Target -> M TargetRep [Aeson.Value]
 buildCommands cwd stats target =
   fmap (fromMaybe []) $
-  avoidRevisit (BuildMaps.computeTargetRep target) $ do
+  Revisit.avoid (BuildMaps.computeTargetRep target) $ do
     deps <- depBuildCommands
     return $ myBuildCommands ++ deps
   where
@@ -59,7 +44,7 @@ buildCommands cwd stats target =
         error "BUG: Stats does not contain targets that appear as root/dependencies"
       Just (_, _, deps) -> buildCommandsTargets cwd stats deps
 
-buildCommandsTargets :: FilePath -> Stats -> [Target] -> M [Aeson.Value]
+buildCommandsTargets :: FilePath -> Stats -> [Target] -> M TargetRep [Aeson.Value]
 buildCommandsTargets cwd stats = fmap concat . mapM (buildCommands cwd stats)
 
 make :: FilePath -> Stats -> [Target] -> FilePath -> IO ()
@@ -67,4 +52,4 @@ make cwd stats rootTargets filePath = do
   putStrLn $ "Writing clang commands to: " ++ show (cwd </> filePath)
   BS8L.writeFile (BS8.unpack filePath) $
     encodePretty $ reverse $
-    evalState (buildCommandsTargets cwd stats rootTargets) Set.empty
+    Revisit.run (buildCommandsTargets cwd stats rootTargets)

@@ -84,6 +84,7 @@ executable buildsome
                ,     Lib.Printer
                ,     Lib.PriorityQueue
                ,     Lib.Process
+               ,     Lib.Revisit
                ,     Lib.ScanFileUpwards
                ,     Lib.Show
                ,     Lib.ShowBytes
