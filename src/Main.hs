@@ -43,7 +43,6 @@ import qualified Lib.Version as Version
 import qualified Prelude
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
-import qualified System.Posix.Process as Process
 
 standardMakeFilename :: FilePath
 standardMakeFilename = "Buildsome.mk"
@@ -275,7 +274,6 @@ handleRequested
 
 main :: IO ()
 main = do
-  Process.setProcessGroupIDOf 0 0
   setNumCapabilities =<< getNumProcessors
   opts <- Opts.get
   render <- getColorRender opts
