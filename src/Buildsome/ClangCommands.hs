@@ -44,7 +44,7 @@ buildCommands cwd stats target =
       case Map.lookup (BuildMaps.computeTargetRep target) (Stats.ofTarget stats) of
       Nothing ->
         error "BUG: Stats does not contain targets that appear as root/dependencies"
-      Just (_, _, deps) -> buildCommandsTargets cwd stats deps
+      Just targetStats -> buildCommandsTargets cwd stats $ Stats.tsDirectDeps targetStats
 
 buildCommandsTargets :: FilePath -> Stats -> [Target] -> M [Aeson.Value]
 buildCommandsTargets cwd stats = fmap concat . mapM (buildCommands cwd stats)

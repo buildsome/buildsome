@@ -935,7 +935,12 @@ buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
         let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
         return $ stats <>
           Stats
-          { Stats.ofTarget = M.singleton tdRep (whenBuilt, elSelfTime, deps)
+          { Stats.ofTarget =
+               M.singleton tdRep Stats.TargetStats
+               { tsWhen = whenBuilt
+               , tsTime = elSelfTime
+               , tsDirectDeps = deps
+               }
           , Stats.stdErr =
             if mempty /= stdErr elStdoutputs
             then S.singleton tdRep

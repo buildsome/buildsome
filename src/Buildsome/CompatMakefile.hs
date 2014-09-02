@@ -70,7 +70,7 @@ onOneTarget cwd stats target =
     dependencies =
       case Map.lookup targetRep (Stats.ofTarget stats) of
       Nothing -> error "BUG: Stats does not contain targets that appear as root/dependencies"
-      Just (_, _, deps) -> deps
+      Just targetStats -> Stats.tsDirectDeps targetStats
     depBuildCommands = onMultipleTargets cwd stats dependencies
 
 onMultipleTargets :: FilePath -> Stats -> [Target] -> M [ByteString]

@@ -26,9 +26,9 @@ buildTimes stats =
  def { Chart._pie_data = dataPoints }
  where
   dataPoints =
-    let f (targetRep, (_when, count, _deps)) =
+    let f (targetRep, targetStats) =
           def { Chart._pitem_label = BS8.unpack $ BuildMaps.targetRepPath targetRep
-              , Chart._pitem_value = realToFrac count }
+              , Chart._pitem_value = realToFrac (Stats.tsTime targetStats) }
     in map f $ M.toList $ Stats.ofTarget stats
 
 makePieChart :: Stats -> FilePath -> IO ()
@@ -87,11 +87,11 @@ statsGraph =
   M.filter hasDeps .
   Stats.ofTarget
   where
-    hasDeps (_when, _diffTime, deps) = not $ null deps
-    toNode (_when, diffTime, deps) =
+    hasDeps targetStats = not $ null $ Stats.tsDirectDeps targetStats
+    toNode targetStats =
       Node
-      { nodeDests = map targetAsByteString deps
-      , nodeFontSize = 20 + 5 * realToFrac diffTime
+      { nodeDests = map targetAsByteString $ Stats.tsDirectDeps targetStats
+      , nodeFontSize = 20 + 5 * realToFrac (Stats.tsTime targetStats)
       }
     targetAsByteString = BuildMaps.targetRepPath . BuildMaps.computeTargetRep
 

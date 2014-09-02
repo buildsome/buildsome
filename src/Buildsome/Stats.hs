@@ -1,5 +1,5 @@
 module Buildsome.Stats
-  ( When(..), Stats(..)
+  ( When(..), TargetStats(..), Stats(..)
   ) where
 
 import Buildsome.BuildMaps (TargetRep)
@@ -11,8 +11,14 @@ import Lib.Makefile (Target)
 
 data When = FromCache | BuiltNow deriving Show
 
+data TargetStats = TargetStats
+  { tsWhen :: !When
+  , tsTime :: !DiffTime
+  , tsDirectDeps :: [Target]
+  } deriving (Show)
+
 data Stats = Stats
-  { ofTarget :: Map TargetRep (When, DiffTime, [Target])
+  { ofTarget :: Map TargetRep TargetStats
   , stdErr :: Set TargetRep
   } deriving (Show)
 
