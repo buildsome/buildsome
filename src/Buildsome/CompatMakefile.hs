@@ -21,6 +21,9 @@ import qualified Lib.Revisit as Revisit
 
 type M = Revisit.M TargetRep Identity
 
+targetRep :: Target -> FilePath
+targetRep = BuildMaps.targetRepPath . BuildMaps.computeTargetRep
+
 onOneTarget :: FilePath -> Stats -> Target -> M [ByteString]
 onOneTarget cwd stats target =
   fmap (fromMaybe []) $
@@ -28,13 +31,12 @@ onOneTarget cwd stats target =
     depsLines <- depBuildCommands
     return $ myLines ++ depsLines
   where
-    Target outputs _ _ cmds pos = target
     myLines =
-      [ "#" <> BS8.pack (showPos pos)
-      , BS8.unwords outputs <> ":" <>
-        if null dependencies then "" else " " <> BS8.unwords (concatMap targetOutputs dependencies)
+      [ "#" <> BS8.pack (showPos (targetPos target))
+      , targetRep target <> ":" <>
+        if null dependencies then "" else " " <> BS8.unwords (map targetRep dependencies)
       ] ++
-      map ("\t" <>) (BS8.lines cmds) ++
+      map ("\t" <>) (BS8.lines (targetCmds target)) ++
       [ ""
       ]
     dependencies =
