@@ -274,7 +274,8 @@ handleRequested
     maybe (return ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
     case compatMakefile of
       Opts.NoCompatMakefile -> return ()
-      Opts.CompatMakefile -> CompatMakefile.make cwd slaveStats rootTargets "compat-makefile"
+      Opts.CompatMakefile ->
+        CompatMakefile.make (Buildsome.bsPhoniesSet buildsome) cwd slaveStats rootTargets "compat-makefile"
 
 main :: IO ()
 main = do

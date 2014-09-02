@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Buildsome.CompatMakefile
-  ( make
+  ( Phonies, make
   ) where
 
 import Buildsome.BuildMaps (TargetRep)
@@ -10,6 +10,7 @@ import Control.Monad.Trans.Class (MonadTrans(..))
 import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
+import Data.Set (Set)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile (TargetType(..), Target)
 import Lib.Parsec (showPos)
@@ -18,6 +19,7 @@ import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Stats as Stats
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import qualified Lib.Revisit as Revisit
 import qualified System.Directory as Directory
 
@@ -48,8 +50,10 @@ targetCmdLines tgt target =
   (BS8.lines . targetCmds) target ++
   ["touch " <> makefileTargetPath tgt | isDirectory tgt]
 
-onOneTarget :: FilePath -> Stats -> Target -> M [ByteString]
-onOneTarget cwd stats target =
+type Phonies = Set FilePath
+
+onOneTarget :: Phonies -> FilePath -> Stats -> Target -> M [ByteString]
+onOneTarget phoniesSet cwd stats target =
   fmap (fromMaybe []) $
   Revisit.avoid targetRep $ do
     depsLines <- depBuildCommands
@@ -58,7 +62,11 @@ onOneTarget cwd stats target =
     let
       myLines =
         [ "#" <> BS8.pack (showPos (targetPos target))
-        , makefileTargetPath tgt <> ":" <>
+        ] ++
+        [ ".PHONY: " <> makefileTargetPath tgt
+        | makefileTargetPath tgt `Set.member` phoniesSet
+        ] ++
+        [ makefileTargetPath tgt <> ":" <>
           if null dependencies then "" else " " <> BS8.unwords (map makefileTargetPath depTgts)
         ] ++
         map ("\t" <>) (targetCmdLines tgt target) ++
@@ -71,15 +79,15 @@ onOneTarget cwd stats target =
       case Map.lookup targetRep (Stats.ofTarget stats) of
       Nothing -> error "BUG: Stats does not contain targets that appear as root/dependencies"
       Just targetStats -> Stats.tsDirectDeps targetStats
-    depBuildCommands = onMultipleTargets cwd stats dependencies
+    depBuildCommands = onMultipleTargets phoniesSet cwd stats dependencies
 
-onMultipleTargets :: FilePath -> Stats -> [Target] -> M [ByteString]
-onMultipleTargets cwd stats = fmap concat . mapM (onOneTarget cwd stats)
+onMultipleTargets :: Phonies -> FilePath -> Stats -> [Target] -> M [ByteString]
+onMultipleTargets phoniesSet cwd stats = fmap concat . mapM (onOneTarget phoniesSet cwd stats)
 
-make :: FilePath -> Stats -> [Target] -> FilePath -> IO ()
-make cwd stats rootTargets filePath = do
+make :: Phonies -> FilePath -> Stats -> [Target] -> FilePath -> IO ()
+make phoniesSet cwd stats rootTargets filePath = do
   putStrLn $ "Writing compat makefile to: " ++ show (cwd </> filePath)
-  makefileLines <- Revisit.run (onMultipleTargets cwd stats rootTargets)
+  makefileLines <- Revisit.run (onMultipleTargets phoniesSet cwd stats rootTargets)
   BS8.writeFile (BS8.unpack filePath) $
     BS8.unlines $
     [ "# Auto-generated compatibility mode Makefile"

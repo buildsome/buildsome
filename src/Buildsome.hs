@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Buildsome
-  ( Buildsome, with, withDb
+  ( Buildsome(bsPhoniesSet), with, withDb
   , clean
   , BuiltTargets(..)
   , want
