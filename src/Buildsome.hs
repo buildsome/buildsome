@@ -940,6 +940,7 @@ buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
                { tsWhen = whenBuilt
                , tsTime = elSelfTime
                , tsDirectDeps = deps
+               , tsAccessedPaths = M.keys elInputsDescs
                }
           , Stats.stdErr =
             if mempty /= stdErr elStdoutputs
