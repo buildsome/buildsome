@@ -85,6 +85,7 @@ data Func
   | Chown OutFilePath Word32 Word32
   | Exec InFilePath
   | ExecP (Maybe FilePath) [FilePath]{-prior searched paths (that did not exist)-}
+  | RealPath InFilePath
   deriving (Show)
 
 -- Hook is delayed waiting for handler to complete
@@ -118,6 +119,7 @@ showFunc (Chown path uid gid) = unwords ["chown:", show path, show uid, show gid
 showFunc (Exec path) = unwords ["exec:", show path]
 showFunc (ExecP (Just path) attempted) = unwords ["execP:", show path, "searched:", show attempted]
 showFunc (ExecP Nothing attempted) = unwords ["failedExecP:searched:", show attempted]
+showFunc (RealPath path) = unwords ["realPath:", show path]
 
 {-# ANN module ("HLint: ignore Use ++"::String) #-}
 {-# ANN module ("HLint: ignore Use camelCase"::String) #-}
@@ -207,6 +209,7 @@ funcs =
   , (0x10011, ("chown"   , return <$> (Chown <$> getOutPath <*> getWord32le <*> getWord32le)))
   , (0x10012, ("exec"    , return <$> (Exec <$> getInPath)))
   , (0x10013, ("execp"   , execP <$> getNullTerminated mAX_EXEC_FILE <*> getPath <*> getNullTerminated mAX_PATH_ENV_VAR_LENGTH <*> getNullTerminated mAX_PATH_CONF_STR))
+  , (0x10014, ("realPath", return <$> (RealPath <$> getInPath)))
   ]
 
 {-# INLINE parseMsgLazy #-}
@@ -233,4 +236,4 @@ parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloPrefix #-}
 helloPrefix :: ByteString
-helloPrefix = "PROTOCOL6: HELLO, I AM: "
+helloPrefix = "PROTOCOL7: HELLO, I AM: "

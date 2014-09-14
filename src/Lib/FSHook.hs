@@ -231,6 +231,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
       handleInputs $
       map (Input AccessTypeFull) (maybeToList mPath) ++
       map (Input AccessTypeModeOnly) attempted
+    Protocol.RealPath path         -> handleInput AccessTypeModeOnly path
   where
     handlers = jobFSAccessHandlers job
     handleDelayed   inputs outputs = wrap $ delayedFSAccessHandler handlers actDesc inputs outputs

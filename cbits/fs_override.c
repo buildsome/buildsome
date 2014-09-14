@@ -87,6 +87,7 @@ enum func {
     func_chown     = 0x10011,
     func_exec      = 0x10012,
     func_execp     = 0x10013,
+    func_realpath  = 0x10014,
 };
 
 /* func_openw.flags */
@@ -137,6 +138,7 @@ struct func_link      {out_path oldpath; out_path newpath;};
 struct func_chown     {out_path path; uint32_t owner; uint32_t group;};
 struct func_exec      {in_path path;};
 struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_var_PATH[MAX_PATH_ENV_VAR_LENGTH]; char conf_str_CS_PATH[MAX_PATH_CONF_STR];};
+struct func_realpath  {in_path path;};
 
 #define DEFINE_WRAPPER(ret_type, name, params)  \
     typedef ret_type name##_func params;        \
@@ -775,6 +777,14 @@ DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
      * not contain slash, need to handle it correctly (or switch to
      * fuse!) */
     return AWAIT_CALL_REAL(needs_await, msg, dlopen, filename, flag);
+}
+
+DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
+{
+    bool needs_await = false;
+    DEFINE_MSG(msg, realpath);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
+    return AWAIT_CALL_REAL(needs_await, msg, realpath, path, resolved_path);
 }
 
 /*************************************/

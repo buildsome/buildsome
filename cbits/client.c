@@ -8,7 +8,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#define PROTOCOL_HELLO "PROTOCOL6: HELLO, I AM: "
+#define PROTOCOL_HELLO "PROTOCOL7: HELLO, I AM: "
 
 static __thread struct {
     pid_t pid;                  /* TODO: Document that this identifies fork()ed threads */
