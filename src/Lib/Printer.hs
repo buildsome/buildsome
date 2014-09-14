@@ -26,6 +26,7 @@ import qualified Data.List as List
 import qualified GHC.IO.Exception as G
 import qualified Lib.ColorText as ColorText
 import qualified Prelude
+import qualified System.IO as IO
 
 ignoreResourceVanished :: IO () -> IO ()
 ignoreResourceVanished act = do
@@ -39,7 +40,7 @@ wrapOutputCall :: IO () -> IO ()
 wrapOutputCall = E.uninterruptibleMask_ . ignoreResourceVanished
 
 putLn :: String -> IO ()
-putLn = wrapOutputCall . Prelude.putStrLn
+putLn = wrapOutputCall . IO.hPutStrLn IO.stderr
 
 type Id = Int
 
