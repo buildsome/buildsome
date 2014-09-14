@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, RankNTypes #-}
 module Lib.Timeout
-  ( warning
+  ( execute, warning
   , picos, nanos, micros, millis, seconds
   ) where
 
@@ -28,11 +28,18 @@ millis = micros . (* 1000)
 seconds :: Integer -> DiffTime
 seconds = secondsToDiffTime
 
-warning :: DiffTime -> ByteString -> IO a -> IO a
-warning timeout errMsg action =
-  withAsyncWithUnmask timeoutMsg $ const action
+execute :: DiffTime -> IO () -> IO a -> IO a
+execute timeout timeoutAction =
+  withAsyncWithUnmask timeoutActionWrap . const
   where
-    timeoutMsg :: (forall a. IO a -> IO a) -> IO ()
-    timeoutMsg unmask = unmask $ forever $ do
+    timeoutActionWrap :: (forall a. IO a -> IO a) -> IO ()
+    timeoutActionWrap unmask = unmask $ do
       threadDelay $ floor $ 1000000.0 * timeout
+      timeoutAction
+
+warning :: DiffTime -> ByteString -> IO a -> IO a
+warning timeout errMsg = execute timeout timeoutLoop
+  where
+    timeoutLoop = forever $ do
       BS8.hPutStrLn stderr $ "TIMEOUT: " <> errMsg
+      threadDelay $ floor $ 1000000.0 * timeout

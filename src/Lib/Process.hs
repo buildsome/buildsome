@@ -9,10 +9,15 @@ import System.Exit (ExitCode(..))
 import System.IO (Handle, hClose)
 import System.Process
 import qualified Data.ByteString.Char8 as BS
+import qualified Lib.Timeout as Timeout
 
 type Env = [(String, String)]
 
--- | Create a process, and kill it when leaving the given code section
+timeoutTerminateProcess :: ProcessHandle -> IO a -> IO a
+timeoutTerminateProcess processHandle =
+  Timeout.execute (Timeout.seconds 2) (terminateProcess processHandle)
+
+-- | Create a process, and terminate it when leaving the given code section
 withProcess :: CreateProcess -> ((Maybe Handle, Maybe Handle, Maybe Handle, ProcessHandle) -> IO a) -> IO a
 withProcess params =
   bracket (createProcess params) terminate
@@ -22,7 +27,7 @@ withProcess params =
         `finally` traverse_ hClose mStdin
         `finally` traverse_ hClose mStdout
         `finally` traverse_ hClose mStderr
-        `finally` void (waitForProcess processHandle)
+        `finally` void (timeoutTerminateProcess processHandle (waitForProcess processHandle))
 
 -- | Get the outputs of a process with a given environment spec
 getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, BS.ByteString, BS.ByteString)
