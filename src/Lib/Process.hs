@@ -15,7 +15,7 @@ type Env = [(String, String)]
 
 timeoutTerminateProcess :: ProcessHandle -> IO a -> IO a
 timeoutTerminateProcess processHandle =
-  Timeout.execute (Timeout.seconds 2) (terminateProcess processHandle)
+  Timeout.execute (Timeout.seconds 2) $ terminateProcess processHandle
 
 -- | Create a process, and terminate it when leaving the given code section
 withProcess :: CreateProcess -> ((Maybe Handle, Maybe Handle, Maybe Handle, ProcessHandle) -> IO a) -> IO a
@@ -23,11 +23,13 @@ withProcess params =
   bracket (createProcess params) terminate
   where
     terminate (mStdin, mStdout, mStderr, processHandle) =
-      interruptProcessGroupOf processHandle
+      timeoutTerminateProcess processHandle
+      ( interruptProcessGroupOf processHandle
         `finally` traverse_ hClose mStdin
         `finally` traverse_ hClose mStdout
         `finally` traverse_ hClose mStderr
-        `finally` void (timeoutTerminateProcess processHandle (waitForProcess processHandle))
+        `finally` void (waitForProcess processHandle)
+      )
 
 -- | Get the outputs of a process with a given environment spec
 getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, BS.ByteString, BS.ByteString)
