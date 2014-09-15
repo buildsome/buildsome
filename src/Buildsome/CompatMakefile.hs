@@ -23,9 +23,11 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Lib.Directory as Directory
-import qualified Lib.FilePath as FilePath
 import qualified Lib.Revisit as Revisit
 import qualified System.Posix.ByteString as Posix
+
+isDir :: FilePath -> IO Bool
+isDir path = maybe False Posix.isDirectory <$> Directory.getMFileStatus path
 
 type M = Revisit.M TargetRep IO
 
@@ -34,16 +36,6 @@ data MakefileTarget = MakefileTarget
   , makefileTargetDirs :: [FilePath]
   , isDirectory :: Bool
   }
-
-isDir :: FilePath -> IO Bool
-isDir path = maybe False Posix.isDirectory <$> Directory.getMFileStatus path
-
-existsAndNotDir :: FilePath -> IO Bool
-existsAndNotDir path = do
-  e <- FilePath.exists path
-  if e
-    then not <$> isDir path
-    else return False
 
 makefileTarget :: Target -> IO MakefileTarget
 makefileTarget target = do
@@ -72,15 +64,10 @@ onOneTarget phoniesSet cwd stats target =
     depsLines <- depBuildCommands
     tgt <- lift $ makefileTarget target
     depTgts <- lift $ mapM makefileTarget directDeps
-    -- We actually depend on the MISSING-ness of the files in this
-    -- list too, but make cannot even express this!
-    existingAccessedPaths <-
-      lift $ filterM existsAndNotDir $ Stats.tsAccessedPaths targetStats
     let
       targetDecl = mconcat
         [ makefileTargetPath tgt, ":"
         , spaceUnwords $ map makefileTargetPath depTgts
-        , spaceUnwords existingAccessedPaths
         ]
       myLines =
         [ "#" <> BS8.pack (showPos (targetPos target)) ] ++
