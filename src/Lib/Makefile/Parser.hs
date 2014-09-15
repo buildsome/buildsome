@@ -33,6 +33,7 @@ import qualified Lib.Makefile.CondState as CondState
 import qualified Lib.Makefile.MonadClass as MakefileMonad
 import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec as P
+import qualified Text.Parsec.Prim as Prim
 import qualified Text.Parsec.Pos as Pos
 
 #define RELEASE_INLINE(x)   {-# INLINE x #-}
@@ -296,8 +297,8 @@ runInclude rawIncludedPath = do
   case eFileContent of
     Left e@E.SomeException {} -> fail $ "Failed to read include file: " ++ show e
     Right fileContent ->
-      void $ P.updateParserState $ \(P.State input pos state) ->
-        P.State fileContent (Pos.initialPos (BS8.unpack includedPath)) $
+      void $ P.updateParserState $ \(Prim.State input pos state) ->
+        Prim.State fileContent (Pos.initialPos (BS8.unpack includedPath)) $
         atStateIncludeStack ((pos, input) :) state
   where
     computeIncludePath =
@@ -317,10 +318,10 @@ returnToIncluder =
     case includeStack of
       [] -> fail "Don't steal eof"
       ((pos, input) : rest) -> do
-        void $ P.setParserState P.State
-          { P.statePos = pos
-          , P.stateInput = input
-          , P.stateUser = State rest localsStack rootDir vars cond writer
+        void $ P.setParserState Prim.State
+          { Prim.statePos = pos
+          , Prim.stateInput = input
+          , Prim.stateUser = State rest localsStack rootDir vars cond writer
           }
         -- "include" did not eat the end of line (if one existed) so lets
         -- read it here
