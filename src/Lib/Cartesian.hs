@@ -21,14 +21,16 @@ runCartesian [] = [""]
 
 cartesian :: Pos.SourcePos -> ByteString -> ByteString
 cartesian pos str =
-  BS8.pack . unwords . runCartesian . either (error . show) id $
-  P.runParser (P.setPosition pos *> go "" <* P.eof) () "" str
+  BS8.pack . unwords . map (unwords . runCartesian) . either (error . show) id $
+  P.runParser (P.setPosition pos *> parser <* P.eof) () "" str
   where
-    go disallowed = P.many (P.try cartesianFork <|> cartesianChar disallowed)
+    parser = go " " `P.sepBy` P.char ' '
+    go disallowed =
+      P.many (P.try cartesianFork <|> cartesianChar disallowed)
 
     cartesianFork = do
       _ <- P.char '{'
-      cartesians <- go ",}" `P.sepBy1` P.char ','
+      cartesians <- go " ,}" `P.sepBy1` P.char ','
       _ <- P.char '}'
       return $ CartesianFork cartesians
 
