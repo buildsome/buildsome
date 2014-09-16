@@ -22,7 +22,9 @@ import qualified System.Posix.ByteString as Posix
 
 mkFileDesc :: Db -> FilePath -> Maybe Posix.FileStatus -> IO (Db.FileDesc () FileContentDesc)
 mkFileDesc _ _ Nothing = return $ Db.FileDescNonExisting ()
-mkFileDesc db path (Just stat) = Db.FileDescExisting <$> fileContentDescOfStat db path stat
+mkFileDesc db path (Just stat) =
+  Db.FileDescExisting <$>
+  fileContentDescOfStat "When parsing Makefile" db path stat
 
 parse :: Db -> FilePath -> Vars -> IO (Map FilePath (Db.FileDesc () FileContentDesc), [MakefileMonad.PutStrLn], Makefile)
 parse db absMakefilePath vars = do
@@ -31,7 +33,11 @@ parse db absMakefilePath vars = do
     Makefile.parse absMakefilePath vars
   contentDescs <- Map.traverseWithKey (mkFileDesc db) readFiles
   -- This must come after:
-  mapM_ (uncurry Meddling.assertFileMTime) $ Map.toList readFiles
+
+  -- TODO: This seems redundant, but is it? The mkFileDesc only
+  -- asserts mtimes if it's not from cache
+  mapM_ (uncurry (Meddling.assertFileMTime "When parsing Makefile")) $
+    Map.toList readFiles
   return (contentDescs, putStrLns, res)
 
 cacheInputsMatch ::

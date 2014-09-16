@@ -441,14 +441,18 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@
                 verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
           verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
           verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
-          verify "content" (fileContentDescOfStat db filePath stat) mContentAccess
+          verify "content"
+            (fileContentDescOfStat "When applying execution log (input)"
+             db filePath stat) mContentAccess
     -- For now, we don't store the output files' content
     -- anywhere besides the actual output files, so just verify
     -- the output content is still correct
     forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) ->
       verifyFileDesc "output" filePath outputDesc $ \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
         verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
-        verifyMDesc "output(content)" filePath (fileContentDescOfStat db filePath stat) oldMContentDesc
+        verifyMDesc "output(content)" filePath
+          (fileContentDescOfStat "When applying execution log (output)"
+           db filePath stat) oldMContentDesc
     liftIO $
       replayExecutionLog bte tdTarget
       (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
@@ -809,7 +813,9 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
           mContentDesc <-
             if Posix.isDirectory stat
             then return Nothing
-            else Just <$> fileContentDescOfStat db outPath stat
+            else Just <$>
+                 fileContentDescOfStat "When making execution log (output)"
+                 db outPath stat
           return $ Db.FileDescExisting $ Db.OutputDesc (fileStatDescOfStat stat) mContentDesc
       return (outPath, fileDesc)
   return Db.ExecutionLog
@@ -824,7 +830,7 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
     db = bsDb buildsome
     assertFileMTime path oldMStat =
       unless (MagicFiles.allowedUnspecifiedOutput path) $
-      Meddling.assertFileMTime path oldMStat
+      Meddling.assertFileMTime "When making execution log (input)" path oldMStat
     inputAccess ::
       FilePath ->
       (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
@@ -842,12 +848,14 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
         addDesc accessType getDesc = do
           desc <- getDesc
           return $ flip (,) desc <$> M.lookup accessType accessTypes
+      -- TODO: Missing meddling check for non-contents below!
       modeAccess <-
         addDesc FSHook.AccessTypeModeOnly $ return $ fileModeDescOfStat stat
       statAccess <-
         addDesc FSHook.AccessTypeStat $ return $ fileStatDescOfStat stat
       contentAccess <-
-        addDesc FSHook.AccessTypeFull $ fileContentDescOfStat db path stat
+        addDesc FSHook.AccessTypeFull $
+        fileContentDescOfStat "When making execution log (input)" db path stat
       return $ Db.FileDescExisting
         ( Posix.modificationTimeHiRes stat
         , Db.InputDesc

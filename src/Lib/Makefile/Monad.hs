@@ -77,7 +77,7 @@ mergeAllFileStatuses filePath = go
     go [x] = return x
     go (x:xs) = do
       r <- go xs
-      Meddling.assertSameMTime filePath x r
+      Meddling.assertSameMTime "When checking Makefile inputs" filePath x r
       return x
 
 runM :: M a -> IO (ReadFiles, [PutStrLn], a)

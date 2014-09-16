@@ -11,8 +11,8 @@ import qualified Buildsome.Meddling as Meddling
 import qualified Lib.FileDesc as FileDesc
 import qualified System.Posix.ByteString as Posix
 
-fileContentDescOfStat :: Db -> FilePath -> Posix.FileStatus -> IO FileContentDesc
-fileContentDescOfStat db path stat = do
+fileContentDescOfStat :: String -> Db -> FilePath -> Posix.FileStatus -> IO FileContentDesc
+fileContentDescOfStat msgPrefix db path stat = do
   mDescCache <- Db.readIRef cacheIRef
   case mDescCache of
     Just oldCache
@@ -24,7 +24,7 @@ fileContentDescOfStat db path stat = do
 
       -- TODO: May be more optimal to delay the writeIRef until later
       -- when we check the stat again once
-      Meddling.assertFileMTime path $ Just stat
+      Meddling.assertFileMTime msgPrefix path $ Just stat
 
       Db.writeIRef cacheIRef Db.FileContentDescCache
         { Db.fcdcModificationTime = Posix.modificationTimeHiRes stat

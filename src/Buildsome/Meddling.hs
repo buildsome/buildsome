@@ -16,14 +16,14 @@ data ThirdPartyMeddlingError = ThirdPartyMeddlingError FilePath String deriving 
 instance E.Exception ThirdPartyMeddlingError
 
 -- TODO: Rename MTime to something else, it tests more than mtime
-assertFileMTime :: FilePath -> Maybe Posix.FileStatus -> IO ()
-assertFileMTime path oldMStat = do
+assertFileMTime :: String -> FilePath -> Maybe Posix.FileStatus -> IO ()
+assertFileMTime msgPrefix path oldMStat = do
   newMStat <- Dir.getMFileStatus path
-  assertSameMTime path oldMStat newMStat
+  assertSameMTime msgPrefix path oldMStat newMStat
 
 assertSameMTime ::
-  FilePath -> Maybe Posix.FileStatus -> Maybe Posix.FileStatus -> IO ()
-assertSameMTime path oldMStat newMStat =
+  String -> FilePath -> Maybe Posix.FileStatus -> Maybe Posix.FileStatus -> IO ()
+assertSameMTime msgPrefix path oldMStat newMStat =
   case (oldMStat, newMStat) of
   (Nothing, Just _) -> fileErr "created"
   (Just _, Nothing) -> fileErr "deleted"
@@ -37,5 +37,5 @@ assertSameMTime path oldMStat newMStat =
       Posix.modificationTimeHiRes newStat -> fileErr "changed"
     | otherwise -> return ()
   where
-    err = E.throwIO . ThirdPartyMeddlingError path
+    err msg = E.throwIO $ ThirdPartyMeddlingError path (msgPrefix ++ ": " ++ msg)
     fileErr verb = err $ "File " ++ verb ++ " during build!"
