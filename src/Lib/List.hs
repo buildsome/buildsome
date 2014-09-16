@@ -1,6 +1,16 @@
-module Lib.List (unprefixed, unsuffixed) where
+module Lib.List (filterA, unprefixed, unsuffixed) where
 
+import Control.Applicative (Applicative(..), (<$>))
 import Data.List (isPrefixOf, isSuffixOf)
+
+filterA :: Applicative f => (a -> f Bool) -> [a] -> f [a]
+filterA p = go
+  where
+    go [] = pure []
+    go (x:xs) = combine <$> p x <*> go xs
+      where
+        combine True rest = x : rest
+        combine False rest = rest
 
 unprefixed :: Eq a => [a] -> [a] -> Maybe [a]
 unprefixed prefix full

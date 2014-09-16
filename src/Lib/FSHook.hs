@@ -4,7 +4,7 @@ module Lib.FSHook
   , FSHook
   , with
 
-  , KeepsOldContent(..), OutputEffect(..), OutputBehavior(..)
+  , OutputEffect(..), OutputBehavior(..)
   , Input(..)
   , DelayedOutput(..), UndelayedOutput
   , Protocol.OutFilePath(..), Protocol.OutEffect(..)
@@ -33,7 +33,7 @@ import Lib.ByteString (unprefixed)
 import Lib.ColorText (ColorText)
 import Lib.Exception (finally, bracket_, onException)
 import Lib.FSHook.AccessType (AccessType(..))
-import Lib.FSHook.OutputBehavior (KeepsOldContent(..), OutputEffect(..), OutputBehavior(..))
+import Lib.FSHook.OutputBehavior (OutputEffect(..), OutputBehavior(..))
 import Lib.FSHook.Protocol (IsDelayed(..))
 import Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
 import Lib.Fresh (Fresh)
@@ -195,19 +195,19 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     -- outputs
     -- TODO: Handle truncation flag
     Protocol.OpenW outPath _openWMode _create Protocol.OpenNoTruncate
-                                -> handleOutputs [(OutputBehavior.fileChanger KeepsOldContent, outPath)]
+                                -> handleOutputs [(OutputBehavior.fileChanger, outPath)]
     Protocol.OpenW outPath _openWMode _create Protocol.OpenTruncate
-                                -> handleOutputs [(OutputBehavior.fileChanger KeepsNoOldContent, outPath)]
-    Protocol.Creat outPath _    -> handleOutputs [(OutputBehavior.fileChanger KeepsNoOldContent, outPath)]
-    Protocol.Rename a b         -> handleOutputs [ (OutputBehavior.existingFileChanger KeepsNoOldContent, a)
-                                                 , (OutputBehavior.fileChanger KeepsOldContent, b) ]
-    Protocol.Unlink outPath     -> handleOutputs [(OutputBehavior.existingFileChanger KeepsNoOldContent, outPath)]
-    Protocol.Truncate outPath _ -> handleOutputs [(OutputBehavior.existingFileChanger KeepsNoOldContent, outPath)]
-    Protocol.Chmod outPath _    -> handleOutputs [(OutputBehavior.existingFileChanger KeepsOldContent, outPath)]
-    Protocol.Chown outPath _ _  -> handleOutputs [(OutputBehavior.existingFileChanger KeepsOldContent, outPath)]
-    Protocol.MkNod outPath _ _  -> handleOutputs [(OutputBehavior.nonExistingFileChanger KeepsNoOldContent, outPath)] -- TODO: Special mkNod handling?
-    Protocol.MkDir outPath _    -> handleOutputs [(OutputBehavior.nonExistingFileChanger KeepsNoOldContent, outPath)]
-    Protocol.RmDir outPath      -> handleOutputs [(OutputBehavior.existingFileChanger KeepsOldContent {- TODO: if we know rmdir will fail (not empty) then no effect at all, and we can use KeepsNoOldContent -}, outPath)]
+                                -> handleOutputs [(OutputBehavior.fileChanger, outPath)]
+    Protocol.Creat outPath _    -> handleOutputs [(OutputBehavior.fileChanger, outPath)]
+    Protocol.Rename a b         -> handleOutputs [ (OutputBehavior.existingFileChanger, a)
+                                                 , (OutputBehavior.fileChanger, b) ]
+    Protocol.Unlink outPath     -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.Truncate outPath _ -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.Chmod outPath _    -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.Chown outPath _ _  -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.MkNod outPath _ _  -> handleOutputs [(OutputBehavior.nonExistingFileChanger, outPath)] -- TODO: Special mkNod handling?
+    Protocol.MkDir outPath _    -> handleOutputs [(OutputBehavior.nonExistingFileChanger, outPath)]
+    Protocol.RmDir outPath      -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
 
     -- I/O
     Protocol.SymLink target linkPath ->
@@ -216,7 +216,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
       -- than false-negative
       handle
         [ Input AccessTypeFull target ]
-        [ (OutputBehavior.nonExistingFileChanger KeepsNoOldContent, linkPath) ]
+        [ (OutputBehavior.nonExistingFileChanger, linkPath) ]
     Protocol.Link src dest -> error $ unwords ["Hard links not supported:", show src, "->", show dest]
 
     -- inputs

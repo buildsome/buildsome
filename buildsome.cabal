@@ -87,6 +87,7 @@ executable buildsome
                ,     Lib.Process
                ,     Lib.Revisit
                ,     Lib.ScanFileUpwards
+               ,     Lib.Set
                ,     Lib.Show
                ,     Lib.ShowBytes
                ,     Lib.Sigint

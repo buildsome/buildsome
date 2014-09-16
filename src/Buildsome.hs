@@ -36,7 +36,7 @@ import Lib.AnnotatedException (annotateException)
 import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import Lib.Exception (onException, finally, logErrors, handle)
-import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..), KeepsOldContent(..))
+import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
 import Lib.Fresh (Fresh)
@@ -74,10 +74,10 @@ import qualified Lib.Directory as Dir
 import qualified Lib.FSHook as FSHook
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Fresh as Fresh
-import qualified Lib.Map as LibMap
 import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
+import qualified Lib.Set as LibSet
 import qualified Lib.Timeout as Timeout
 import qualified Prelude
 import qualified System.IO as IO
@@ -320,8 +320,8 @@ instance Show IllegalUnspecifiedOutputs where
 
 -- Verify output of whole of slave/execution log
 verifyTargetSpec ::
-  BuildTargetEnv -> Set FilePath -> Map FilePath KeepsOldContent -> Target ->
-  IO (Map FilePath KeepsOldContent)
+  BuildTargetEnv -> Set FilePath -> Set FilePath -> Target ->
+  IO (Set FilePath)
 verifyTargetSpec bte inputs outputs target = do
   verifyTargetInputs bte inputs target
   verifyTargetOutputs bte outputs target
@@ -343,37 +343,37 @@ handleLegalUnspecifiedOutputs BuildTargetEnv{..} target unspecifiedOutputs = do
     mconcat ["Leaked unspecified outputs: ", show legalUnspecified]
   registerLeakedOutputs bteBuildsome $ S.fromList legalUnspecified
 
-verifyTargetOutputs :: BuildTargetEnv -> Map FilePath KeepsOldContent -> Target -> IO (Map FilePath KeepsOldContent)
+verifyTargetOutputs ::
+  BuildTargetEnv -> Set FilePath -> Target -> IO (Set FilePath)
 verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
-  handleLegalUnspecifiedOutputs bte target $ M.keys unspecifiedOutputs
+  handleLegalUnspecifiedOutputs bte target $ S.toList unspecifiedOutputs
 
   -- Illegal unspecified that no longer exist need to be banned from
   -- input use by any other job:
   -- TODO: Add to a ban-from-input-list (by other jobs)
 
   -- Illegal unspecified that do exist are a problem:
-  existingIllegalOutputs <-
-    LibMap.filterAWithKey (\path _ -> FilePath.exists path) illegalOutputs
-  unless (M.null existingIllegalOutputs) $ do
+  existingIllegalOutputs <- LibSet.filterA FilePath.exists illegalOutputs
+  unless (S.null existingIllegalOutputs) $ do
     Print.posMessage btePrinter (targetPos target) $ cError $
-      "Illegal output files: " <> show (M.keys existingIllegalOutputs)
+      "Illegal output files: " <> show (S.toList existingIllegalOutputs)
 
     E.throwIO $
       IllegalUnspecifiedOutputs (bsRender bteBuildsome) target $
-      M.keys existingIllegalOutputs
+      S.toList existingIllegalOutputs
   let unusedOutputs =
-        M.keysSet specified `S.difference`
-        (M.keysSet outputs `S.union` bsPhoniesSet bteBuildsome)
+        specified `S.difference`
+        (outputs `S.union` bsPhoniesSet bteBuildsome)
   warnOverSpecified bte "outputs" " (consider adding a .PHONY declaration)" unusedOutputs (targetPos target)
   mapM_ removeFileOrDirectoryOrNothing $ S.toList unusedOutputs
-  return $ M.intersection outputs specified
+  return $ S.intersection outputs specified
   where
     Color.Scheme{..} = Color.scheme
     (unspecifiedOutputs, illegalOutputs) =
-      M.partitionWithKey (\path _ -> MagicFiles.allowedUnspecifiedOutput path)
+      S.partition MagicFiles.allowedUnspecifiedOutput
       allUnspecified
-    allUnspecified = outputs `M.difference` specified
-    specified = M.fromSet (const ()) $ S.fromList $ targetOutputs target
+    allUnspecified = outputs `S.difference` specified
+    specified = S.fromList $ targetOutputs target
 
 warnOverSpecified ::
   BuildTargetEnv -> ColorText -> ColorText ->
@@ -394,8 +394,7 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
   (optVerbosity (bsOpts bteBuildsome)) selfTime $
   -- We only register legal outputs that were CREATED properly in the
   -- execution log, so all outputs keep no old content
-  void $ verifyTargetSpec bte inputs
-  (M.fromSet (const KeepsNoOldContent) outputs) target
+  void $ verifyTargetSpec bte inputs outputs target
 
 waitForSlavesWithParReleased ::
   Parallelism.Priority -> Parallelism.Cell -> Buildsome ->
@@ -647,15 +646,15 @@ data RunCmdResults = RunCmdResults
   { rcrSelfTime :: DiffTime -- excluding pause times
   , rcrStdOutputs :: StdOutputs ByteString
   , rcrInputs :: Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)
-  , rcrOutputs :: Map FilePath (KeepsOldContent, Reason)
+  , rcrOutputs :: Map FilePath Reason
   , rcrBuiltTargets :: BuiltTargets
   }
 
-outEffectToMaybe :: OutputEffect -> Maybe KeepsOldContent
-outEffectToMaybe OutputEffectNone = Nothing
-outEffectToMaybe (OutputEffectChanged keepsOld) = Just keepsOld
+outEffectToMaybe :: OutputEffect -> Bool
+outEffectToMaybe OutputEffectNone = False
+outEffectToMaybe OutputEffectChanged = True
 
-delayedOutputEffect :: FSHook.DelayedOutput -> IO (Maybe KeepsOldContent)
+delayedOutputEffect :: FSHook.DelayedOutput -> IO Bool
 delayedOutputEffect (FSHook.DelayedOutput behavior path) = do
   outputExists <- FilePath.exists path
   return $ outEffectToMaybe $
@@ -663,14 +662,11 @@ delayedOutputEffect (FSHook.DelayedOutput behavior path) = do
     then whenFileExists behavior
     else whenFileMissing behavior
 
-undelayedOutputEffect :: FSHook.OutFilePath -> Maybe KeepsOldContent
+undelayedOutputEffect :: FSHook.OutFilePath -> Bool
 undelayedOutputEffect (FSHook.OutFilePath _ effect) =
   case effect of
-  FSHook.OutEffectNothing -> Nothing
-  FSHook.OutEffectCreated -> Just KeepsNoOldContent
-  FSHook.OutEffectDeleted -> Just KeepsNoOldContent
-  FSHook.OutEffectChanged -> Just KeepsOldContent
-  FSHook.OutEffectUnknown -> Just KeepsOldContent -- conservatively assume content kept
+  FSHook.OutEffectNothing -> False
+  _ -> True
 
 recordInput ::
   IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
@@ -692,19 +688,11 @@ recordInput inputsRef reason (FSHook.Input accessType path) = do
 
 recordOutputs ::
   Buildsome ->
-  IORef (Map FilePath (KeepsOldContent, Reason)) -> Reason ->
-  Set FilePath -> Map FilePath KeepsOldContent -> IO ()
+  IORef (Map FilePath Reason) -> Reason ->
+  Set FilePath -> Set FilePath -> IO ()
 recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
-  atomicModifyIORef'_ outputsRef $ M.unionWith combineOutputs $ M.fromList
-    [ (path, (keepsOldContent, accessDoc))
-    | (path, keepsOldContent) <- M.toList paths
-    ]
-  registerOutputs buildsome $ M.keysSet paths `S.intersection` targetOutputsSet
-  where
-    combineOutputs a@(ax, _) b@(bx, _)
-      -- KeepsNoOldContent < KeepsOldContent
-      | ax < bx = a
-      | otherwise = b
+  atomicModifyIORef'_ outputsRef $ mappend $ M.fromSet (const accessDoc) paths
+  registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
 makeImplicitInputs ::
   IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
@@ -726,7 +714,7 @@ makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inpu
     bteImplicit = bte { bteExplicitlyDemanded = False }
 
 fsAccessHandlers ::
-  IORef (Map FilePath (KeepsOldContent, Reason)) ->
+  IORef (Map FilePath Reason) ->
   IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
   IORef BuiltTargets ->
   BuildTargetEnv ->
@@ -757,7 +745,8 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
       path `S.member` targetOutputsSet
 
     commonAccessHandler accessDoc rawInputs rawOutputs
-      getOutPath getOutEffect handler = do
+      getOutPath getOutEffect handler
+      = do
         recordedOutputs <- readIORef outputsRef
         let ignoredOutput = MagicFiles.outputIgnored . getOutPath
             ignoredInput = inputIgnored recordedOutputs
@@ -765,9 +754,11 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
             outputs = filter (not . ignoredOutput) rawOutputs
         () <- handler inputs outputs
         let addMEffect output = do
-              mEffect <- getOutEffect output
-              return $ (,) (getOutPath output) <$> mEffect
-        filteredOutputs <- fmap (M.fromList . catMaybes) $ mapM addMEffect outputs
+              hasEffect <- getOutEffect output
+              return $ if hasEffect
+                then Just $ getOutPath output
+                else Nothing
+        filteredOutputs <- fmap (S.fromList . catMaybes) $ mapM addMEffect outputs
         recordOutputs bteBuildsome outputsRef accessDoc
           targetOutputsSet filteredOutputs
         mapM_ (recordInput inputsRef accessDoc) $
@@ -908,8 +899,10 @@ buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
 
     RunCmdResults{..} <- runCmd bte parCell tdTarget
 
-    outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.map fst rcrOutputs) tdTarget
-    executionLog <- makeExecutionLog bteBuildsome tdTarget rcrInputs (M.keys outputs) rcrStdOutputs rcrSelfTime
+    outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.keysSet rcrOutputs) tdTarget
+    executionLog <-
+      makeExecutionLog bteBuildsome tdTarget rcrInputs (S.toList outputs)
+      rcrStdOutputs rcrSelfTime
     writeIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) executionLog
 
     Print.targetTiming btePrinter "now" rcrSelfTime
