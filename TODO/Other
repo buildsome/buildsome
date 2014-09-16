@@ -1,3 +1,5 @@
+* "meddling" race bug
+
 * Canonize whitespace in command lines!
 
 * BUG: .. (in target paths, etc) from project root should be an error,
