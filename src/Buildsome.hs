@@ -24,7 +24,7 @@ import Control.Monad.Trans.Either
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, isJust, catMaybes, maybeToList)
+import Data.Maybe (fromMaybe, catMaybes, maybeToList)
 import Data.Monoid
 import Data.Set (Set)
 import Data.String (IsString(..))
@@ -962,11 +962,45 @@ registerOutputs = registerDbList Db.registeredOutputsRef
 registerLeakedOutputs :: Buildsome -> Set FilePath -> IO ()
 registerLeakedOutputs = registerDbList Db.leakedOutputsRef
 
+data FileBuildRule
+  = NoBuildRule
+  | ValidBuildRule
+  | InvalidPatternBuildRule {- transitively missing inputs -}
+  deriving (Eq)
+getFileBuildRule :: Set FilePath -> BuildMaps -> FilePath -> IO FileBuildRule
+getFileBuildRule registeredOutputs buildMaps = go
+  where
+    go path =
+      case BuildMaps.find buildMaps path of
+      Nothing -> return NoBuildRule
+      Just (_rep, BuildMaps.TargetSimple, _) -> return ValidBuildRule
+      Just (_rep, BuildMaps.TargetPattern, tgt) ->
+        do
+          inputsCanExist <- and <$> mapM fileCanExist (targetAllInputs tgt)
+          return $
+            if inputsCanExist
+            then ValidBuildRule
+            else InvalidPatternBuildRule
+    fileCanExist path = do
+      fileBuildRule <- go path
+      case fileBuildRule of
+        InvalidPatternBuildRule -> return False
+        ValidBuildRule -> return True
+        NoBuildRule
+          | path `S.member` registeredOutputs -> return False -- a has-been
+          | otherwise -> FilePath.exists path
+
 deleteRemovedOutputs :: Printer -> Db -> BuildMaps -> IO ()
 deleteRemovedOutputs printer db buildMaps = do
-  toDelete <-
-    atomicModifyIORef' (Db.registeredOutputsRef db) $
-    S.partition (isJust . BuildMaps.find buildMaps)
+  -- No need for IORef atomicity here, this happens strictly before
+  -- anything else, without parallelism
+  oldRegisteredOutputs <- readIORef (Db.registeredOutputsRef db)
+  (newRegisteredOutputs, toDelete) <-
+    LibSet.partitionA
+    (fmap (== ValidBuildRule) .
+     getFileBuildRule oldRegisteredOutputs buildMaps)
+    oldRegisteredOutputs
+  writeIORef (Db.registeredOutputsRef db) newRegisteredOutputs
   forM_ (S.toList toDelete) $ \path -> do
     Printer.rawPrintStrLn printer $ "Removing old output: " <> cPath (show path)
     removeFileOrDirectoryOrNothing path
