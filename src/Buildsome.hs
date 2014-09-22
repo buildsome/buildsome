@@ -490,8 +490,10 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {.
       case fromFileDesc desc of
         Nothing -> return []
         Just (depReason, accessType) ->
-          slavesFor bteImplicit { bteReason = depReason } $
-          slaveReqForAccessType accessType inputPath
+          slavesFor bteImplicit
+          { bteReason =
+            "Remembered from previous build (speculative): " <> depReason
+          } $ slaveReqForAccessType accessType inputPath
     fromFileDesc (Db.FileDescNonExisting depReason) =
       -- The access may be larger than mode-only, but we only need to
       -- know if it exists or not because we only need to know whether
