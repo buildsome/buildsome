@@ -1,0 +1,52 @@
+#!/bin/bash
+set -e
+
+BUILDSOME=../../dist/build/buildsome/buildsome
+
+cd $(dirname $0)
+
+FILES="default foo.1 bar.1 filename Buildsome.mk Buildsome.mk.db"
+rm -rf ${FILES}
+
+echo foo.1 > filename
+echo hi > src.1
+
+cat >Buildsome.mk <<EOF
+
+default:
+	cat \`cat filename\` >\$@
+
+foo.%: bar.%
+	cp \$< \$@
+
+bar.%: src.%
+	cp \$< \$@
+
+EOF
+
+${BUILDSOME}
+
+# Without src.1 the pattern rule no longer holds, so buildsome should
+# delete {foo,bar}.1 and know not to use it even though it *was* a
+# dependency of default previously.  Bug existed that would not delete
+# {foo,bar}.1 when src.1 was deleted. Thus allowing foo.1 to try
+# building even though its src transitively didn't exist.
+rm src.1
+echo Buildsome.mk > filename
+
+cat >Buildsome.mk <<EOF > Buildsome.mk
+
+default:
+	cat \`cat filename\` >\$@
+
+foo.%: bar.%
+	exit 1
+
+bar.%: src.%
+	cp \$< \$@
+
+EOF
+
+${BUILDSOME}
+
+rm -rf ${FILES}
