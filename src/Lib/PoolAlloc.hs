@@ -42,7 +42,7 @@ startAlloc priority (PoolAlloc stateRef) = do
   atomicModifyIORef' stateRef f
   where
     removeCandidate candidate ps@(PoolState xs waiters) =
-      case PriorityQueue.extract (== candidate) waiters of
+      case PriorityQueue.extract priority (== candidate) waiters of
         -- Got out in time, whew:
         (waiters', [_]) -> (PoolState xs waiters', return ())
         -- Oops: Someone handed us over an allocation already, release it!

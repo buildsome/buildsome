@@ -7,35 +7,51 @@ module Lib.PriorityQueue
 
 import Prelude hiding (null)
 
-import Control.Applicative ((<$>), (<|>))
-import Control.Arrow ((***))
+import Control.Applicative ((<$>))
+import Data.Map (Map)
+import Data.Maybe (fromMaybe)
 import Lib.Fifo (Fifo)
+import qualified Data.Map as Map
 import qualified Lib.Fifo as Fifo
 
-data Priority = PriorityLow | PriorityHigh
+newtype Priority = Priority Int
   deriving (Eq, Ord, Show)
 
-data PriorityQueue a = PriorityQueue
-  { _fifoLowPriority :: Fifo a
-  , _fifoHighPriority :: Fifo a
+newtype PriorityQueue a = PriorityQueue
+  { _fifoPriority :: Map Priority (Fifo a) -- invariant: All fifos are non-empty
   }
 empty :: PriorityQueue a
-empty = PriorityQueue Fifo.empty Fifo.empty
+empty = PriorityQueue Map.empty
 
 null :: PriorityQueue a -> Bool
-null (PriorityQueue low high) = Fifo.null low && Fifo.null high
+null (PriorityQueue priorities) = Map.null priorities
 
 enqueue :: Priority -> a -> PriorityQueue a -> PriorityQueue a
-enqueue PriorityLow x (PriorityQueue low high) = PriorityQueue (Fifo.enqueue x low) high
-enqueue PriorityHigh x (PriorityQueue low high) = PriorityQueue low (Fifo.enqueue x high)
+enqueue priority x (PriorityQueue priorities) =
+  PriorityQueue $
+  Map.alter (Just . Fifo.enqueue x . fromMaybe Fifo.empty) priority
+  priorities
 
 dequeue :: PriorityQueue a -> Maybe (PriorityQueue a, (Priority, a))
-dequeue (PriorityQueue low high) =
-  ((( PriorityQueue  low ) *** (,) PriorityHigh) <$> Fifo.dequeue high) <|>
-  (((`PriorityQueue` high) *** (,) PriorityLow ) <$> Fifo.dequeue low)
-
-extract :: (a -> Bool) -> PriorityQueue a -> (PriorityQueue a, [a])
-extract p (PriorityQueue low high) = (PriorityQueue low' high', lows++highs)
+dequeue (PriorityQueue priorities) =
+  f <$> Map.maxViewWithKey priorities
   where
-    (low', lows) = Fifo.extract p low
-    (high', highs) = Fifo.extract p high
+    f ((priority, fifo), prioritiesWithoutMax) =
+      case Fifo.dequeue fifo of
+      Nothing -> error "Empty fifo inside map!"
+      Just (fifo', x) ->
+        (PriorityQueue priorities', (priority, x))
+        where
+          priorities'
+            | Fifo.null fifo' = prioritiesWithoutMax
+            | otherwise = Map.insert priority fifo' priorities
+
+extract :: Priority -> (a -> Bool) -> PriorityQueue a -> (PriorityQueue a, [a])
+extract priority p (PriorityQueue priorities) =
+  case Map.lookup priority priorities of
+  Nothing -> (PriorityQueue priorities, [])
+  Just fifo ->
+    ( PriorityQueue $ Map.insert priority fifo' priorities
+    , xs )
+    where
+      (fifo', xs) = Fifo.extract p fifo

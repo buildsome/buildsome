@@ -478,7 +478,7 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {.
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
-  waitForSlavesWithParReleased Parallelism.PriorityLow parCell bteBuildsome speculativeSlaves
+  waitForSlavesWithParReleased (Parallelism.Priority 0) parCell bteBuildsome speculativeSlaves
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs target
@@ -612,7 +612,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
               depPrinter <- Printer.newFrom btePrinter depPrinterId
               -- NOTE: allocParCell MUST be called to avoid leak!
               allocParCell <-
-                Parallelism.startAlloc Parallelism.PriorityLow $
+                Parallelism.startAlloc (Parallelism.Priority 0) $
                 bsParallelism bteBuildsome
               restoreUninterruptible $ -- This only restores to interruptible mask as above!
                 Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
@@ -709,7 +709,7 @@ makeImplicitInputs ::
   IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
 makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
-  Parallelism.withReleased Parallelism.PriorityHigh parCell (bsParallelism bteBuildsome) $
+  Parallelism.withReleased (Parallelism.Priority 1) parCell (bsParallelism bteBuildsome) $
   do
     targetParentsBuilt <-
       buildMany (("Container directory of: " <>) . (<> (" " <> accessDoc)))
@@ -887,7 +887,7 @@ deleteOldTargetOutputs BuildTargetEnv{..} target = do
 buildTargetHints ::
   BuildTargetEnv -> Parallelism.Cell -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
 buildTargetHints bte@BuildTargetEnv{..} parCell target =
-  Parallelism.withReleased Parallelism.PriorityLow parCell (bsParallelism bteBuildsome) $ do
+  Parallelism.withReleased (Parallelism.Priority 0) parCell (bsParallelism bteBuildsome) $ do
     let parentPaths = parentDirs $ targetOutputs target
     targetParentsBuilt <-
       buildMany ("Container directory of output: " <>) bte $
