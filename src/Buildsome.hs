@@ -167,6 +167,7 @@ data BuildTargetEnv = BuildTargetEnv
   , bteReason :: Reason
   , bteParents :: Parents
   , bteExplicitlyDemanded :: Bool
+  , btePriority :: Parallelism.Priority
   }
 
 data BuiltTargets = BuiltTargets
@@ -216,6 +217,7 @@ want printer buildsome reason paths = do
         , bteReason = reason
         , bteParents = []
         , bteExplicitlyDemanded = True
+        , btePriority = 0
         }
   (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
     timeIt $ buildExplicit bte $ map SlaveRequestDirect paths
@@ -478,7 +480,7 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {.
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
-  waitForSlavesWithParReleased (Parallelism.Priority 0) parCell bteBuildsome speculativeSlaves
+  waitForSlavesWithParReleased btePriority parCell bteBuildsome speculativeSlaves
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs target
@@ -612,7 +614,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
               depPrinter <- Printer.newFrom btePrinter depPrinterId
               -- NOTE: allocParCell MUST be called to avoid leak!
               allocParCell <-
-                Parallelism.startAlloc (Parallelism.Priority 0) $
+                Parallelism.startAlloc btePriority $
                 bsParallelism bteBuildsome
               restoreUninterruptible $ -- This only restores to interruptible mask as above!
                 Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
@@ -709,7 +711,7 @@ makeImplicitInputs ::
   IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
 makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
-  Parallelism.withReleased (Parallelism.Priority 1) parCell (bsParallelism bteBuildsome) $
+  Parallelism.withReleased btePriority parCell (bsParallelism bteBuildsome) $
   do
     targetParentsBuilt <-
       buildMany (("Container directory of: " <>) . (<> (" " <> accessDoc)))
@@ -780,7 +782,7 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef M.empty
   builtTargetsRef <- newIORef mempty
-  let accessHandlers = fsAccessHandlers outputsRef inputsRef builtTargetsRef bte parCell target
+  let accessHandlers = fsAccessHandlers outputsRef inputsRef builtTargetsRef bte' parCell target
   (time, stdOutputs) <-
     FSHook.timedRunCommand hook rootPath shellCmd renderedTargetOutputs accessHandlers
   inputs <- readIORef inputsRef
@@ -798,10 +800,11 @@ runCmd bte@BuildTargetEnv{..} parCell target = do
     , rcrBuiltTargets = builtTargets
     }
   where
+    bte' = bte { btePriority = btePriority + 1 }
     rootPath = bsRootPath bteBuildsome
     hook = bsFsHook bteBuildsome
     renderedTargetOutputs = cTarget $ show $ targetOutputs target
-    shellCmd = shellCmdVerify bte target ["HOME", "PATH"]
+    shellCmd = shellCmdVerify bte' target ["HOME", "PATH"]
     Color.Scheme{..} = Color.scheme
 
 makeExecutionLog ::
@@ -887,7 +890,7 @@ deleteOldTargetOutputs BuildTargetEnv{..} target = do
 buildTargetHints ::
   BuildTargetEnv -> Parallelism.Cell -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
 buildTargetHints bte@BuildTargetEnv{..} parCell target =
-  Parallelism.withReleased (Parallelism.Priority 0) parCell (bsParallelism bteBuildsome) $ do
+  Parallelism.withReleased btePriority parCell (bsParallelism bteBuildsome) $ do
     let parentPaths = parentDirs $ targetOutputs target
     targetParentsBuilt <-
       buildMany ("Container directory of output: " <>) bte $

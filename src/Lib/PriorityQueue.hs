@@ -1,3 +1,4 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Lib.PriorityQueue
   ( Priority(..)
   , PriorityQueue
@@ -15,7 +16,7 @@ import qualified Data.Map as Map
 import qualified Lib.Fifo as Fifo
 
 newtype Priority = Priority Int
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Num)
 
 newtype PriorityQueue a = PriorityQueue
   { _fifoPriority :: Map Priority (Fifo a) -- invariant: All fifos are non-empty
