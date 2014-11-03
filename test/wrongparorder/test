@@ -1,0 +1,22 @@
+#!/bin/bash
+set -e
+mkdir files 2>/dev/null || true
+cat <<EOF >files/Buildsome.mk
+.PHONY: default
+default:
+	cat a
+a: staticinput.1 staticinput.2
+	echo > \$@
+	sync
+	cat $^ >/dev/null
+staticinput.%:
+	cat \$*.input
+	echo > \$@
+	sync
+%.input:
+	echo > \$@
+	sync
+EOF
+(cd files && buildsome)
+ls -1tr files/{staticinput.[12],[12].input,a} > files/order
+diff -u expected files/order || exit 1
