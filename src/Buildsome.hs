@@ -902,7 +902,7 @@ buildTargetHints bte@BuildTargetEnv{..} parCell target =
 buildTargetReal ::
   BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Db.ExecutionLog, BuiltTargets)
 buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
-  Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
+  do
     deleteOldTargetOutputs bte tdTarget
 
     Print.executionCmd verbosityCommands btePrinter tdTarget
@@ -923,7 +923,8 @@ buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
 
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Stats
 buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
-  redirectExceptions bteBuildsome $ do
+  redirectExceptions bteBuildsome $
+  Print.targetWrap btePrinter bteReason tdTarget $ do
     (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte parCell tdTarget
     case explicitPathsBuilt of
       ExplicitPathsNotBuilt ->
