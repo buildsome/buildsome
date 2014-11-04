@@ -594,6 +594,11 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
       newParents = (tdRep, bteReason) : bteParents
       panicHandler e@E.SomeException {} =
         panic (bsRender bteBuildsome) $ "FAILED during making of slave: " ++ show e
+      panicOnError mvar =
+        handle $ \e ->
+        do
+          putMVar mvar $ error $ "Failed to create slave: " ++ show e
+          panicHandler e
       mkSlave mvar action =
         -- TODO: Remove uninterruptibleMask_?
         E.uninterruptibleMask $ \restoreUninterruptible -> do
@@ -602,7 +607,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
             -- be interruptible. There shouldn't be a danger of a sync
             -- or async exception here, so the putMVar is supposed to be
             -- guaranteed.
-            handle (\e -> putMVar mvar (error ("Failed to create slave: " ++ show e)) >> panicHandler e) $ do
+            panicOnError mvar $ do
               depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
               depPrinter <- Printer.newFrom btePrinter depPrinterId
               -- NOTE: allocParCell MUST be called to avoid leak!
