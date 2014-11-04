@@ -126,7 +126,7 @@ printWrap ColorScheme{..} printer str entryMsg body = do
   return res
   where
     indentLevel  = printerIndentLevelRef printer
-    addIndent d  = modifyIORef indentLevel (+d)
+    addIndent d  = atomicModifyIORef' indentLevel $ \old -> (old+d, ())
     wrappedBody  = bracket_ (addIndent 1) (addIndent (-1)) body
     before       = mconcat ["{ ", str, " ", entryMsg]
     after suffix = mconcat ["} ", str, " ", suffix]
