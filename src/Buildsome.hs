@@ -210,17 +210,20 @@ want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO BuiltTargets
 want printer buildsome reason paths = do
   printStrLn printer $
     "Building: " <> ColorText.intercalate ", " (map (cTarget . show) paths)
-  let bte =
+  let priority = 0
+      bte =
         BuildTargetEnv
         { bteBuildsome = buildsome
         , btePrinter = printer
         , bteReason = reason
         , bteParents = []
         , bteExplicitlyDemanded = True
-        , btePriority = 0
+        , btePriority = priority
         }
+  alloc <- Parallelism.startAlloc priority (bsParallelism buildsome)
   (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
-    timeIt $ buildExplicit bte $ map SlaveRequestDirect paths
+    alloc $ \parCell ->
+    timeIt $ buildExplicitWithParReleased bte parCell $ map SlaveRequestDirect paths
   let stdErrs = Stats.stdErr $ builtStats builtTargets
       lastLinePrefix
         | not (S.null stdErrs) =
@@ -301,13 +304,31 @@ slaveReqForAccessType FSHook.AccessTypeStat =
   -- This is a (necessary) hack! See KNOWN_ISSUES: "stat of directories"
   SlaveRequestDirect
 
+-- NOTE: To allow for deterministic (and correct-by-priority) command
+-- ordering, we must avoid the gap between release of parent slave
+-- parallelism and allocation of child slave parallelism.  To do this,
+-- we only ever release parallelism locally *after* we've created the
+-- slaves, i.e: when waiting for them, in this function.
+-- Do NOT release parallelism in any other context!
+waitForSlavesWithParReleased ::
+  Parallelism.Priority -> Parallelism.Cell -> Buildsome ->
+  [Slave Stats] -> IO BuiltTargets
+waitForSlavesWithParReleased _ _ _ [] = return mempty
+waitForSlavesWithParReleased priority parCell buildsome slaves =
+  Parallelism.withReleased priority parCell (bsParallelism buildsome) $
+  do
+    stats <- mconcat <$> mapM Slave.wait slaves
+    return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
 
-buildExplicit :: BuildTargetEnv -> [SlaveRequest] -> IO (ExplicitPathsBuilt, BuiltTargets)
-buildExplicit bte@BuildTargetEnv{..} inputs = do
-  built <- waitForSlaves . concat =<< mapM (slavesFor bte) inputs
+buildExplicitWithParReleased ::
+  BuildTargetEnv -> Parallelism.Cell -> [SlaveRequest] ->
+  IO (ExplicitPathsBuilt, BuiltTargets)
+buildExplicitWithParReleased bte@BuildTargetEnv{..} parCell inputs = do
+  built <-
+    waitForSlavesWithParReleased btePriority parCell bteBuildsome . concat =<<
+    mapM (slavesFor bte) inputs
   explicitPathsBuilt <- assertExplicitInputsExist bte $ map inputFilePath inputs
   return (explicitPathsBuilt, built)
-
 
 data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs (ColorText -> ByteString) Target [FilePath]
   deriving (Typeable)
@@ -397,19 +418,6 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
   -- We only register legal outputs that were CREATED properly in the
   -- execution log, so all outputs keep no old content
   void $ verifyTargetSpec bte inputs outputs target
-
-waitForSlavesWithParReleased ::
-  Parallelism.Priority -> Parallelism.Cell -> Buildsome ->
-  [Slave Stats] -> IO BuiltTargets
-waitForSlavesWithParReleased _ _ _ [] = return mempty
-waitForSlavesWithParReleased priority parCell buildsome slaves =
-  Parallelism.withReleased priority parCell (bsParallelism buildsome) $
-  waitForSlaves slaves
-
-waitForSlaves :: [Slave Stats] -> IO BuiltTargets
-waitForSlaves slaves =
-  do  stats <- mconcat <$> mapM Slave.wait slaves
-      return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
 
 verifyFileDesc ::
   (IsString str, Monoid str, MonadIO m) =>
@@ -514,8 +522,11 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {.
 parentDirs :: [FilePath] -> [FilePath]
 parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
 
-buildMany :: (ColorText -> Reason) -> BuildTargetEnv -> [SlaveRequest] -> IO BuiltTargets
-buildMany mkReason bte@BuildTargetEnv{..} = waitForSlaves . concat <=< mapM mkSlave
+buildManyWithParReleased ::
+  (ColorText -> Reason) -> BuildTargetEnv -> Parallelism.Cell -> [SlaveRequest] -> IO BuiltTargets
+buildManyWithParReleased mkReason bte@BuildTargetEnv{..} parCell =
+  waitForSlavesWithParReleased btePriority parCell bteBuildsome <=<
+  fmap concat . mapM mkSlave
   where
     Color.Scheme{..} = Color.scheme
     mkSlave req =
@@ -711,14 +722,15 @@ makeImplicitInputs ::
   IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
 makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
-  Parallelism.withReleased btePriority parCell (bsParallelism bteBuildsome) $
   do
     targetParentsBuilt <-
-      buildMany (("Container directory of: " <>) . (<> (" " <> accessDoc)))
-      bteImplicit $ map SlaveRequestDirect $ parentDirs allPaths
+      buildManyWithParReleased (("Container directory of: " <>) . (<> (" " <> accessDoc)))
+      bteImplicit parCell $ map SlaveRequestDirect $ parentDirs allPaths
 
     inputsBuilt <-
-      buildMany (<> (": " <> accessDoc)) bteImplicit $ map slaveReqForHookInput inputs
+      buildManyWithParReleased (<> (": " <> accessDoc))
+      bteImplicit parCell $ map slaveReqForHookInput inputs
+
     atomicModifyIORef_ builtTargetsRef (<> (targetParentsBuilt <> inputsBuilt))
   where
     slaveReqForHookInput (FSHook.Input accessType path) =
@@ -890,19 +902,19 @@ deleteOldTargetOutputs BuildTargetEnv{..} target = do
 buildTargetHints ::
   BuildTargetEnv -> Parallelism.Cell -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
 buildTargetHints bte@BuildTargetEnv{..} parCell target =
-  Parallelism.withReleased btePriority parCell (bsParallelism bteBuildsome) $ do
+  do
     let parentPaths = parentDirs $ targetOutputs target
     targetParentsBuilt <-
-      buildMany ("Container directory of output: " <>) bte $
+      buildManyWithParReleased ("Container directory of output: " <>) bte parCell $
       map SlaveRequestDirect parentPaths
     explicitParentsBuilt <- assertExplicitInputsExist bte parentPaths
     case explicitParentsBuilt of
       ExplicitPathsNotBuilt -> return (ExplicitPathsNotBuilt, targetParentsBuilt)
       ExplicitPathsBuilt -> do
         (explicitPathsBuilt, inputsBuilt) <-
-          buildExplicit
-            bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) } $
-            map SlaveRequestDirect $ targetAllInputs target
+          buildExplicitWithParReleased
+            bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) }
+            parCell $ map SlaveRequestDirect $ targetAllInputs target
         return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
   where
     Color.Scheme{..} = Color.scheme
