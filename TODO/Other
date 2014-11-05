@@ -1,3 +1,19 @@
+* Parallelism gap bug:
+
+  * Fix the gap between child release and parent reacquire:
+
+    * startAlloc (p+1)
+    * release (p+1)
+    * startAlloc (p)
+    * forkIO -> finishAlloc (p+1) -> free (p+1)
+    * waitForSlaves
+    * finishAlloc (p)
+
+    -- children all get to allocate ignoring the startAlloc of the parent
+
+    * Slave can keep the parallelism token to be freed by the parent
+      to avoid the gap
+
 * "meddling" race bug
 
 * Canonize whitespace in command lines!
