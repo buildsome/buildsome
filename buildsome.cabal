@@ -25,6 +25,10 @@ flag Charts
   description: Enable Cairo charts support
   default: True
 
+flag CentOS7
+  description: Build for CentOS 7
+  default: False
+
 executable buildsome
   hs-source-dirs:    src/
   main-is:           Main.hs
@@ -132,8 +136,13 @@ executable buildsome
   if flag(Charts)
     cpp-options:       -DWITH_CHARTS_SUPPORT
     other-modules:     Buildsome.Chart
-    build-depends:     Chart == 1.2.*
-                 ,     Chart-cairo == 1.2.*
-                 ,     data-default-class == 0.0.*
+    if flag(CentOS7)
+      build-depends:     Chart == 1.0.*
+                   ,     Chart-cairo == 1.0.*
+                   ,     data-default-class == 0.0.*
+    else
+      build-depends:     Chart == 1.2.*
+                   ,     Chart-cairo == 1.2.*
+                   ,     data-default-class == 0.0.*
 
   default-language:    Haskell2010
