@@ -26,8 +26,6 @@ BuildRequires:  ghc-random-devel
 BuildRequires:  leveldb-devel
 BuildRequires:  snappy-devel
 
-BuildRequires:  git
-
 %description
 Buildsome is an innovative build system, meant to both ease the
 declaration of the build steps, and give better guarantees to users.
@@ -38,13 +36,7 @@ declaration of the build steps, and give better guarantees to users.
 %build
 
 # It depends on git, we need to fix that. For now:
-git init
-echo > stub.txt
-git add stub.txt
-git config user.name stub
-git config user.email stub@stub.org
-git commit -a -m "STUB"
-
+export BUILDSOME_BUILT_REVISION=%{version}-%{release}
 cabal configure --flags="CentOS7" --prefix=%{_prefix} \
    --package-db /usr/share/buildsome-deps/.cabal-sandbox/*-packages.conf.d/
 cabal build
