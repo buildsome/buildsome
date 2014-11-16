@@ -1,0 +1,104 @@
+#!/bin/bash -eu
+
+OUTPUT_DIRECTORY=
+MOCK_CONFIG=
+SIGNER_PROGRAM=
+PKG_NAME=
+
+syntax() {
+    echo "build-srpm -o [output directory] (-m mock-config) (-s signer-program) -l"
+    echo ""
+    echo "This script can generate the SRPM, and optionally it can also run mock"
+    echo "if -m is provided. If mock config is specified ('-' is the default), then"
+    echo "build-srpm will also runs mock on the generated SRPM and collect the output RPM."
+}
+
+while getopts "i:o:m:s:" o; do
+    case "${o}" in
+        i)
+	    PKG_NAME=${OPTARG}
+            ;;
+        o)
+	    OUTPUT_DIRECTORY=${OPTARG}
+            ;;
+        m)
+	    MOCK_CONFIG=${OPTARG}
+            ;;
+        s)
+	    SIGNER_PROGRAM=${OPTARG}
+            ;;
+        *)
+	    syntax
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$OUTPUT_DIRECTORY" ] ; then
+    echo error: no output directory specified
+    echo
+    syntax
+    exit 1
+fi
+
+if [ ! -d ${OUTPUT_DIRECTORY} ] ; then
+    echo "error: output directory doesn't exist"
+    exit 1
+fi
+
+t=`dirname ${BASH_SOURCE}`
+if [[ ! -e ${t}/${PKG_NAME}.spec ]] ; then
+    echo No such spec file
+    exit -1
+fi
+
+PKG_VERSION=0.1.`git log HEAD --pretty=oneline | wc -l`
+PKG_RELEASE=`git log --pretty="%ai" -n 1 | tr -d ':' | tr ' \-+:' '....'  | cut -c1-17`
+PKG_RELEASE=${PKG_RELEASE}.git`git log --pretty="%h" -n 1`
+
+TARGET_DIR=`mktemp --tmpdir -d XXXXXXrpm-packaging`
+
+cleanups () {
+    rm -rf ${TARGET_DIR}
+}
+
+trap cleanups EXIT
+
+make_srpm() {
+    mkdir -p ${TARGET_DIR}/SPECS || return 1
+    mkdir -p ${TARGET_DIR}/SOURCES || return 1
+    git archive --format tar.gz --prefix=${PKG_NAME}-${PKG_VERSION}/ HEAD > \
+	${TARGET_DIR}/SOURCES/${PKG_NAME}-${PKG_VERSION}.tar.gz || return 1
+    SPEC_FILE=${TARGET_DIR}/SPECS/${PKG_NAME}.spec
+    cat ${t}/${PKG_NAME}.spec | sed s/PKG_VERSION/${PKG_VERSION}/g \
+        | sed s/PKG_RELEASE/${PKG_RELEASE}/g > ${SPEC_FILE} || return 1
+    git log -n 1 --format="* %cd %aN%n- (%h) %s%d%n" --date=local | \
+        sed -r 's/[0-9]+:[0-9]+:[0-9]+ //' >> ${SPEC_FILE}
+    rpmbuild -bs --define "_topdir ${TARGET_DIR}" ${TARGET_DIR}/SPECS/${PKG_NAME}.spec || return 1
+    return 0
+}
+
+make_srpm ${PKG_NAME}
+
+if [[ "${MOCK_CONFIG}" != "" ]] ; then
+    if [[ "${MOCK_CONFIG}" != "-" ]] ; then
+        MOCK_ARGS="-r ${MOCK_CONFIG}"
+    else
+        MOCK_ARGS=""
+    fi
+    MOCK_ARGS="${MOCK_ARGS}"
+    sudo mock \
+        --resultdir=${TARGET_DIR}/RESULT \
+        ${MOCK_ARGS} ${TARGET_DIR}/SRPMS/*.src.rpm ||
+       (cat ${TARGET_DIR}/RESULT/build.log && exit 1)
+    if [[ "${SIGNER_PROGRAM}" != "" ]] ; then
+        for i in ${TARGET_DIR}/RESULT/*.rpm ; do
+            ${SIGNER_PROGRAM} $i
+        done
+    fi
+    mv -v ${TARGET_DIR}/RESULT/*.rpm ${OUTPUT_DIRECTORY}
+else
+    for file in ${TARGET_DIR}/SRPMS/*.src.rpm; do
+        cp ${file} ${OUTPUT_DIRECTORY}
+    done
+fi
