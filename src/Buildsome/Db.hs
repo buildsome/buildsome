@@ -18,6 +18,7 @@ import Data.ByteString (ByteString)
 import Data.Default (def)
 import Data.IORef
 import Data.Map (Map)
+import Data.Monoid ((<>))
 import Data.Set (Set)
 import Data.Time.Clock (DiffTime)
 import Data.Time.Clock.POSIX (POSIXTime)
@@ -149,10 +150,11 @@ fileContentDescCache = mkIRefKey
 type MFileContentDesc = FileDesc () FileContentDesc
 
 data MakefileParseCache = MakefileParseCache
-  { mpcInputs :: (FilePath, Makefile.Vars, Map FilePath MFileContentDesc)
+  { mpcInputs :: (FilePath, Map FilePath MFileContentDesc)
   , mpcOutput :: (Makefile, [PutStrLn])
   } deriving (Generic)
 instance Binary MakefileParseCache
 
-makefileParseCache :: Db -> IRef MakefileParseCache
-makefileParseCache = mkIRefKey "makefileParseCache_Schema.0"
+makefileParseCache :: Db -> Makefile.Vars -> IRef MakefileParseCache
+makefileParseCache db vars =
+    mkIRefKey ("makefileParseCache_Schema.1:" <> MD5.hash (encode vars)) db

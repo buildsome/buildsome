@@ -42,11 +42,10 @@ parse db absMakefilePath vars = do
 
 cacheInputsMatch ::
   Db ->
-  (FilePath, Makefile.Vars, Map FilePath Db.MFileContentDesc) ->
-  FilePath -> Vars -> IO Bool
-cacheInputsMatch db (oldPath, oldVars, oldFiles) path vars
+  (FilePath, Map FilePath Db.MFileContentDesc) ->
+  FilePath -> IO Bool
+cacheInputsMatch db (oldPath, oldFiles) path
   | oldPath /= path = return False
-  | oldVars /= vars = return False
   | otherwise =
     fmap and $ mapM verifySameContent $ Map.toList oldFiles
   where
@@ -58,11 +57,11 @@ cacheInputsMatch db (oldPath, oldVars, oldFiles) path vars
 data IsHit = Hit | Miss
 
 matchCache ::
-  Db -> FilePath -> Vars -> Maybe Db.MakefileParseCache ->
+  Db -> FilePath -> Maybe Db.MakefileParseCache ->
   ((Makefile, [MakefileMonad.PutStrLn]) -> IO r) -> IO r -> IO r
-matchCache _ _ _ Nothing _ miss = miss
-matchCache db absMakefilePath vars (Just (Db.MakefileParseCache inputs output)) hit miss = do
-  isMatch <- cacheInputsMatch db inputs absMakefilePath vars
+matchCache _ _ Nothing _ miss = miss
+matchCache db absMakefilePath (Just (Db.MakefileParseCache inputs output)) hit miss = do
+  isMatch <- cacheInputsMatch db inputs absMakefilePath
   if isMatch
     then hit output
     else miss
@@ -71,10 +70,10 @@ memoParse :: Db -> FilePath -> Vars -> IO (IsHit, Makefile)
 memoParse db absMakefilePath vars = do
   mCache <- Db.readIRef makefileParseCacheIRef
   (isHit, makefile) <-
-    matchCache db absMakefilePath vars mCache hit $ do
+    matchCache db absMakefilePath mCache hit $ do
       (newFiles, putStrLns, makefile) <- parse db absMakefilePath vars
       Db.writeIRef makefileParseCacheIRef $
-        Db.MakefileParseCache (absMakefilePath, vars, newFiles) (makefile, putStrLns)
+        Db.MakefileParseCache (absMakefilePath, newFiles) (makefile, putStrLns)
       return (Miss, makefile)
   E.evaluate $ rnf makefile
   return (isHit, makefile)
@@ -82,4 +81,4 @@ memoParse db absMakefilePath vars = do
     hit (makefile, putStrLns) = do
       mapM_ MakefileMonad.runPutStrLn putStrLns
       return (Hit, makefile)
-    makefileParseCacheIRef = Db.makefileParseCache db
+    makefileParseCacheIRef = Db.makefileParseCache db vars
