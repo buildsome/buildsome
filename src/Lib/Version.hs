@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# OPTIONS -fforce-recomp #-}
 module Lib.Version
   ( version
   ) where
