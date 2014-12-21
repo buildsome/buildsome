@@ -4,14 +4,22 @@ module Lib.Version
   ( version
   ) where
 
+import Control.Applicative ((<$>))
 import Data.ByteString.Char8 (ByteString)
 import Language.Haskell.TH
 import qualified System.Process as Process
 import System.Environment (lookupEnv)
 
 version :: ByteString
-version = $(stringE . init =<< runIO (
-               do e <- lookupEnv "BUILDSOME_BUILT_REVISION"
-                  case e of
-                    Nothing -> Process.readProcess "git" ["rev-parse", "HEAD"] ""
-                    Just x -> return x))
+version =
+  $(stringE =<< runIO (
+   do e <- lookupEnv "BUILDSOME_BUILT_REVISION"
+      case e of
+        Nothing ->
+          do sha <- stripWhitespace <$> Process.readProcess "git" ["rev-parse", "--short", "HEAD"] ""
+             describe <- stripWhitespace <$> Process.readProcess "git" ["describe", "--dirty", "--all"] ""
+             return $ sha ++ "-" ++ describe
+          where
+            stripWhitespace :: String -> String
+            stripWhitespace = unwords . words
+        Just x -> return x))
