@@ -1,3 +1,6 @@
+* buildsome measures negative times in multithreaded stuff (paused
+  threads should account more correctly)
+
 * Parallelism gap bug:
 
   * Fix the gap between child release and parent reacquire:
