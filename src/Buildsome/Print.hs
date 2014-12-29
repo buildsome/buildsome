@@ -43,11 +43,11 @@ warn printer pos str =
     Color.Scheme{..} = Color.scheme
 
 targetWrap ::
-  Printer -> Reason -> Target -> IO a -> IO a
-targetWrap printer reason target =
+  Printer -> Reason -> Target -> ColorText -> IO a -> IO a
+targetWrap printer reason target str =
   Printer.printWrap cPrinter printer
   (cTarget (show (targetOutputs target))) $
-  mconcat [" (", reason, ")"]
+  mconcat [str, " (", reason, ")"]
   where
     Color.Scheme{..} = Color.scheme
 
