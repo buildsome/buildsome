@@ -94,6 +94,7 @@ executable buildsome
                ,     Lib.Sock
                ,     Lib.StdOutputs
                ,     Lib.StringPattern
+               ,     Lib.SyncMap
                ,     Lib.TimeInstances
                ,     Lib.TimeIt
                ,     Lib.Timeout
