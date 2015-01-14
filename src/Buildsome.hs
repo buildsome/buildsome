@@ -48,6 +48,7 @@ import Lib.Printer (Printer, printStrLn, putLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
 import Lib.StdOutputs (StdOutputs(..))
+import Lib.SyncMap (syncInsert)
 import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
 import System.Exit (ExitCode(..))
@@ -583,22 +584,16 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
   | any ((== tdRep) . fst) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
   | otherwise = do
-    newSlaveMVar <- newEmptyMVar
-    E.mask_ $ join $
-      atomicModifyIORef (bsSlaveByTargetRep bteBuildsome) $
-      \oldSlaveMap ->
-      -- TODO: Use a faster method to lookup&insert at the same time
-      case M.lookup tdRep oldSlaveMap of
-      Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
-      Nothing ->
-        ( M.insert tdRep newSlaveMVar oldSlaveMap
-        , mkSlave newSlaveMVar $ \unmask printer allocParCell ->
+--    newSlaveMVar <- newEmptyMVar
+    E.mask_ $
+      syncInsert (bsSlaveByTargetRep bteBuildsome) tdRep $
+      \newSlaveMVar ->
+       mkSlave newSlaveMVar $ \unmask printer allocParCell ->
           -- Must remain masked through allocParCell so it gets a
           -- chance to handle alloc/exception!
           allocParCell $ \parCell -> unmask $ do
             let newBte = bte { bteParents = newParents, btePrinter = printer }
             buildTarget newBte parCell TargetDesc{..}
-        )
     where
       Color.Scheme{..} = Color.scheme
       annotate =
