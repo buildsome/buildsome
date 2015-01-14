@@ -26,6 +26,7 @@ new body = do
     cancelActions <- atomicModifyIORef cancelActionsVar $ \x -> (error "Attempt to use AsyncContext when it is finalized", x)
     sequence_ $ IntMap.elems cancelActions
 
+-- TODO: spawnUnmasked
 spawn :: AsyncContext -> IO a -> IO (Async a)
 spawn (AsyncContext freshNames cancelActionsVar) act = do
   name <- Fresh.next freshNames
