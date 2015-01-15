@@ -97,7 +97,10 @@ make makefile = BuildMaps buildMap childrenMap
 
     pairWithTargetRep target = (computeTargetRep target, target)
 
+    overlappingOutputs path (_, a) (_, b) =
+      error $ "Overlapping output paths for: " ++ show path ++ " at:\n" ++
+      show (targetPos a) ++ "vs.\n" ++ show (targetPos b)
     buildMap =
-      M.fromListWithKey (\path -> error $ "Overlapping output paths for: " ++ show path)
+      M.fromListWithKey overlappingOutputs
       [ (outputPath, pairWithTargetRep target)
       | (outputPath, target) <- outputs ]
