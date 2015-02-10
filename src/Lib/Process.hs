@@ -1,3 +1,4 @@
+-- | Low level wrapping over System.Process
 module Lib.Process (getOutputs, Env, CmdSpec(..)) where
 
 import Control.Concurrent.Async
@@ -38,8 +39,7 @@ getOutputs cmd inheritedEnvs envs = do
     val <- getEnv name
     return (name, val)
   withProcess
-    -- A hacky way to get a default CreateProcess record for "process" package version compatability:
-    (shell "")
+    CreateProcess
     { cwd = Nothing
     , cmdspec = cmd
     , env = Just (oldEnvs ++ envs)
@@ -48,9 +48,12 @@ getOutputs cmd inheritedEnvs envs = do
     , std_err = CreatePipe
     , close_fds = True -- MUST close fds so we don't leak server-side FDs as open/etc
     , create_group = True -- MUST be true so that interruptProcessGroupOf works
---    , delegate_ctlc = True
+    , delegate_ctlc = False
     } $ \(Just stdinHandle, Just stdoutHandle, Just stderrHandle, processHandle) -> do
     hClose stdinHandle
+    -- Read both stdout and stderr concurrently to prevent deadlock - e.g. if we read them
+    -- sequentially (stdout then stderr) and the child writes to both interleaved, it can block
+    -- indefinitely on stderr due to full buffers since we are not reading it yet.
     withAsync (BS.hGetContents stdoutHandle) $ \stdoutReader ->
       withAsync (BS.hGetContents stderrHandle) $ \stderrReader -> do
         exitCode <- waitForProcess processHandle
