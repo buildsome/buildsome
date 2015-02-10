@@ -1051,6 +1051,10 @@ with printer db makefilePath makefile opt@Opt{..} body = do
   ldPreloadPath <- FSHook.getLdPreloadPath optFsOverrideLdPreloadPath
   FSHook.with printer ldPreloadPath $ \fsHook -> do
     slaveMapByTargetRep <- SyncMap.new
+    -- Many, many slaves are invoked, but only up to optParallelism
+    -- external processes are invoked in parallel. The Parallelism lib
+    -- (in Lib/Parallelism) is used by slaves to allocate parallelism
+    -- tokens, up to optParallelism tokens at once.
     parallelism <- Parallelism.new $ fromMaybe 1 optParallelism
     freshPrinterIds <- Fresh.new 1
     buildId <- BuildId.new
