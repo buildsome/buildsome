@@ -16,7 +16,6 @@ import Buildsome.Stats (Stats(Stats))
 import Control.Applicative ((<$>))
 import Control.Concurrent (ThreadId, myThreadId, forkIO)
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Concurrent.MVar
 import Control.Exception.Async (handleSync)
 import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
@@ -53,6 +52,7 @@ import Prelude hiding (FilePath, show)
 import System.Exit (ExitCode(..))
 import System.Process (CmdSpec(..))
 import Text.Parsec (SourcePos)
+import Lib.SyncMap (SyncMap)
 import qualified Buildsome.BuildId as BuildId
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
@@ -78,6 +78,7 @@ import qualified Lib.Parallelism as Parallelism
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Set as LibSet
+import qualified Lib.SyncMap as SyncMap
 import qualified Lib.Timeout as Timeout
 import qualified Prelude
 import qualified System.IO as IO
@@ -96,7 +97,7 @@ data Buildsome = Buildsome
     -- dynamic:
   , bsDb :: Db
   , bsFsHook :: FSHook
-  , bsSlaveByTargetRep :: IORef (Map TargetRep (MVar (Slave Stats)))
+  , bsSlaveByTargetRep :: SyncMap TargetRep (Slave Stats)
   , bsParallelism :: Parallelism
   , bsFreshPrinterIds :: Fresh Printer.Id
   , bsFastKillBuild :: E.SomeException -> IO ()
@@ -111,22 +112,18 @@ cancelAllSlaves printer bs = go M.empty
       Timeout.warning time $
       mconcat ["Slave ", Slave.str slave, " did not ", str, " in ", show time, "!"]
     go alreadyCancelled = do
-      curSlaveMap <- readIORef $ bsSlaveByTargetRep bs
-      let nonCancelledSlaveMap = curSlaveMap `M.difference` alreadyCancelled
-      unless (M.null nonCancelledSlaveMap) $ do
-        slaves <-
-          flip M.traverseWithKey nonCancelledSlaveMap $
-          \targetRep mvar ->
-          Timeout.warning (Timeout.millis 100)
-          (Printer.render printer
-           ("Slave MVar for " <> cTarget (show targetRep) <> " not populated in 100 millis!")) $
-          readMVar mvar
+      curSlaveMap <- SyncMap.toMap $ bsSlaveByTargetRep bs
+      let slaves = curSlaveMap `M.difference` alreadyCancelled
+      unless (M.null slaves) $ do
         _ <-
-          (flip mapConcurrently slaves $ \slave ->
-            timeoutWarning "cancel" (Timeout.millis 1000) slave $ Slave.cancel slave)
+          (flip mapConcurrently slaves $ \resultSlave ->
+            case resultSlave of
+              Left _ -> Printer.printStrLn printer ("Slave had an exception on creation, nothing to cancel!" :: String)
+              Right slave -> timeoutWarning "cancel" (Timeout.millis 1000) slave $ Slave.cancel slave)
           `logErrors` "cancel of slaves failed: "
-        _ <- flip mapConcurrently slaves $ \slave ->
-          timeoutWarning "finish" (Timeout.seconds 2) slave $ Slave.waitCatch slave
+        _ <- flip mapConcurrently slaves $ 
+          either (return undefined)
+                 (\slave -> timeoutWarning "finish" (Timeout.seconds 2) slave $ Slave.waitCatch slave)
         -- Make sure to cancel any potential new slaves that were
         -- created during cancellation
         go curSlaveMap
@@ -583,22 +580,13 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
   | any ((== tdRep) . fst) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
   | otherwise = do
-    newSlaveMVar <- newEmptyMVar
-    E.mask_ $ join $
-      atomicModifyIORef (bsSlaveByTargetRep bteBuildsome) $
-      \oldSlaveMap ->
-      -- TODO: Use a faster method to lookup&insert at the same time
-      case M.lookup tdRep oldSlaveMap of
-      Just slaveMVar -> (oldSlaveMap, readMVar slaveMVar)
-      Nothing ->
-        ( M.insert tdRep newSlaveMVar oldSlaveMap
-        , mkSlave newSlaveMVar $ \unmask printer allocParCell ->
+      SyncMap.insert (bsSlaveByTargetRep bteBuildsome) tdRep $
+        mkSlave $ \unmask printer allocParCell ->
           -- Must remain masked through allocParCell so it gets a
           -- chance to handle alloc/exception!
           allocParCell $ \parCell -> unmask $ do
             let newBte = bte { bteParents = newParents, btePrinter = printer }
             buildTarget newBte parCell TargetDesc{..}
-        )
     where
       Color.Scheme{..} = Color.scheme
       annotate =
@@ -607,31 +595,28 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
       newParents = (tdRep, bteReason) : bteParents
       panicHandler e@E.SomeException {} =
         panic (bsRender bteBuildsome) $ "FAILED during making of slave: " ++ show e
-      panicOnError mvar =
-        handle $ \e ->
+      panicOnError = handle panicHandler
+      mkSlave action =
+        Timeout.warning (Timeout.millis 100)
+        (Printer.render btePrinter
+         ("Slave creation of " <> cTarget (show tdRep) <>
+          " took more than 100 millis!")) $
         do
-          putMVar mvar $ error $ "Failed to create slave: " ++ show e
-          panicHandler e
-      mkSlave mvar action =
-        -- TODO: Remove uninterruptibleMask_?
-        E.uninterruptibleMask $ \restoreUninterruptible -> do
-          slave <-
-            -- Everything under handle is synchronous, so should not
-            -- be interruptible. There shouldn't be a danger of a sync
-            -- or async exception here, so the putMVar is supposed to be
-            -- guaranteed.
-            panicOnError mvar $ do
-              depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
-              depPrinter <- Printer.newFrom btePrinter depPrinterId
-              -- NOTE: allocParCell MUST be called to avoid leak!
-              allocParCell <-
-                Parallelism.startAlloc btePriority $
-                bsParallelism bteBuildsome
-              restoreUninterruptible $ -- This only restores to interruptible mask as above!
-                Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
-                \unmask -> annotate $ action unmask depPrinter allocParCell
-          putMVar mvar slave
-          return slave
+          -- Everything under handle is synchronous, so should not
+          -- be interruptible. There shouldn't be a danger of a sync
+          -- or async exception here, so the putMVar is supposed to be
+          -- guaranteed.
+          panicOnError $ do
+            depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
+            depPrinter <- Printer.newFrom btePrinter depPrinterId
+            -- NOTE: allocParCell MUST be called to avoid leak!
+            allocParCell <-
+              Parallelism.startAlloc btePriority $
+              bsParallelism bteBuildsome
+            Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
+              \unmask -> annotate $ action unmask depPrinter allocParCell
+       
+          
 
 data UnregisteredOutputFileExists = UnregisteredOutputFileExists (ColorText -> ByteString) FilePath
   deriving (Typeable)
@@ -1065,7 +1050,11 @@ with ::
 with printer db makefilePath makefile opt@Opt{..} body = do
   ldPreloadPath <- FSHook.getLdPreloadPath optFsOverrideLdPreloadPath
   FSHook.with printer ldPreloadPath $ \fsHook -> do
-    slaveMapByTargetRep <- newIORef M.empty
+    slaveMapByTargetRep <- SyncMap.new
+    -- Many, many slaves are invoked, but only up to optParallelism
+    -- external processes are invoked in parallel. The Parallelism lib
+    -- (in Lib/Parallelism) is used by slaves to allocate parallelism
+    -- tokens, up to optParallelism tokens at once.
     parallelism <- Parallelism.new $ fromMaybe 1 optParallelism
     freshPrinterIds <- Fresh.new 1
     buildId <- BuildId.new
