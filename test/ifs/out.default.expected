@@ -1,0 +1,3 @@
+ECHO: NOTX BEFORE
+ECHO: "notx.mk says hello"
+ECHO: NOTX AFTER

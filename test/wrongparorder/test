@@ -1,4 +1,5 @@
 #!/bin/bash
+cd $(dirname $0)
 set -e
 mkdir files 2>/dev/null || true
 cat <<EOF >files/Buildsome.mk

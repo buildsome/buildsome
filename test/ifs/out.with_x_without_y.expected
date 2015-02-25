@@ -1,0 +1,4 @@
+ECHO: YESX BEFORE
+ECHO: "x.mk says hello"
+ECHO: y is disabled
+ECHO: YESX AFTER

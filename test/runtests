@@ -1,0 +1,31 @@
+#!/bin/bash
+
+set -e
+
+# DLopen
+buildsome -f dlopen && buildsome -f dlopen
+git clean -fdx -- dlopen
+
+ifs/test
+git clean -fdx -- ifs
+
+buildsome -f implicitpat && buildsome -f implicitpat
+git clean -fdx -- implicitpat
+
+buildsome -f par -j4 && buildsome -f par -j4
+git clean -fdx -- par
+
+remove_pattern_target/test
+git clean -fdx -- remove_pattern_target
+
+scratch/run_tests
+git clean -fdx -- scratch
+
+buildsome -f stat && buildsome -f stat
+git clean -fdx -- stat
+
+wrongparorder/test
+git clean -fdx -- wrongparorder
+
+buildsome -f overpar && buildsome -f overpar
+git clean -fdx -- overpar
