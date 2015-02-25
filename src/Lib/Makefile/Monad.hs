@@ -53,7 +53,7 @@ runPutStrLn (PutStrLn target bs) = BS8.hPutStrLn (targetHandle target) bs
 newtype M a = M (StateT W IO a)
   deriving (Functor, Applicative, Monad)
 tell :: W -> M ()
-tell = M . State.modify . mappend
+tell = M . State.modify . flip mappend
 
 doPutStrLn :: PutStrLnTarget -> ByteString -> M ()
 doPutStrLn tgt bs = do
