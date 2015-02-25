@@ -1,11 +1,14 @@
 module Lib.Sigint (installSigintHandler) where
 
-import Control.Concurrent (myThreadId)
+import Control.Concurrent (forkIO)
+import Control.Concurrent.MVar
 import System.Posix.ByteString (Handler(..), keyboardSignal, installHandler)
-import qualified Control.Exception as E
 
-installSigintHandler :: IO ()
-installSigintHandler = do
-  tid <- myThreadId
-  _ <- installHandler keyboardSignal (Catch (E.throwTo tid E.UserInterrupt)) Nothing
-  return ()
+-- TODO: withSigintHandler that cleans up both the SIGINT handler and
+-- the forkIO?
+installSigintHandler :: IO () -> IO ()
+installSigintHandler handler = do
+    mvar <- newEmptyMVar
+    _ <- forkIO $ takeMVar mvar >> handler
+    _ <- installHandler keyboardSignal (Catch (putMVar mvar ())) Nothing
+    return ()

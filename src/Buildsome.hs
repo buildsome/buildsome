@@ -14,7 +14,7 @@ import Buildsome.Opts (Opt(..))
 import Buildsome.Slave (Slave)
 import Buildsome.Stats (Stats(Stats))
 import Control.Applicative ((<$>))
-import Control.Concurrent (ThreadId, myThreadId, forkIO)
+import Control.Concurrent (forkIO)
 import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception.Async (handleSync)
 import Control.Monad
@@ -34,7 +34,7 @@ import Data.Typeable (Typeable)
 import Lib.AnnotatedException (annotateException)
 import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
-import Lib.Exception (onException, finally, logErrors, handle)
+import Lib.Exception (finally, logErrors, handle)
 import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
@@ -46,13 +46,14 @@ import Lib.Parallelism (Parallelism)
 import Lib.Printer (Printer, printStrLn, putLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
+import Lib.Sigint (installSigintHandler)
 import Lib.StdOutputs (StdOutputs(..))
+import Lib.SyncMap (SyncMap)
 import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
 import System.Exit (ExitCode(..))
 import System.Process (CmdSpec(..))
 import Text.Parsec (SourcePos)
-import Lib.SyncMap (SyncMap)
 import qualified Buildsome.BuildId as BuildId
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
@@ -105,7 +106,8 @@ data Buildsome = Buildsome
   }
 
 cancelAllSlaves :: Printer -> Buildsome -> IO ()
-cancelAllSlaves printer bs = go M.empty
+cancelAllSlaves printer bs =
+  go M.empty `logErrors` "BUG: Exception from cancelAllSlaves: "
   where
     Color.Scheme{..} = Color.scheme
     timeoutWarning str time slave =
@@ -1040,8 +1042,6 @@ buildDbFilename = (<.> "db")
 withDb :: FilePath -> (Db -> IO a) -> IO a
 withDb makefilePath = Db.with $ buildDbFilename makefilePath
 
-throwToAsync :: ThreadId -> E.SomeException -> IO ()
-throwToAsync threadId exception = void $ forkIO $ E.throwTo threadId exception
 
 with ::
   Printer -> Db -> FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
@@ -1061,9 +1061,19 @@ with printer db makefilePath makefile opt@Opt{..} body = do
       buildMaps = BuildMaps.make makefile
     deleteRemovedOutputs printer db buildMaps
 
-    threadId <- myThreadId
-    killThreadOnce <- (void .) . (. throwToAsync threadId) <$> once
+    runOnce <- once
     let
+      killOnce msg =
+        void $ runOnce $ do
+          putStrLn msg
+          forkIO $ cancelAllSlaves printer buildsome
+      killOrWaitBuild =
+        case optKeepGoing of
+        Opts.KeepGoing ->
+          killOnce
+          "TODO: This is wrong, should just wait for all slaves, killing instead."
+        Opts.DieQuickly ->
+          killOnce "Top-level build step failed. No -k specified."
       buildsome =
         Buildsome
         { bsOpts = opt
@@ -1077,17 +1087,16 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         , bsSlaveByTargetRep = slaveMapByTargetRep
         , bsParallelism = parallelism
         , bsFreshPrinterIds = freshPrinterIds
-        , bsFastKillBuild = case optKeepGoing of
-            Opts.KeepGoing -> const (return ())
-            Opts.DieQuickly -> killThreadOnce
+        , bsFastKillBuild = const $ case optKeepGoing of
+            Opts.KeepGoing -> return ()
+            Opts.DieQuickly -> killOnce "Build step failed, no -k specified"
         , bsRender = Printer.render printer
         }
-    ((body buildsome
-      `onException` putLn "Shutting down")
+    installSigintHandler (killOnce "\nBuild interrupted by Ctrl-C, shutting down.")
+    body buildsome
       -- We must not leak running slaves as we're not allowed to
       -- access fsHook, db, etc after leaving here:
-      `finally` (cancelAllSlaves printer buildsome
-                 `logErrors` "BUG: Exception from cancelAllSlaves: "))
+      `finally` killOrWaitBuild
       -- Must update gitIgnore after all the slaves finished updating
       -- the registered output lists:
       `finally` maybeUpdateGitIgnore buildsome

@@ -21,7 +21,6 @@ import Lib.Makefile (Makefile)
 import Lib.Printer (Printer)
 import Lib.ScanFileUpwards (scanFileUpwards)
 import Lib.Show (show)
-import Lib.Sigint (installSigintHandler)
 import Lib.TimeIt (timeIt)
 import Prelude hiding (FilePath, show)
 import System.Posix.IO (stdOutput)
@@ -285,7 +284,6 @@ main = do
   printer <- Printer.new render 0
   handleOpts printer opts $
     \db opt requested finalMakefilePath makefile -> do
-      installSigintHandler
       setBuffering
       Buildsome.with printer db finalMakefilePath makefile opt $ \buildsome ->
         handleRequested buildsome printer requested

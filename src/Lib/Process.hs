@@ -48,7 +48,7 @@ getOutputs cmd inheritedEnvs envs = do
     , std_err = CreatePipe
     , close_fds = True -- MUST close fds so we don't leak server-side FDs as open/etc
     , create_group = True -- MUST be true so that interruptProcessGroupOf works
-    , delegate_ctlc = False
+    , delegate_ctlc = False -- MUST be false to avoid disabling buildsome's SIGINT/SIGQUIT handlers
     } $ \(Just stdinHandle, Just stdoutHandle, Just stderrHandle, processHandle) -> do
     hClose stdinHandle
     -- Read both stdout and stderr concurrently to prevent deadlock - e.g. if we read them
