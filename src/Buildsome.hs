@@ -1076,10 +1076,6 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         void $ runOnce $ do
           putStrLn msg
           forkIO $ onAllSlaves CancelAndWait printer buildsome
-      killOrWaitBuild =
-        case optKeepGoing of
-        Opts.KeepGoing -> onAllSlaves Wait printer buildsome
-        Opts.DieQuickly -> killOnce "Top-level build step failed. No -k specified."
       buildsome =
         Buildsome
         { bsOpts = opt
@@ -1103,7 +1099,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
       body buildsome
         -- We must not leak running slaves as we're not allowed to
         -- access fsHook, db, etc after leaving here:
-        `finally` killOrWaitBuild
+        `finally` onAllSlaves Wait printer buildsome
         -- Must update gitIgnore after all the slaves finished updating
         -- the registered output lists:
         `finally` maybeUpdateGitIgnore buildsome
