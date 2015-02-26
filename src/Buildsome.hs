@@ -19,7 +19,7 @@ import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception.Async (handleSync)
 import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.Trans.Either
+import Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
@@ -34,7 +34,7 @@ import Data.Typeable (Typeable)
 import Lib.AnnotatedException (annotateException)
 import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
-import Lib.Exception (finally, logErrors, handle, catch, onException)
+import Lib.Exception (finally, logErrors, handle, catch)
 import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
@@ -458,69 +458,68 @@ maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..}
   where
     Color.Scheme{..} = Color.scheme
 
-swallowAndLogErrorsIfSpeculative ::
-  Monoid a => BuildTargetEnv -> TargetDesc -> IO a -> IO a
-swallowAndLogErrorsIfSpeculative BuildTargetEnv{..} TargetDesc{..}
-  | bteSpeculative = handle warnAllOtherExceptions . handle ignoreAsyncException
-  | otherwise = id
+catchAndLogSpeculativeErrors :: Printer -> TargetDesc -> (E.SomeException -> a) -> IO a -> IO a
+catchAndLogSpeculativeErrors printer TargetDesc{..} errRes =
+  handle warnAllOtherExceptions . handle ignoreAsyncException
   where
     warnAllOtherExceptions e@E.SomeException {} =
       do
-        Print.posMessage btePrinter (targetPos tdTarget) $ cWarning $
+        Print.posMessage printer (targetPos tdTarget) $ cWarning $
           "Warning: Ignoring failed build of speculative target: " <>
           cTarget (show tdRep) <> " " <> show e
-        return mempty
-    ignoreAsyncException :: Monoid a => E.AsyncException -> IO a
-    ignoreAsyncException _ = return mempty
+        return (errRes e)
+    ignoreAsyncException e = const (return (errRes (E.SomeException e))) (idAsyncException e)
+    idAsyncException :: E.AsyncException -> E.AsyncException
+    idAsyncException = id
     Color.Scheme{..} = Color.scheme
 
-deleteTargetOutputsOnSpeculativeException ::
-  BuildTargetEnv -> TargetType FilePath input -> IO a -> IO a
-deleteTargetOutputsOnSpeculativeException BuildTargetEnv{..} target action
-  | bteSpeculative =
-        action `onException`
-        ( mapM_ removeFileOrDirectoryOrNothing outputs
-          `catch` \e@E.SomeException {} ->
-            Print.posMessage btePrinter (targetPos target) $ cError $
-            "Failed to delete failed speculative build outputs: " <>
-            cTarget (show outputs) <> " " <> show e
-        )
-  | otherwise = action
-  where
-    outputs = targetOutputs target
-    Color.Scheme{..} = Color.scheme
+data ExecutionLogFailure
+  = MismatchedFiles (ByteString, FilePath)
+  | SpeculativeBuildFailure E.SomeException
 
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Cell ->
   TargetDesc -> Db.ExecutionLog ->
-  IO (Either (ByteString, FilePath) (Db.ExecutionLog, BuiltTargets))
-tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@Db.ExecutionLog {..} = do
-  builtTargets <- executionLogBuildInputs bte parCell TargetDesc{..} executionLog
+  IO (Either ExecutionLogFailure (Db.ExecutionLog, BuiltTargets))
+tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetDesc executionLog = do
   runEitherT $ do
-    forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
-      verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
-        when (Posix.modificationTimeHiRes stat /= mtime) $ do
-          let verify str getDesc mPair =
-                verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
-          verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
-          verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
-          verify "content"
-            (fileContentDescOfStat "When applying execution log (input)"
-             db filePath stat) mContentAccess
-    -- For now, we don't store the output files' content
-    -- anywhere besides the actual output files, so just verify
-    -- the output content is still correct
-    forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) ->
-      verifyFileDesc "output" filePath outputDesc $ \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
-        verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
-        verifyMDesc "output(content)" filePath
-          (fileContentDescOfStat "When applying execution log (output)"
-           db filePath stat) oldMContentDesc
-    liftIO $
-      replayExecutionLog bte tdTarget
-      (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
-      elStdoutputs elSelfTime
+    builtTargets <-
+      EitherT $
+      catchAndLogSpeculativeErrors btePrinter targetDesc
+      (Left . SpeculativeBuildFailure)
+      (Right <$> executionLogBuildInputs bte parCell targetDesc executionLog)
+    bimapEitherT MismatchedFiles id $
+      executionLogVerifyFilesState bte targetDesc executionLog
     return (executionLog, builtTargets)
+
+executionLogVerifyFilesState ::
+  MonadIO m =>
+  BuildTargetEnv -> TargetDesc -> Db.ExecutionLog ->
+  EitherT (ByteString, FilePath) m ()
+executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionLog{..} = do
+  forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
+    verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
+      when (Posix.modificationTimeHiRes stat /= mtime) $ do
+        let verify str getDesc mPair =
+              verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
+        verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
+        verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
+        verify "content"
+          (fileContentDescOfStat "When applying execution log (input)"
+           db filePath stat) mContentAccess
+  -- For now, we don't store the output files' content
+  -- anywhere besides the actual output files, so just verify
+  -- the output content is still correct
+  forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) ->
+    verifyFileDesc "output" filePath outputDesc $ \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
+      verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
+      verifyMDesc "output(content)" filePath
+        (fileContentDescOfStat "When applying execution log (output)"
+         db filePath stat) oldMContentDesc
+  liftIO $
+    replayExecutionLog bte tdTarget
+    (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
+    elStdoutputs elSelfTime
   where
     db = bsDb bteBuildsome
     verifyMDesc _   _        _       Nothing        = return ()
@@ -533,7 +532,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@
         Cmp.Equals -> return ()
         Cmp.NotEquals reasons ->
           -- fail entire computation
-          left (str <> ": " <> BS8.intercalate ", " reasons, filePath)
+          left $ (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
 executionLogBuildInputs ::
   BuildTargetEnv -> Parallelism.Cell -> TargetDesc ->
@@ -543,11 +542,8 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell TargetDesc{..} Db.Executi
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
-  res <-
-    swallowAndLogErrorsIfSpeculative bteImplicit TargetDesc{..} $
-    waitForSlavesWithParReleased btePriority parCell bteBuildsome
+  waitForSlavesWithParReleased btePriority parCell bteBuildsome
     speculativeSlaves
-  return res
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs tdTarget
@@ -602,16 +598,22 @@ findApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
     Just executionLog -> do
       eRes <- tryApplyExecutionLog bte parCell TargetDesc{..} executionLog
       case eRes of
-        Left (str, filePath) -> do
-          printStrLn btePrinter $ bsRender bteBuildsome $ mconcat
-            [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
-            , " did not match because ", fromBytestring8 str, ": "
-            , cPath (show filePath)
-            ]
+        Left err -> do
+          printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
+            notifyError err
           return Nothing
         Right res -> return (Just res)
   where
     Color.Scheme{..} = Color.scheme
+    notifyError (MismatchedFiles (str, filePath)) =
+      [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
+      , " did not match because ", fromBytestring8 str, ": "
+      , cPath (show filePath)
+      ]
+    notifyError (SpeculativeBuildFailure exception) =
+      [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
+      , " did not match because ", cWarning (show exception)
+      ]
 
 data TargetDependencyLoop = TargetDependencyLoop (ColorText -> ByteString) Parents
   deriving (Typeable)
@@ -966,19 +968,16 @@ buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
 
     Print.executionCmd verbosityCommands btePrinter tdTarget
 
-    (executionLog, builtTargets) <-
-      deleteTargetOutputsOnSpeculativeException bte tdTarget $ do
-        RunCmdResults{..} <- runCmd bte parCell tdTarget
+    RunCmdResults{..} <- runCmd bte parCell tdTarget
 
-        outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.keysSet rcrOutputs) tdTarget
-        executionLog <-
-          makeExecutionLog bteBuildsome tdTarget rcrInputs (S.toList outputs)
-          rcrStdOutputs rcrSelfTime
-        Print.targetTiming btePrinter "now" rcrSelfTime
-        return (executionLog, rcrBuiltTargets)
+    outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.keysSet rcrOutputs) tdTarget
+    executionLog <-
+      makeExecutionLog bteBuildsome tdTarget rcrInputs (S.toList outputs)
+      rcrStdOutputs rcrSelfTime
     writeIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) executionLog
 
-    return (executionLog, builtTargets)
+    Print.targetTiming btePrinter "now" rcrSelfTime
+    return (executionLog, rcrBuiltTargets)
   where
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
