@@ -105,9 +105,12 @@ data Buildsome = Buildsome
   , bsRender :: ColorText -> ByteString
   }
 
-cancelAllSlaves :: Printer -> Buildsome -> IO ()
-cancelAllSlaves printer bs =
-  go M.empty `logErrors` "BUG: Exception from cancelAllSlaves: "
+data WaitOrCancel = Wait | CancelAndWait
+  deriving Eq
+
+onAllSlaves :: WaitOrCancel -> Printer -> Buildsome -> IO ()
+onAllSlaves shouldCancel printer bs =
+  go M.empty `logErrors` "BUG: Exception from onAllSlaves: "
   where
     Color.Scheme{..} = Color.scheme
     timeoutWarning str time slave =
@@ -118,14 +121,20 @@ cancelAllSlaves printer bs =
       let slaves = curSlaveMap `M.difference` alreadyCancelled
       unless (M.null slaves) $ do
         _ <-
-          (flip mapConcurrently slaves $ \resultSlave ->
-            case resultSlave of
-              Left _ -> Printer.printStrLn printer ("Slave had an exception on creation, nothing to cancel!" :: String)
-              Right slave -> timeoutWarning "cancel" (Timeout.millis 1000) slave $ Slave.cancel slave)
-          `logErrors` "cancel of slaves failed: "
-        _ <- flip mapConcurrently slaves $
-          either (return undefined)
-                 (\slave -> timeoutWarning "finish" (Timeout.seconds 2) slave $ Slave.waitCatch slave)
+          (`logErrors` "cancel of slaves failed: ") $
+          (`mapConcurrently` slaves) $ \resultSlave ->
+          case resultSlave of
+          Left _ ->
+            Printer.printStrLn printer
+            ("Slave had an exception on creation, nothing to cancel!" :: String)
+          Right slave ->
+            do
+              when (shouldCancel == CancelAndWait) $
+                timeoutWarning "cancel" (Timeout.millis 1000) slave $
+                Slave.cancel slave
+              _ <- timeoutWarning "finish" (Timeout.seconds 2) slave $
+                Slave.waitCatch slave
+              return ()
         -- Make sure to cancel any potential new slaves that were
         -- created during cancellation
         go curSlaveMap
@@ -1066,14 +1075,11 @@ with printer db makefilePath makefile opt@Opt{..} body = do
       killOnce msg =
         void $ runOnce $ do
           putStrLn msg
-          forkIO $ cancelAllSlaves printer buildsome
+          forkIO $ onAllSlaves CancelAndWait printer buildsome
       killOrWaitBuild =
         case optKeepGoing of
-        Opts.KeepGoing ->
-          killOnce
-          "TODO: This is wrong, should just wait for all slaves, killing instead."
-        Opts.DieQuickly ->
-          killOnce "Top-level build step failed. No -k specified."
+        Opts.KeepGoing -> onAllSlaves Wait printer buildsome
+        Opts.DieQuickly -> killOnce "Top-level build step failed. No -k specified."
       buildsome =
         Buildsome
         { bsOpts = opt
