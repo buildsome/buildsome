@@ -461,15 +461,17 @@ maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..}
 swallowAndLogErrorsIfSpeculative ::
   Monoid a => BuildTargetEnv -> TargetDesc -> IO a -> IO a
 swallowAndLogErrorsIfSpeculative BuildTargetEnv{..} TargetDesc{..}
-  | bteSpeculative =
-    handle $ \e@E.SomeException {} ->
-    do
-      Print.posMessage btePrinter (targetPos tdTarget) $ cWarning $
-        "Warning: Ignoring failed build of speculative target: " <>
-        cTarget (show tdRep) <> " " <> show e
-      return mempty
+  | bteSpeculative = warnAllOtherExceptions . ignoreAsyncExceptions
   | otherwise = id
   where
+    warnAllOtherExceptions =
+      handle $ \e@E.SomeException {} ->
+      do
+        Print.posMessage btePrinter (targetPos tdTarget) $ cWarning $
+          "Warning: Ignoring failed build of speculative target: " <>
+          cTarget (show tdRep) <> " " <> show e
+        return mempty
+    ignoreAsyncExceptions = handle $ \E.SomeAsyncException {} -> return mempty
     Color.Scheme{..} = Color.scheme
 
 deleteTargetOutputsOnSpeculativeException ::
