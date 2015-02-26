@@ -46,7 +46,7 @@ import Lib.Parallelism (Parallelism)
 import Lib.Printer (Printer, printStrLn, putLn)
 import Lib.Show (show)
 import Lib.ShowBytes (showBytes)
-import Lib.Sigint (installSigintHandler)
+import Lib.Sigint (withInstalledSigintHandler)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.SyncMap (SyncMap)
 import Lib.TimeIt (timeIt)
@@ -1092,14 +1092,15 @@ with printer db makefilePath makefile opt@Opt{..} body = do
             Opts.DieQuickly -> killOnce "Build step failed, no -k specified"
         , bsRender = Printer.render printer
         }
-    installSigintHandler (killOnce "\nBuild interrupted by Ctrl-C, shutting down.")
-    body buildsome
-      -- We must not leak running slaves as we're not allowed to
-      -- access fsHook, db, etc after leaving here:
-      `finally` killOrWaitBuild
-      -- Must update gitIgnore after all the slaves finished updating
-      -- the registered output lists:
-      `finally` maybeUpdateGitIgnore buildsome
+    withInstalledSigintHandler
+      (killOnce "\nBuild interrupted by Ctrl-C, shutting down.") $
+      body buildsome
+        -- We must not leak running slaves as we're not allowed to
+        -- access fsHook, db, etc after leaving here:
+        `finally` killOrWaitBuild
+        -- Must update gitIgnore after all the slaves finished updating
+        -- the registered output lists:
+        `finally` maybeUpdateGitIgnore buildsome
   where
     maybeUpdateGitIgnore buildsome =
       case optUpdateGitIgnore of

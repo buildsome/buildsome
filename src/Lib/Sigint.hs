@@ -1,14 +1,21 @@
-module Lib.Sigint (installSigintHandler) where
+module Lib.Sigint (withInstalledSigintHandler) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent.Async (withAsync)
 import Control.Concurrent.MVar
+import Lib.Exception (bracket)
 import System.Posix.ByteString (Handler(..), keyboardSignal, installHandler)
 
--- TODO: withSigintHandler that cleans up both the SIGINT handler and
--- the forkIO?
-installSigintHandler :: IO () -> IO ()
-installSigintHandler handler = do
-    mvar <- newEmptyMVar
-    _ <- forkIO $ takeMVar mvar >> handler
-    _ <- installHandler keyboardSignal (Catch (putMVar mvar ())) Nothing
-    return ()
+withInstalledSigintHandler :: IO () -> IO a -> IO a
+withInstalledSigintHandler action body =
+    do
+        mvar <- newEmptyMVar
+        withAsync (takeMVar mvar >> action) $ \_ ->
+            bracket (install mvar) uninstall $ const body
+    where
+        handleSigint handler =
+            installHandler keyboardSignal handler Nothing
+        install mvar = handleSigint $ Catch $ putMVar mvar ()
+        uninstall oldHandler =
+            do
+                _ <- handleSigint oldHandler
+                return ()
