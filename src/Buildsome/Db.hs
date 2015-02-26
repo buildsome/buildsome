@@ -102,18 +102,16 @@ getKey db key = fmap decode <$> LevelDB.get (dbLevel db) def key
 deleteKey :: Db -> ByteString -> IO ()
 deleteKey db = LevelDB.delete (dbLevel db) def
 
-options :: LevelDB.Options
-options =
-    LevelDB.defaultOptions
-    { LevelDB.createIfMissing = True
-    , LevelDB.errorIfExists = False
-    }
+openDb :: FilePath -> IO LevelDB.DB
+openDb dbPath =
+  LevelDB.open (BS8.unpack (dbPath </> schemaVersion))
+  def { LevelDB.createIfMissing = True }
 
 with :: FilePath -> (Db -> IO a) -> IO a
 with rawDbPath body = do
   dbPath <- makeAbsolutePath rawDbPath
   createDirectories dbPath
-  LevelDB.withDB (BS8.unpack (dbPath </> schemaVersion)) options $ \levelDb ->
+  bracket (openDb dbPath) LevelDB.close $ \levelDb ->
     withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
     withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
     body (Db levelDb registeredOutputs leakedOutputs)
