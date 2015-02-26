@@ -16,7 +16,7 @@ version =
    do e <- lookupEnv "BUILDSOME_BUILT_REVISION"
       case e of
         Nothing ->
-          do sha <- stripWhitespace <$> Process.readProcess "git" ["rev-parse", "--short", "HEAD"] ""
+          do sha <- stripWhitespace <$> Process.readProcess "git" ["log", "--pretty=format:%h-%ci", "-1", "HEAD"] ""
              describe <- stripWhitespace <$> Process.readProcess "git" ["describe", "--dirty", "--all"] ""
              return $ sha ++ "-" ++ describe
           where
