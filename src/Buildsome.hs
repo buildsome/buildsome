@@ -34,7 +34,6 @@ import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
-import           Data.Foldable (traverse_)
 import           Data.IORef
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
@@ -47,7 +46,6 @@ import           Data.Time (DiffTime)
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Traversable (traverse)
 import           Data.Typeable (Typeable)
-import           Data.Typeable (cast)
 import           Lib.AnnotatedException (annotateException)
 import qualified Lib.Cmp as Cmp
 import           Lib.ColorText (ColorText)
@@ -460,17 +458,15 @@ maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..}
   where
     Color.Scheme{..} = Color.scheme
 
-catchAndLogSpeculativeErrors :: Printer -> TargetDesc -> (E.SomeException -> a) -> IO a -> IO a
-catchAndLogSpeculativeErrors printer TargetDesc{..} errRes =
-  handle warnAllOtherExceptions . handle ignoreAsyncException
+syncCatchAndLogSpeculativeErrors :: Printer -> TargetDesc -> (E.SomeException -> a) -> IO a -> IO a
+syncCatchAndLogSpeculativeErrors printer TargetDesc{..} errRes =
+  handleSync $ \e@E.SomeException {} ->
+    do
+      Print.posMessage printer (targetPos tdTarget) $ cWarning $
+        "Warning: Ignoring failed build of speculative target: " <>
+        cTarget (show tdRep) <> " " <> show e
+      return (errRes e)
   where
-    warnAllOtherExceptions e@E.SomeException {} =
-      do
-        Print.posMessage printer (targetPos tdTarget) $ cWarning $
-          "Warning: Ignoring failed build of speculative target: " <>
-          cTarget (show tdRep) <> " " <> show e
-        return (errRes e)
-    ignoreAsyncException (e :: E.AsyncException) = return $ errRes $ E.SomeException e
     Color.Scheme{..} = Color.scheme
 
 data ExecutionLogFailure
@@ -485,7 +481,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetDesc executionLog = do
   runEitherT $ do
     builtTargets <-
       EitherT $
-      catchAndLogSpeculativeErrors btePrinter targetDesc
+      syncCatchAndLogSpeculativeErrors btePrinter targetDesc
       (Left . SpeculativeBuildFailure)
       (Right <$> executionLogBuildInputs bte parCell targetDesc executionLog)
     bimapEitherT MismatchedFiles id $
@@ -599,22 +595,18 @@ findApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
       eRes <- tryApplyExecutionLog bte parCell TargetDesc{..} executionLog
       case eRes of
         Left err -> do
-          traverse_ notifyError (describeError err)
+          printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
+            [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
+            , " did not match because ", describeError err
+            ]
           return Nothing
         Right res -> return (Just res)
   where
     Color.Scheme{..} = Color.scheme
-    notifyError err =
-      printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
-      [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
-      , " did not match because ", err
-      ]
     describeError (MismatchedFiles (str, filePath)) =
-      Just (fromBytestring8 str <> ": " <> cPath (show filePath))
+      fromBytestring8 str <> ": " <> cPath (show filePath)
     describeError (SpeculativeBuildFailure exception) =
-      case cast exception of
-      Nothing -> Just (cWarning (show exception))
-      Just (_ :: E.AsyncException) -> Nothing
+      cWarning (show exception)
 
 data TargetDependencyLoop = TargetDependencyLoop (ColorText -> ByteString) Parents
   deriving (Typeable)
