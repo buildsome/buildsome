@@ -55,6 +55,7 @@ import qualified Lib.FilePath as FilePath
 import qualified Lib.Fresh as Fresh
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
+import qualified Lib.Timeout as Timeout
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Posix.ByteString as Posix
@@ -99,6 +100,7 @@ data FSHook = FSHook
   , fsHookFreshJobIds :: Fresh Int
   , fsHookLdPreloadPath :: FilePath
   , fsHookServerAddress :: FilePath
+  , fsHookPrinter :: Printer
   }
 
 data ProtocolError = ProtocolError String deriving (Typeable)
@@ -166,6 +168,7 @@ with printer ldPreloadPath body = do
         , fsHookFreshJobIds = freshJobIds
         , fsHookLdPreloadPath = ldPreloadPath
         , fsHookServerAddress = serverFilename
+        , fsHookPrinter = printer
         }
     AsyncContext.new $ \ctx -> do
       _ <-
@@ -356,12 +359,19 @@ runCommand fsHook rootFilter cmd label fsAccessHandlers = do
             }
   -- Don't leak connections still running our handlers once we leave!
   let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
-  (`finally` onActiveConnections awaitConnection) $
-    (`onException` onActiveConnections killConnection) $
-    withRunningJob fsHook jobId job $
-    cmd (mkEnvVars fsHook rootFilter jobId)
+  (`onException` onActiveConnections killConnection) $
+    do
+      res <-
+        withRunningJob fsHook jobId job $ cmd $ mkEnvVars fsHook rootFilter jobId
+      let timeoutMsg =
+            Printer.render (fsHookPrinter fsHook)
+            (label <> ": Process completed, but still has likely-leaked " <>
+             "children connected to FS hooks")
+      Timeout.warning (Timeout.seconds 5) timeoutMsg $
+        onActiveConnections awaitConnection
+      return res
   where
-    killConnection (tid, _awaitConn) = killThread tid
+    killConnection (tid, awaitConn) = killThread tid >> awaitConn
     awaitConnection (_tid, awaitConn) = awaitConn
 
 data CannotFindOverrideSharedObject = CannotFindOverrideSharedObject deriving (Show, Typeable)
