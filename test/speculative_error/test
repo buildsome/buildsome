@@ -1,0 +1,31 @@
+#!/bin/bash
+set -e
+
+cd $(dirname $0)
+
+echo -n the_file >filename
+cat <<EOF >Buildsome.mk
+.PHONY: default
+default:
+	cat \`cat filename\`
+
+the_file:
+	echo hi >\$@
+EOF
+
+buildsome
+
+echo -n filename >filename
+
+cat <<EOF >Buildsome.mk
+.PHONY: default
+default:
+	cat \`cat filename\`
+
+the_file:
+	exit 1
+EOF
+
+buildsome
+
+rm -rf Buildsome.mk Buildsome.mk.db filename

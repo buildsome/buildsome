@@ -29,3 +29,6 @@ git clean -fdx -- wrongparorder
 
 buildsome -f overpar && buildsome -f overpar
 git clean -fdx -- overpar
+
+speculative_error/test
+git clean -fdx -- speculative_error
