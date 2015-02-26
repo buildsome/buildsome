@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Buildsome
   ( Buildsome(bsPhoniesSet), with, withDb
   , clean
@@ -34,6 +34,7 @@ import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Foldable (traverse_)
 import           Data.IORef
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
@@ -46,6 +47,7 @@ import           Data.Time (DiffTime)
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Traversable (traverse)
 import           Data.Typeable (Typeable)
+import           Data.Typeable (cast)
 import           Lib.AnnotatedException (annotateException)
 import qualified Lib.Cmp as Cmp
 import           Lib.ColorText (ColorText)
@@ -468,9 +470,7 @@ catchAndLogSpeculativeErrors printer TargetDesc{..} errRes =
           "Warning: Ignoring failed build of speculative target: " <>
           cTarget (show tdRep) <> " " <> show e
         return (errRes e)
-    ignoreAsyncException e = const (return (errRes (E.SomeException e))) (idAsyncException e)
-    idAsyncException :: E.AsyncException -> E.AsyncException
-    idAsyncException = id
+    ignoreAsyncException (e :: E.AsyncException) = return $ errRes $ E.SomeException e
     Color.Scheme{..} = Color.scheme
 
 data ExecutionLogFailure
@@ -599,21 +599,22 @@ findApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
       eRes <- tryApplyExecutionLog bte parCell TargetDesc{..} executionLog
       case eRes of
         Left err -> do
-          printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
-            notifyError err
+          traverse_ notifyError (describeError err)
           return Nothing
         Right res -> return (Just res)
   where
     Color.Scheme{..} = Color.scheme
-    notifyError (MismatchedFiles (str, filePath)) =
+    notifyError err =
+      printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
       [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
-      , " did not match because ", fromBytestring8 str, ": "
-      , cPath (show filePath)
+      , " did not match because ", err
       ]
-    notifyError (SpeculativeBuildFailure exception) =
-      [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
-      , " did not match because ", cWarning (show exception)
-      ]
+    describeError (MismatchedFiles (str, filePath)) =
+      Just (fromBytestring8 str <> ": " <> cPath (show filePath))
+    describeError (SpeculativeBuildFailure exception) =
+      case cast exception of
+      Nothing -> Just (cWarning (show exception))
+      Just (_ :: E.AsyncException) -> Nothing
 
 data TargetDependencyLoop = TargetDependencyLoop (ColorText -> ByteString) Parents
   deriving (Typeable)
