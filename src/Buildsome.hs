@@ -6,84 +6,84 @@ module Buildsome
   , want
   ) where
 
-import Buildsome.BuildId (BuildId)
-import Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
-import Buildsome.Db (Db, IRef(..), Reason)
-import Buildsome.FileContentDescCache (fileContentDescOfStat)
-import Buildsome.Opts (Opt(..))
-import Buildsome.Slave (Slave)
-import Buildsome.Stats (Stats(Stats))
-import Control.Applicative ((<$>))
-import Control.Concurrent (forkIO)
-import Control.Concurrent.Async (mapConcurrently)
-import Control.Exception.Async (handleSync)
-import Control.Monad
-import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
-import Data.ByteString (ByteString)
-import Data.IORef
-import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, catMaybes, maybeToList)
-import Data.Monoid
-import Data.Set (Set)
-import Data.String (IsString(..))
-import Data.Time (DiffTime)
-import Data.Time.Clock.POSIX (POSIXTime)
-import Data.Traversable (traverse)
-import Data.Typeable (Typeable)
-import Lib.AnnotatedException (annotateException)
-import Lib.ColorText (ColorText)
-import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
-import Lib.Exception (finally, logErrors, handle, catch)
-import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
-import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
-import Lib.FilePath (FilePath, (</>), (<.>))
-import Lib.Fresh (Fresh)
-import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
-import Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
-import Lib.Once (once)
-import Lib.Parallelism (Parallelism)
-import Lib.Printer (Printer, printStrLn, putLn)
-import Lib.Show (show)
-import Lib.ShowBytes (showBytes)
-import Lib.Sigint (withInstalledSigintHandler)
-import Lib.StdOutputs (StdOutputs(..))
-import Lib.SyncMap (SyncMap)
-import Lib.TimeIt (timeIt)
-import Prelude hiding (FilePath, show)
-import System.Exit (ExitCode(..))
-import System.Process (CmdSpec(..))
-import Text.Parsec (SourcePos)
+import           Buildsome.BuildId (BuildId)
 import qualified Buildsome.BuildId as BuildId
+import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
 import qualified Buildsome.Color as Color
+import           Buildsome.Db (Db, IRef(..), Reason)
 import qualified Buildsome.Db as Db
+import           Buildsome.FileContentDescCache (fileContentDescOfStat)
 import qualified Buildsome.MagicFiles as MagicFiles
 import qualified Buildsome.Meddling as Meddling
+import           Buildsome.Opts (Opt(..))
 import qualified Buildsome.Opts as Opts
 import qualified Buildsome.Print as Print
+import           Buildsome.Slave (Slave)
 import qualified Buildsome.Slave as Slave
+import           Buildsome.Stats (Stats(Stats))
 import qualified Buildsome.Stats as Stats
+import           Control.Applicative ((<$>))
+import           Control.Concurrent (forkIO)
+import           Control.Concurrent.Async (mapConcurrently)
 import qualified Control.Exception as E
+import           Control.Exception.Async (handleSync)
+import           Control.Monad
+import           Control.Monad.IO.Class (MonadIO(..))
+import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.IORef
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
+import           Data.Maybe (fromMaybe, catMaybes, maybeToList)
+import           Data.Monoid
+import           Data.Set (Set)
 import qualified Data.Set as S
+import           Data.String (IsString(..))
+import           Data.Time (DiffTime)
+import           Data.Time.Clock.POSIX (POSIXTime)
+import           Data.Traversable (traverse)
+import           Data.Typeable (Typeable)
+import           Lib.AnnotatedException (annotateException)
 import qualified Lib.Cmp as Cmp
+import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
+import           Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import qualified Lib.Directory as Dir
+import           Lib.Exception (finally, logErrors, handle, catch)
+import           Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
+import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
+import           Lib.FilePath (FilePath, (</>), (<.>))
 import qualified Lib.FilePath as FilePath
+import           Lib.Fresh (Fresh)
 import qualified Lib.Fresh as Fresh
+import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
+import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
+import           Lib.Once (once)
+import           Lib.Parallelism (Parallelism)
 import qualified Lib.Parallelism as Parallelism
+import           Lib.Printer (Printer, printStrLn, putLn)
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Set as LibSet
+import           Lib.Show (show)
+import           Lib.ShowBytes (showBytes)
+import           Lib.Sigint (withInstalledSigintHandler)
+import           Lib.StdOutputs (StdOutputs(..))
+import           Lib.SyncMap (SyncMap)
 import qualified Lib.SyncMap as SyncMap
+import           Lib.TimeIt (timeIt)
 import qualified Lib.Timeout as Timeout
 import qualified Prelude
+import           Prelude hiding (FilePath, show)
+import           System.Exit (ExitCode(..))
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
+import           System.Process (CmdSpec(..))
+import           Text.Parsec (SourcePos)
 
 type Parents = [(TargetRep, Reason)]
 
