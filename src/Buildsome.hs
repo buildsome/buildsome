@@ -34,7 +34,7 @@ import Data.Typeable (Typeable)
 import Lib.AnnotatedException (annotateException)
 import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
-import Lib.Exception (finally, logErrors, handle)
+import Lib.Exception (finally, logErrors, handle, catch)
 import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
@@ -1071,10 +1071,12 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     deleteRemovedOutputs printer db buildMaps
 
     runOnce <- once
+    errorRef <- newIORef Nothing
     let
-      killOnce msg =
+      killOnce msg exception =
         void $ runOnce $ do
           putStrLn msg
+          atomicModifyIORef_ errorRef $ maybe (Just exception) Just
           forkIO $ onAllSlaves CancelAndWait printer buildsome
       buildsome =
         Buildsome
@@ -1089,13 +1091,14 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         , bsSlaveByTargetRep = slaveMapByTargetRep
         , bsParallelism = parallelism
         , bsFreshPrinterIds = freshPrinterIds
-        , bsFastKillBuild = const $ case optKeepGoing of
-            Opts.KeepGoing -> return ()
+        , bsFastKillBuild = case optKeepGoing of
+            Opts.KeepGoing -> const (return ())
             Opts.DieQuickly -> killOnce "Build step failed, no -k specified"
         , bsRender = Printer.render printer
         }
     withInstalledSigintHandler
-      (killOnce "\nBuild interrupted by Ctrl-C, shutting down.") $
+      (killOnce "\nBuild interrupted by Ctrl-C, shutting down."
+       (E.SomeException E.UserInterrupt)) $
       body buildsome
         -- We must not leak running slaves as we're not allowed to
         -- access fsHook, db, etc after leaving here:
@@ -1103,6 +1106,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         -- Must update gitIgnore after all the slaves finished updating
         -- the registered output lists:
         `finally` maybeUpdateGitIgnore buildsome
+        `catch` \e -> E.throwIO . fromMaybe e =<< readIORef errorRef
   where
     maybeUpdateGitIgnore buildsome =
       case optUpdateGitIgnore of
