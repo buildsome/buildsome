@@ -34,7 +34,7 @@ import Data.Typeable (Typeable)
 import Lib.AnnotatedException (annotateException)
 import Lib.ColorText (ColorText)
 import Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
-import Lib.Exception (finally, logErrors, handle, catch)
+import Lib.Exception (finally, logErrors, handle, catch, onException)
 import Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import Lib.FilePath (FilePath, (</>), (<.>))
@@ -176,6 +176,7 @@ data BuildTargetEnv = BuildTargetEnv
   , bteParents :: Parents
   , bteExplicitlyDemanded :: Bool
   , btePriority :: Parallelism.Priority
+  , bteSpeculative :: Bool
   }
 
 data BuiltTargets = BuiltTargets
@@ -227,6 +228,7 @@ want printer buildsome reason paths = do
         , bteParents = []
         , bteExplicitlyDemanded = True
         , btePriority = priority
+        , bteSpeculative = False
         }
   alloc <- Parallelism.startAlloc priority (bsParallelism buildsome)
   (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
@@ -445,12 +447,53 @@ data TargetDesc = TargetDesc
   , tdTarget :: Target
   }
 
+maybeRedirectExceptions :: BuildTargetEnv -> TargetDesc -> IO a -> IO a
+maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..}
+  | bteSpeculative = id
+  | otherwise =
+    handleSync $ \e@E.SomeException {} -> do
+      Printer.printStrLn btePrinter $ cTarget (show tdRep) <> ": " <> cError "Failed"
+      bsFastKillBuild bteBuildsome e
+      E.throwIO e
+  where
+    Color.Scheme{..} = Color.scheme
+
+swallowAndLogErrorsIfSpeculative ::
+  Monoid a => BuildTargetEnv -> TargetDesc -> IO a -> IO a
+swallowAndLogErrorsIfSpeculative BuildTargetEnv{..} TargetDesc{..}
+  | bteSpeculative =
+    handle $ \e@E.SomeException {} ->
+    do
+      Print.posMessage btePrinter (targetPos tdTarget) $ cWarning $
+        "Warning: Ignoring failed build of speculative target: " <>
+        cTarget (show tdRep) <> " " <> show e
+      return mempty
+  | otherwise = id
+  where
+    Color.Scheme{..} = Color.scheme
+
+deleteTargetOutputsOnSpeculativeException ::
+  BuildTargetEnv -> TargetType FilePath input -> IO a -> IO a
+deleteTargetOutputsOnSpeculativeException BuildTargetEnv{..} target action
+  | bteSpeculative =
+        action `onException`
+        ( mapM_ removeFileOrDirectoryOrNothing outputs
+          `catch` \e@E.SomeException {} ->
+            Print.posMessage btePrinter (targetPos target) $ cError $
+            "Failed to delete failed speculative build outputs: " <>
+            cTarget (show outputs) <> " " <> show e
+        )
+  | otherwise = action
+  where
+    outputs = targetOutputs target
+    Color.Scheme{..} = Color.scheme
+
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Cell ->
   TargetDesc -> Db.ExecutionLog ->
   IO (Either (ByteString, FilePath) (Db.ExecutionLog, BuiltTargets))
 tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@Db.ExecutionLog {..} = do
-  builtTargets <- executionLogBuildInputs bte parCell tdTarget executionLog
+  builtTargets <- executionLogBuildInputs bte parCell TargetDesc{..} executionLog
   runEitherT $ do
     forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
       verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
@@ -490,20 +533,26 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} executionLog@
           -- fail entire computation
           left (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
-executionLogBuildInputs :: BuildTargetEnv -> Parallelism.Cell -> Target -> Db.ExecutionLog -> IO BuiltTargets
-executionLogBuildInputs bte@BuildTargetEnv{..} parCell target Db.ExecutionLog {..} = do
+executionLogBuildInputs ::
+  BuildTargetEnv -> Parallelism.Cell -> TargetDesc ->
+  Db.ExecutionLog -> IO BuiltTargets
+executionLogBuildInputs bte@BuildTargetEnv{..} parCell TargetDesc{..} Db.ExecutionLog {..} = do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
-  waitForSlavesWithParReleased btePriority parCell bteBuildsome speculativeSlaves
+  res <-
+    swallowAndLogErrorsIfSpeculative bteImplicit TargetDesc{..} $
+    waitForSlavesWithParReleased btePriority parCell bteBuildsome
+    speculativeSlaves
+  return res
   where
     Color.Scheme{..} = Color.scheme
-    hinted = S.fromList $ targetAllInputs target
+    hinted = S.fromList $ targetAllInputs tdTarget
     mkInputSlaves (inputPath, desc)
       | inputPath `S.member` hinted = return []
       | otherwise = mkInputSlavesFor desc inputPath
-    bteImplicit = bte { bteExplicitlyDemanded = False }
+    bteImplicit = bte { bteExplicitlyDemanded = False, bteSpeculative = True }
     mkInputSlavesFor desc inputPath =
       case fromFileDesc desc of
         Nothing -> return []
@@ -881,12 +930,6 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
           }
         )
 
-redirectExceptions :: Buildsome -> IO a -> IO a
-redirectExceptions buildsome =
-  handleSync $ \e@E.SomeException {} -> do
-    bsFastKillBuild buildsome e
-    E.throwIO e
-
 deleteOldTargetOutputs :: BuildTargetEnv -> TargetType FilePath input -> IO ()
 deleteOldTargetOutputs BuildTargetEnv{..} target = do
   registeredOutputs <- readIORef $ Db.registeredOutputsRef $ bsDb bteBuildsome
@@ -921,23 +964,26 @@ buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
 
     Print.executionCmd verbosityCommands btePrinter tdTarget
 
-    RunCmdResults{..} <- runCmd bte parCell tdTarget
+    (executionLog, builtTargets) <-
+      deleteTargetOutputsOnSpeculativeException bte tdTarget $ do
+        RunCmdResults{..} <- runCmd bte parCell tdTarget
 
-    outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.keysSet rcrOutputs) tdTarget
-    executionLog <-
-      makeExecutionLog bteBuildsome tdTarget rcrInputs (S.toList outputs)
-      rcrStdOutputs rcrSelfTime
+        outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.keysSet rcrOutputs) tdTarget
+        executionLog <-
+          makeExecutionLog bteBuildsome tdTarget rcrInputs (S.toList outputs)
+          rcrStdOutputs rcrSelfTime
+        Print.targetTiming btePrinter "now" rcrSelfTime
+        return (executionLog, rcrBuiltTargets)
     writeIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) executionLog
 
-    Print.targetTiming btePrinter "now" rcrSelfTime
-    return (executionLog, rcrBuiltTargets)
+    return (executionLog, builtTargets)
   where
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
 
 buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Stats
 buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
-  redirectExceptions bteBuildsome $ do
+  maybeRedirectExceptions bte TargetDesc{..} $ do
     (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte parCell tdTarget
     case explicitPathsBuilt of
       ExplicitPathsNotBuilt ->
