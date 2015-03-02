@@ -3,31 +3,34 @@ module Buildsome.Print
   ( targetWrap, targetTiming
   , warn, posMessage
   , replayCmd, executionCmd, targetStdOutputs
+  , buildsomeCreation
   , delimitMultiline
   , outputsStr
   , replay
   ) where
 
-import Buildsome.Db (Reason)
-import Buildsome.Opts (Verbosity(..), PrintOutputs(..), PrintCommands(..))
-import Control.Monad
-import Data.ByteString (ByteString)
-import Data.Monoid
-import Data.String (IsString(..))
-import Lib.ByteString (chopTrailingNewline)
-import Lib.ColorText (ColorText)
-import Lib.Exception (onExceptionWith)
-import Lib.Makefile (TargetType(..), Target)
-import Lib.Parsec (showPos)
-import Lib.Printer (Printer, printStrLn)
-import Lib.Show (show)
-import Lib.StdOutputs (StdOutputs(..))
-import Prelude hiding (show)
-import Text.Parsec (SourcePos)
 import qualified Buildsome.Color as Color
+import           Buildsome.Db (Reason)
+import           Buildsome.Opts (Verbosity(..), PrintOutputs(..), PrintCommands(..))
+import           Control.Monad
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Monoid
+import           Data.String (IsString(..))
+import           Lib.ByteString (chopTrailingNewline)
+import           Lib.ColorText (ColorText)
+import qualified Lib.ColorText as ColorText
+import           Lib.Exception (onExceptionWith)
+import           Lib.Makefile (TargetType(..), Target)
+import           Lib.Parsec (showPos)
+import           Lib.Printer (Printer, printStrLn)
 import qualified Lib.Printer as Printer
+import           Lib.Show (show)
+import           Lib.StdOutputs (StdOutputs(..))
 import qualified Lib.StdOutputs as StdOutputs
+import qualified Lib.Version as Version
+import           Prelude hiding (show)
+import           Text.Parsec (SourcePos)
 
 fromBytestring8 :: IsString str => ByteString -> str
 fromBytestring8 = fromString . BS8.unpack
@@ -128,4 +131,24 @@ replay printer target stdOutputs verbosity selfTime action = do
       (False, True)  -> ", STDOUT follows"
       (True, False)  -> ", STDERR follows"
       (True, True)   -> ""
+    Color.Scheme{..} = Color.scheme
+
+buildsomeCreation :: Show a => Printer -> [a] -> [a] -> Verbosity -> IO ()
+buildsomeCreation printer withs withouts verbosity
+  | verbosityGeneral verbosity =
+    printStrLn printer $ mconcat
+    [ header
+    , " --with ", show withs
+    , " --without ", show withouts
+    ]
+  | null (withs ++ withouts) = return ()
+  | otherwise =
+    printStrLn printer $ mconcat
+    [ header
+    , if null withs    then "" else " --with "    <> show withs
+    , if null withouts then "" else " --without " <> show withouts
+    ]
+  where
+    header =
+      "Buildsome " <> cTiming (ColorText.simple Version.version) <> " invoked"
     Color.Scheme{..} = Color.scheme
