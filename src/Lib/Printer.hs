@@ -121,7 +121,7 @@ printWrap ColorScheme{..} printer str entryMsg body = do
   res <-
     wrappedBody `onExceptionWith` \e ->
     printStrLn printer $ after $ cException $
-    "EXCEPTION: " <> fromString ((concat . take 1 . lines . show) e)
+    "EXCEPTION: " <> (fromString . concat . take 1 . lines . show) e
   printStrLn printer $ after $ cOk "OK"
   return res
   where

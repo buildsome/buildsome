@@ -458,13 +458,16 @@ maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..}
   where
     Color.Scheme{..} = Color.scheme
 
+showFirstLine :: (Show a, IsString b) => a -> b
+showFirstLine = fromString . concat . take 1 . lines . show
+
 syncCatchAndLogSpeculativeErrors :: Printer -> TargetDesc -> (E.SomeException -> a) -> IO a -> IO a
 syncCatchAndLogSpeculativeErrors printer TargetDesc{..} errRes =
   handleSync $ \e@E.SomeException {} ->
     do
       Print.posMessage printer (targetPos tdTarget) $ cWarning $
         "Warning: Ignoring failed build of speculative target: " <>
-        cTarget (show tdRep) <> " " <> show e
+        cTarget (show tdRep) <> " " <> showFirstLine e
       return (errRes e)
   where
     Color.Scheme{..} = Color.scheme
@@ -606,7 +609,7 @@ findApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
     describeError (MismatchedFiles (str, filePath)) =
       fromBytestring8 str <> ": " <> cPath (show filePath)
     describeError (SpeculativeBuildFailure exception) =
-      cWarning (show exception)
+      cWarning (showFirstLine exception)
 
 data TargetDependencyLoop = TargetDependencyLoop (ColorText -> ByteString) Parents
   deriving (Typeable)
