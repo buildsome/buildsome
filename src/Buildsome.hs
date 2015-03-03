@@ -85,7 +85,7 @@ import qualified System.Posix.ByteString as Posix
 import           System.Process (CmdSpec(..))
 import           Text.Parsec (SourcePos)
 
-type Parents = [(TargetRep, Reason)]
+type Parents = [(TargetRep, Target, Reason)]
 
 data Buildsome = Buildsome
   { -- static:
@@ -254,8 +254,10 @@ fromBytestring8 = fromString . BS8.unpack
 showParents :: Parents -> ColorText
 showParents = mconcat . map showParent
   where
-    showParent (targetRep, reason) =
-      mconcat ["\n-> ", cTarget (show targetRep), " (", reason, ")"]
+    showParent (targetRep, target, reason) = mconcat
+      [ "\n", Print.posText (targetPos target), " "
+      , cTarget (show targetRep), " (", reason, ")"
+      ]
     Color.Scheme{..} = Color.scheme
 
 isPhony :: Buildsome -> FilePath -> Bool
@@ -634,10 +636,13 @@ panic render msg = do
   IO.hPutStrLn IO.stderr $ "PANIC: " ++ msg
   E.throwIO $ PanicError render msg
 
+fst3 :: (a, b, c) -> a
+fst3 (x, _, _) = x
+
 -- Find existing slave for target, or spawn a new one
 getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO (Slave Stats)
 getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
-  | any ((== tdRep) . fst) bteParents =
+  | any ((== tdRep) . fst3) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
   | otherwise = do
       SyncMap.insert (bsSlaveByTargetRep bteBuildsome) tdRep $
@@ -652,7 +657,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
       annotate =
         annotateException $ BS8.unpack $ bsRender bteBuildsome $
         "build failure of " <> cTarget (show (targetOutputs tdTarget)) <> ":\n"
-      newParents = (tdRep, bteReason) : bteParents
+      newParents = (tdRep, tdTarget, bteReason) : bteParents
       panicHandler e@E.SomeException {} =
         panic (bsRender bteBuildsome) $ "FAILED during making of slave: " ++ show e
       panicOnError = handle panicHandler

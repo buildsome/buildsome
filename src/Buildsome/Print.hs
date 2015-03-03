@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
 module Buildsome.Print
   ( targetWrap, targetTiming
-  , warn, posMessage
+  , warn
+  , posText, posMessage
   , replayCmd, executionCmd, targetStdOutputs
   , buildsomeCreation
   , delimitMultiline
@@ -35,9 +36,11 @@ import           Text.Parsec (SourcePos)
 fromBytestring8 :: IsString str => ByteString -> str
 fromBytestring8 = fromString . BS8.unpack
 
+posText :: (Monoid s, IsString s) => SourcePos -> s
+posText pos = mconcat [fromString (showPos pos), ": "]
+
 posMessage :: Printer -> SourcePos -> ColorText -> IO ()
-posMessage printer pos msg =
-  Printer.rawPrintStrLn printer $ mconcat [fromString (showPos pos), ": ", msg]
+posMessage printer pos msg = Printer.rawPrintStrLn printer $ posText pos <> msg
 
 warn :: Printer -> SourcePos -> ColorText -> IO ()
 warn printer pos str =
