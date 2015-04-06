@@ -1,4 +1,4 @@
-{-# LANGUAGE Rank2Types, OverloadedStrings, DeriveDataTypeable, CPP #-}
+{-# LANGUAGE Rank2Types, OverloadedStrings, DeriveDataTypeable, CPP, FlexibleContexts #-}
 module Lib.Makefile.Parser
   ( makefile, parse, interpolateCmds, metaVariable
   , Vars, VarName, VarValue
@@ -109,7 +109,7 @@ whenCondTrue act = do
 
 RELEASE_INLINE(horizSpace)
 horizSpace :: Monad m => ParserG u m Char
-horizSpace = P.satisfy (`elem` " ")
+horizSpace = P.satisfy (`BS8.elem` " ")
 
 RELEASE_INLINE(horizSpaces)
 horizSpaces :: Monad m => ParserG u m ()
@@ -121,7 +121,7 @@ horizSpaces1 = P.skipMany1 horizSpace
 
 RELEASE_INLINE(comment)
 comment :: Monad m => ParserG u m ()
-comment = void $ P.char '#' *> P.many (P.satisfy (`notElem` "\n"))
+comment = void $ P.char '#' *> P.many (P.satisfy (`BS8.notElem` "\n"))
 
 RELEASE_INLINE(newWord)
 newWord :: Monad m => ParserG u m ()
@@ -168,7 +168,7 @@ unescapedSequence :: Monad m => ParserG u m ByteString
 unescapedSequence = BS8.singleton <$> unescapedChar
 
 isIdentChar :: Char -> Bool
-isIdentChar x = isAlphaNum x || x `elem` "_.~"
+isIdentChar x = isAlphaNum x || x `BS8.elem` "_.~"
 
 RELEASE_INLINE(ident)
 ident :: Monad m => ParserG u m ByteString
