@@ -15,7 +15,6 @@ import System.Locale (defaultTimeLocale)
 #endif
 
 import GHC.Generics (Generic)
-import System.Locale (defaultTimeLocale)
 
 newtype BuildId = BuildId String
   deriving (Show, Generic)
