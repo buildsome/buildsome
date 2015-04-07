@@ -70,7 +70,6 @@ instance Cmp BasicStatEssence where
   cmp =
     mconcat
     [ cShow "devID" deviceID
-    , cShow "fileID" fileID
     , cShow "sdevID" specialDeviceID
     , cShow "uid" fileOwner
     , cShow "gid" fileGroup
@@ -94,8 +93,6 @@ instance Cmp FullStatEssence where
     [ cmp `on` basicStatEssence
     , cShow "size" fileSize
     , cShow "type" fileType
-    , cNoShow "mtime" modificationTimeHiRes
-    , cNoShow "ctime" statusChangeTimeHiRes
     ]
     where
       cNoShow = cmpGetterBy (Cmp.eq ["change"])
