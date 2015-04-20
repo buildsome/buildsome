@@ -215,6 +215,7 @@ assertExplicitInputsExist BuildTargetEnv{..} paths = do
     Left err | bteExplicitlyDemanded -> E.throwIO err
              | otherwise -> return ExplicitPathsNotBuilt
 
+-- | Top-level root target
 want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO BuiltTargets
 want printer buildsome reason paths = do
   printStrLn printer $

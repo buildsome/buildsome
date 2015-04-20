@@ -12,6 +12,8 @@ import Prelude hiding (FilePath)
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Stats as Stats
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy.Char8 as LBS8
+import qualified Data.Csv as Csv
 import qualified Data.Map as M
 
 #ifdef WITH_CHARTS_SUPPORT
@@ -100,7 +102,25 @@ makeDotChart stats filePath = do
   putStrLn $ "Writing dot file to " ++ show filePath
   BS8.writeFile (BS8.unpack filePath) $ dotRenderGraph "Dependencies" $ statsGraph stats
 
+
+toCSV :: Stats -> ByteString
+toCSV stats = LBS8.toStrict . Csv.encode . map toRow . M.toList $ ofTarget stats
+  where
+    toRow (targetRep, targetStats) = 
+      ( show targetRep
+      , show $ Stats.tsWhen targetStats
+      , (truncate $ 1000 * Stats.tsTime targetStats) :: Integer
+      )
+
+makeCSVFile :: Stats -> FilePath -> IO ()
+makeCSVFile stats filePath = do
+  putStrLn $ "Writing csv file to " ++ show filePath
+  BS8.writeFile (BS8.unpack filePath) $ toCSV stats
+    
+    
 make :: Stats -> FilePath -> IO ()
 make stats filePathBase = do
   makePieChart stats (filePathBase <> ".svg")
   makeDotChart stats (filePathBase <> ".dot")
+  makeCSVFile stats (filePathBase <> ".csv")
+  

@@ -109,6 +109,7 @@ executable buildsome
                ,     asynchronous-exceptions
                ,     binary
                ,     bytestring
+               ,     cassava
                ,     containers
                ,     cryptohash
                ,     data-default
