@@ -108,6 +108,7 @@ executable buildsome
                ,     async
                ,     binary
                ,     bytestring
+               ,     cassava
                ,     containers
                ,     cryptohash
                ,     data-default
