@@ -415,7 +415,7 @@ DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
     OUT_PATH_COPY(needs_await, msg.args.linkpath, linkpath);
     return CALL_WITH_OUTPUTS(
         msg, needs_await,
-        int, (symlink, linkpath, target),
+        int, (symlink, target, linkpath),
         {
             msg.args.linkpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
         });
