@@ -1,14 +1,16 @@
 import Distribution.Simple
-import System.Process
-import System.Exit
+import Distribution.Simple.Setup
+import Distribution.Simple.Program
+import Distribution.Simple.Program.Db
+import Distribution.Verbosity
 
 sources = ["cbits/fs_override.c", "cbits/canonize_path.c", "cbits/client.c"]
 
 main = defaultMainWithHooks simpleUserHooks
-  { preBuild = \_ _ -> do
+  { preBuild = \_ flags -> do
+      let verbosity = fromFlag $ buildVerbosity flags
       putStrLn "Building cbits/fs_override.so"
-      exitCode <- system $ "gcc -o cbits/fs_override.so -g -Wall -Werror -Wextra -Winit-self -shared -fPIC -D_GNU_SOURCE " ++ unwords sources ++ " -ldl"
-      case exitCode of
-        ExitSuccess -> return (Nothing, [])
-        ExitFailure i -> fail $ "cbits/fs_override.so build failed with " ++ show i
+      (gcc, _) <- requireProgram verbosity gccProgram defaultProgramDb
+      runProgram verbosity gcc . words $ "-o cbits/fs_override.so -g -Wall -Werror -Wextra -Winit-self -shared -fPIC -D_GNU_SOURCE " ++ unwords sources ++ " -ldl"
+      return (Nothing, [])
   }
