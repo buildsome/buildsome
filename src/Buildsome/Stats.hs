@@ -15,6 +15,7 @@ data When = FromCache | BuiltNow deriving Show
 
 data TargetStats = TargetStats
   { tsWhen :: !When
+    -- | How long it took to run
   , tsTime :: !DiffTime
   , tsDirectDeps :: [Target]
   } deriving (Show)

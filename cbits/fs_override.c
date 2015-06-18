@@ -17,6 +17,38 @@
 /* NOTE: This must be kept in sync with Protocol.hs */
 #define MAX_PATH 256
 
+/* Some libc's (such as musl) define the following as macros pointing to the non-64 versions: */
+#ifdef open64
+#undef open64
+#endif
+#ifdef tmpfile64
+#undef tmpfile64
+#endif
+#ifdef fopen64
+#undef fopen64
+#endif
+#ifdef freopen64
+#undef freopen64
+#endif
+#ifdef fseeko64
+#undef fseeko64
+#endif
+#ifdef ftello64
+#undef ftello64
+#endif
+#ifdef fgetpos64
+#undef fgetpos64
+#endif
+#ifdef fsetpos64
+#undef fsetpos64
+#endif
+#ifdef fpos64
+#undef fpos64
+#endif
+#ifdef off64
+#undef off64
+#endif
+
 static struct {
     unsigned cwd_length;
     char cwd[MAX_PATH];
@@ -746,22 +778,22 @@ struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
             });                                                         \
     } while(0)
 
-DEFINE_WRAPPER(FILE *, fopen, (const char *path, const char *modestr))
+DEFINE_WRAPPER(FILE *, fopen, (const char *__restrict path, const char *__restrict modestr))
 {
     FOPEN_HANDLER(fopen, path, modestr);
 }
 
-DEFINE_WRAPPER(FILE *, fopen64, (const char *path, const char *modestr))
+DEFINE_WRAPPER(FILE *, fopen64, (const char *__restrict path, const char *__restrict modestr))
 {
     FOPEN_HANDLER(fopen64, path, modestr);
 }
 
-DEFINE_WRAPPER(FILE *, freopen, (const char *path, const char *modestr, FILE *stream))
+DEFINE_WRAPPER(FILE *, freopen, (const char *__restrict path, const char *__restrict modestr, FILE *__restrict stream))
 {
     FOPEN_HANDLER(freopen, path, modestr, stream);
 }
 
-DEFINE_WRAPPER(FILE *, freopen64, (const char *path, const char *modestr, FILE *stream))
+DEFINE_WRAPPER(FILE *, freopen64, (const char *__restrict path, const char *__restrict modestr, FILE *__restrict stream))
 {
     FOPEN_HANDLER(freopen64, path, modestr, stream);
 }

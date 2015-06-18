@@ -23,7 +23,11 @@ import qualified Data.Map.Strict as M
 import qualified Lib.Makefile as Makefile
 import qualified Lib.StringPattern as StringPattern
 
-newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimum output path as the target key/representative
+-- | Unique identifier of the target.
+newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimum output path as the
+                                                            -- target key/representative. It's ok to
+                                                            -- do this because each target outputs
+                                                            -- can't overlap
   deriving (Eq, Ord, Show)
 computeTargetRep :: Target -> TargetRep
 computeTargetRep = TargetRep . minimum . targetOutputs
