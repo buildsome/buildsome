@@ -28,7 +28,6 @@ import           Control.Applicative ((<$>))
 import           Control.Concurrent (forkIO)
 import           Control.Concurrent.Async (mapConcurrently)
 import qualified Control.Exception as E
-import           Control.Exception.Async (handleSync)
 import           Control.Monad
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
@@ -52,7 +51,7 @@ import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
 import           Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import qualified Lib.Directory as Dir
-import           Lib.Exception (finally, logErrors, handle, catch)
+import           Lib.Exception (finally, logErrors, handle, catch, handleSync)
 import           Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
 import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
