@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 module Lib.Cartesian (cartesian) where
 
 import Control.Applicative (Applicative(..), (<$>), (<|>))

@@ -38,6 +38,7 @@ import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Set as S
 import qualified Database.LevelDB.Base as LevelDB
+import qualified Database.LevelDB.Internal as LevelDBInternal
 import qualified Lib.Makefile as Makefile
 import qualified System.Posix.ByteString as Posix
 
@@ -111,7 +112,8 @@ with :: FilePath -> (Db -> IO a) -> IO a
 with rawDbPath body = do
   dbPath <- makeAbsolutePath rawDbPath
   createDirectories dbPath
-  bracket (openDb dbPath) LevelDB.close $ \levelDb ->
+  -- TODO: use the resourceT wrapper of levelDB instead of unsafeClose
+  bracket (openDb dbPath) LevelDBInternal.unsafeClose $ \levelDb ->
     withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
     withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
     body (Db levelDb registeredOutputs leakedOutputs)

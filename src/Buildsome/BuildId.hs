@@ -6,9 +6,8 @@ module Buildsome.BuildId
 import Control.Applicative ((<$>))
 import Data.Binary (Binary)
 import Data.Time.Clock (getCurrentTime)
-import Data.Time.Format (formatTime)
+import Data.Time.Format (formatTime, defaultTimeLocale)
 import GHC.Generics (Generic)
-import System.Locale (defaultTimeLocale)
 
 newtype BuildId = BuildId String
   deriving (Show, Generic)
