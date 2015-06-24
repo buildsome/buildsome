@@ -115,7 +115,7 @@ executable buildsome
                ,     deepseq-generics >=0.1 && <0.2
                ,     directory == 1.2.*
                ,     either >=4.1 && <4.4
-               ,     leveldb-haskell ==0.3.*
+               ,     leveldb-haskell >=0.6 && <0.7
                ,     network >=2.4 && <2.7
                ,     old-locale == 1.0.*
                ,     optparse-applicative >=0.7 && <0.12
