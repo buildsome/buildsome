@@ -95,7 +95,6 @@ instance Cmp FullStatEssence where
     , cShow "type" fileType
     ]
     where
-      cNoShow = cmpGetterBy (Cmp.eq ["change"])
       cShow = cmpGetterBy Cmp.eqShow
 
 data FileStatDesc
