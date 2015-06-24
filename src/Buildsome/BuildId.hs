@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric, CPP #-}
 module Buildsome.BuildId
   ( BuildId(..), new
   ) where
@@ -6,9 +6,15 @@ module Buildsome.BuildId
 import Control.Applicative ((<$>))
 import Data.Binary (Binary)
 import Data.Time.Clock (getCurrentTime)
+
+#if (MIN_VERSION_time(1,5,0))
+import Data.Time.Format (formatTime, defaultTimeLocale)
+#else
 import Data.Time.Format (formatTime)
-import GHC.Generics (Generic)
 import System.Locale (defaultTimeLocale)
+#endif
+
+import GHC.Generics (Generic)
 
 newtype BuildId = BuildId String
   deriving (Show, Generic)

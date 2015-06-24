@@ -18,7 +18,6 @@ module Lib.FSHook
 import Control.Applicative (Applicative(..), (<$>))
 import Control.Concurrent (ThreadId, myThreadId, killThread)
 import Control.Concurrent.MVar
-import Control.Exception.Async (handleSync)
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IORef
@@ -31,7 +30,7 @@ import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
 import Lib.ColorText (ColorText)
-import Lib.Exception (finally, bracket_, onException)
+import Lib.Exception (finally, bracket_, onException, handleSync)
 import Lib.FSHook.AccessType (AccessType(..))
 import Lib.FSHook.OutputBehavior (OutputEffect(..), OutputBehavior(..))
 import Lib.FSHook.Protocol (IsDelayed(..))
