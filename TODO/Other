@@ -1,3 +1,7 @@
+* ???: Open of directories disallowed unless no patterns, BUT when no
+  patterns it is not recorded(?) and this causes a crash when later
+  adding patterns(?)
+
 * buildsome measures negative times in multithreaded stuff (paused
   threads should account more correctly)
 

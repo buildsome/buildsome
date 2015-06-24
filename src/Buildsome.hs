@@ -424,7 +424,7 @@ replayExecutionLog ::
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
 replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
-  Print.replay btePrinter target stdOutputs
+  Print.replay btePrinter target stdOutputs bteReason
   (optVerbosity (bsOpts bteBuildsome)) selfTime $
   -- We only register legal outputs that were CREATED properly in the
   -- execution log, so all outputs keep no old content

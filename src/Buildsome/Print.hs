@@ -106,22 +106,22 @@ delimitMultiline xs
     x = chopTrailingNewline xs
     multilineDelimiter = "\"\"\""
 
-replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Verbosity -> a -> IO () -> IO ()
-replay printer target stdOutputs verbosity selfTime action = do
+replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Reason -> Verbosity -> a -> IO () -> IO ()
+replay printer target stdOutputs reason verbosity selfTime action = do
   action `onExceptionWith` \e -> do
-    printStrLn printer $ "REPLAY for target " <> cTarget (show (targetOutputs target))
+    printStrLn printer header
     cmd printer target
     targetStdOutputs printer target stdOutputs
     printStrLn printer $ cError $ "EXCEPTION: " <> show e
   when shouldPrint $ do
     printStrLn printer $ mconcat
-      [ "REPLAY for target ", cTarget (show (targetOutputs target))
-      , " (originally) took ", cTiming (show selfTime <> " seconds")
+      [ header, " (originally) took ", cTiming (show selfTime <> " seconds")
       , outputsHeader
       ]
     replayCmd (verbosityCommands verbosity) printer target
     targetStdOutputs printer target stdOutputs
   where
+    header = "REPLAY for target " <> cTarget (show (targetOutputs target)) <> " (" <> reason <> ")"
     shouldPrint =
       case verbosityOutputs verbosity of
       PrintOutputsAnyway -> True
