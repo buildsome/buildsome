@@ -66,7 +66,7 @@ onOneTarget phoniesSet cwd stats target =
     depTgts <- lift $ mapM makefileTarget directDeps
     let
       targetDecl = mconcat
-        [ makefileTargetPath tgt, ":"
+        [ "T := ", makefileTargetPath tgt, "\n$(T):"
         , spaceUnwords $ map makefileTargetPath depTgts
         ]
       myLines =
