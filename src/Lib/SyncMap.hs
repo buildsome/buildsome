@@ -32,10 +32,14 @@ toMap (SyncMap ioRefMap) = readIORef ioRefMap >>= traverse readMVar
 --
 -- Uses masking internally to ensure one of two outcomes:
 --
--- 1. The map is updated: if the key is missing from the map, the given action is run in an uninterruptibleMask, and the resulting value is inserted
+-- 1. The map is updated: if the key is missing from the map, the given action is run, and the resulting value is inserted
 -- 2. The map is not updated: if the key exists, returns the old value.
 --
 -- If an exception occurred during the synchronous update, it will be returned in the `Result`.
+--
+-- If blocking operations are used in the action, it is the user's
+-- responsibility to use uninterruptibleMask or accept an async
+-- exception as a result!
 --
 tryInsert :: Ord k => SyncMap k a -> k -> IO a -> IO (Inserted, Result a)
 tryInsert (SyncMap refMap) key action =
@@ -50,7 +54,7 @@ tryInsert (SyncMap refMap) key action =
                     Just oldMVar -> (oldMap, (Old,) <$> readMVar oldMVar)
                     Nothing ->
                         ( M.insert key mvar oldMap
-                        , E.uninterruptibleMask_ $ E.try action >>= fillMVar
+                        , E.try action >>= fillMVar
                         )
 
 -- | Version of tryInsert that throws exceptions instead of returning them in a `Result`, and also discards the `Inserted` value

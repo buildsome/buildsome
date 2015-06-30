@@ -1,6 +1,6 @@
-{-# LANGUAGE OverloadedStrings, FlexibleInstances, RecordWildCards #-}
+{-# LANGUAGE OverloadedStrings, FlexibleInstances, RecordWildCards, GeneralizedNewtypeDeriving #-}
 module Lib.Printer
-  ( Id, idStr, strLn
+  ( Id(..), strLn
   , Printable
   , Printer, new, newFrom, render
   , printStrLn, rawPrintStrLn
@@ -10,23 +10,25 @@ module Lib.Printer
   , putLn
   ) where
 
-import Control.Applicative ((<$>))
-import Control.Monad (unless)
-import Data.ByteString (ByteString)
-import Data.IORef
-import Data.Monoid
-import Data.String (IsString(..))
-import Lib.ColorText (ColorText)
-import Lib.Exception (onExceptionWith, bracket_)
-import Prelude hiding (lines, putStrLn)
-import Text.Printf (printf)
-import qualified Control.Exception as E
-import qualified Data.ByteString.Char8 as BS8
-import qualified Data.List as List
-import qualified GHC.IO.Exception as G
-import qualified Lib.ColorText as ColorText
 import qualified Prelude
+import           Prelude hiding (lines, putStrLn)
+
+import           Control.Applicative ((<$>))
+import qualified Control.Exception as E
+import           Control.Monad (unless)
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BS8
+import           Data.IORef
+import qualified Data.List as List
+import           Data.Monoid
+import           Data.String (IsString(..))
+import qualified GHC.IO.Exception as G
+import           Lib.ColorText (ColorText)
+import qualified Lib.ColorText as ColorText
+import           Lib.Exception (onExceptionWith, bracket_)
+import qualified Lib.Show as Show
 import qualified System.IO as IO
+import           Text.Printf (printf)
 
 ignoreResourceVanished :: IO () -> IO ()
 ignoreResourceVanished act = do
@@ -42,7 +44,12 @@ wrapOutputCall = E.uninterruptibleMask_ . ignoreResourceVanished
 putLn :: String -> IO ()
 putLn = wrapOutputCall . IO.hPutStrLn IO.stderr
 
-type Id = Int
+newtype Id = Id Int
+    deriving Enum
+
+instance Show Id where
+    {-# INLINE show #-}
+    show (Id i) = printf "T%03d" i
 
 class (IsString p, Monoid p) => Printable p where
   intercalate :: p -> [p] -> p
@@ -91,18 +98,14 @@ newFrom :: Printer -> Id -> IO Printer
 newFrom (Printer _id toBS indentRef) pid =
   Printer pid toBS <$> (newIORef =<< readIORef indentRef)
 
-{-# INLINE idStr #-}
-idStr :: IsString str => Id -> str
-idStr = fromString . printf "T%03d"
-
 strLn :: (Monoid str, IsString str) => Printer -> str -> str
-strLn printer str = idStr (printerId printer) <> ": " <> str
+strLn printer str = Show.show (printerId printer) <> ": " <> str
 
 {-# INLINE printStrLn #-}
 printStrLn :: Printable str => Printer -> str -> IO ()
 printStrLn (Printer pid toBS indentRef) str = do
   indentLevel <- readIORef indentRef
-  let prefix = idStr pid <> " " <> mconcat (replicate indentLevel "  ")
+  let prefix = Show.show pid <> " " <> mconcat (replicate indentLevel "  ")
   wrapOutputCall $ putStrLn toBS $ intercalate "\n" $ map (prefix <>) $ lines str
 
 {-# INLINE rawPrintStrLn #-}

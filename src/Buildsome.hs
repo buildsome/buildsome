@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Buildsome
-  ( Buildsome(bsPhoniesSet), with, withDb
+  ( Buildsome(bsParPool, bsPhoniesSet), with, withDb
   , clean
   , BuiltTargets(..)
   , want
@@ -62,7 +62,6 @@ import qualified Lib.Fresh as Fresh
 import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
 import           Lib.Once (once)
-import           Lib.Parallelism (Parallelism)
 import qualified Lib.Parallelism as Parallelism
 import           Lib.Printer (Printer, printStrLn, putLn)
 import qualified Lib.Printer as Printer
@@ -97,11 +96,11 @@ data Buildsome = Buildsome
     -- dynamic:
   , bsDb :: Db
   , bsFsHook :: FSHook
-  , bsSlaveByTargetRep :: SyncMap TargetRep (Slave Stats)
-  , bsParallelism :: Parallelism
+  , bsSlaveByTargetRep :: SyncMap TargetRep (Parallelism.Fork, Slave Stats)
   , bsFreshPrinterIds :: Fresh Printer.Id
   , bsFastKillBuild :: E.SomeException -> IO ()
   , bsRender :: ColorText -> ByteString
+  , bsParPool :: Parallelism.Pool
   }
 
 data WaitOrCancel = Wait | CancelAndWait
@@ -126,7 +125,7 @@ onAllSlaves shouldCancel printer bs =
           Left _ ->
             Printer.printStrLn printer
             ("Slave had an exception on creation, nothing to cancel!" :: String)
-          Right slave ->
+          Right (_, slave) ->
             do
               when (shouldCancel == CancelAndWait) $
                 timeoutWarning "cancel" (Timeout.millis 1000) slave $
@@ -177,8 +176,8 @@ data BuildTargetEnv = BuildTargetEnv
   , bteReason :: Reason
   , bteParents :: Parents
   , bteExplicitlyDemanded :: Bool
-  , btePriority :: Parallelism.Priority
   , bteSpeculative :: Bool
+  , btePriority :: Parallelism.Priority
   }
 
 data BuiltTargets = BuiltTargets
@@ -232,10 +231,9 @@ want printer buildsome reason paths = do
         , btePriority = priority
         , bteSpeculative = False
         }
-  alloc <- Parallelism.startAlloc priority (bsParallelism buildsome)
+  token <- Parallelism.rootTokenCell $ bsParPool buildsome
   (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
-    alloc $ \parCell ->
-    timeIt $ buildExplicitWithParReleased bte parCell $ map SlaveRequestDirect paths
+    timeIt $ buildExplicitWithParReleased bte token $ map SlaveRequestDirect paths
   let stdErrs = Stats.stdErr $ builtStats builtTargets
       lastLinePrefix
         | not (S.null stdErrs) =
@@ -268,7 +266,7 @@ isPhony bs path = path `S.member` bsPhoniesSet bs
 targetIsPhony :: Buildsome -> Target -> Bool
 targetIsPhony bs = all (isPhony bs) . targetOutputs
 
-slaveForDirectPath :: BuildTargetEnv -> FilePath -> IO (Maybe (Slave Stats))
+slaveForDirectPath :: BuildTargetEnv -> FilePath -> IO (Maybe (Parallelism.Fork, Slave Stats))
 slaveForDirectPath bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path =
     -- Only project-relative paths may have output rules:
@@ -283,7 +281,7 @@ slaveForDirectPath bte@BuildTargetEnv{..} path
           bteExplicitlyDemanded || targetKind == BuildMaps.TargetSimple }
     (TargetDesc targetRep target)
 
-slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [Slave Stats]
+slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [(Parallelism.Fork, Slave Stats)]
 slavesForChildrenOf bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | not (null childPatterns) =
@@ -304,8 +302,9 @@ inputFilePath :: SlaveRequest -> FilePath
 inputFilePath (SlaveRequestDirect path) = path
 inputFilePath (SlaveRequestFull path) = path
 
-slavesFor :: BuildTargetEnv -> SlaveRequest -> IO [Slave Stats]
-slavesFor bte (SlaveRequestDirect path) = maybeToList <$> slaveForDirectPath bte path
+slavesFor :: BuildTargetEnv -> SlaveRequest -> IO [(Parallelism.Fork, Slave Stats)]
+slavesFor bte (SlaveRequestDirect path) =
+    maybeToList <$> slaveForDirectPath bte path
 slavesFor bte@BuildTargetEnv{..} (SlaveRequestFull path) = do
   mSlave <- slaveForDirectPath bte path
   children <- slavesForChildrenOf bte { bteReason = bteReason <> " (Container directory)" } path
@@ -324,25 +323,29 @@ slaveReqForAccessType FSHook.AccessTypeStat =
 -- we only ever release parallelism locally *after* we've created the
 -- slaves, i.e: when waiting for them, in this function.
 -- Do NOT release parallelism in any other context!
+-- TODO: All 3 applications of this function concat in the same
+-- pattern, reduce code duplication
 waitForSlavesWithParReleased ::
-  BuildTargetEnv -> Parallelism.Cell -> [Slave Stats] -> IO BuiltTargets
+  BuildTargetEnv -> Parallelism.TokenCell -> [(Parallelism.Fork, Slave Stats)] -> IO BuiltTargets
 waitForSlavesWithParReleased _ _ [] = return mempty
-waitForSlavesWithParReleased BuildTargetEnv{..} parCell slaves =
-  Parallelism.withReleased btePriority parCell (bsParallelism bteBuildsome) $
+waitForSlavesWithParReleased BuildTargetEnv{..} token forkedSlaves =
+  Parallelism.withReleased (bsParPool bteBuildsome) token btePriority forks $
   do
     whenVerbose bteBuildsome $
         Printer.printStrLn btePrinter $
         "Waiting for " <> ColorText.intercalate ", " (map Slave.str slaves)
     stats <- mconcat <$> mapM Slave.wait slaves
     return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
+  where
+    forks = map fst forkedSlaves
+    slaves = map snd forkedSlaves
 
 buildExplicitWithParReleased ::
-  BuildTargetEnv -> Parallelism.Cell -> [SlaveRequest] ->
+  BuildTargetEnv -> Parallelism.TokenCell -> [SlaveRequest] ->
   IO (ExplicitPathsBuilt, BuiltTargets)
-buildExplicitWithParReleased bte@BuildTargetEnv{..} parCell inputs = do
+buildExplicitWithParReleased bte@BuildTargetEnv{..} token inputs = do
   built <-
-    waitForSlavesWithParReleased bte parCell . concat =<<
-    mapM (slavesFor bte) inputs
+    waitForSlavesWithParReleased bte token . concat =<< mapM (slavesFor bte) inputs
   explicitPathsBuilt <- assertExplicitInputsExist bte $ map inputFilePath inputs
   return (explicitPathsBuilt, built)
 
@@ -483,16 +486,15 @@ data ExecutionLogFailure
   | SpeculativeBuildFailure E.SomeException
 
 tryApplyExecutionLog ::
-  BuildTargetEnv -> Parallelism.Cell ->
-  TargetDesc -> Db.ExecutionLog ->
+  BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc -> Db.ExecutionLog ->
   IO (Either ExecutionLogFailure (Db.ExecutionLog, BuiltTargets))
-tryApplyExecutionLog bte@BuildTargetEnv{..} parCell targetDesc executionLog = do
+tryApplyExecutionLog bte@BuildTargetEnv{..} token targetDesc executionLog = do
   runEitherT $ do
     builtTargets <-
       EitherT $
       syncCatchAndLogSpeculativeErrors btePrinter targetDesc
       (Left . SpeculativeBuildFailure)
-      (Right <$> executionLogBuildInputs bte parCell targetDesc executionLog)
+      (Right <$> executionLogBuildInputs bte token targetDesc executionLog)
     bimapEitherT MismatchedFiles id $
       executionLogVerifyFilesState bte targetDesc executionLog
     return (executionLog, builtTargets)
@@ -540,21 +542,15 @@ executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionL
           left $ (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
 executionLogBuildInputs ::
-  BuildTargetEnv -> Parallelism.Cell -> TargetDesc ->
+  BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc ->
   Db.ExecutionLog -> IO BuiltTargets
-executionLogBuildInputs bte@BuildTargetEnv{..} parCell TargetDesc{..} Db.ExecutionLog {..} = do
+executionLogBuildInputs bte@BuildTargetEnv{..} token TargetDesc{..} Db.ExecutionLog {..} = do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
-  waitForSlavesWithParReleased bte parCell speculativeSlaves
+  waitForSlavesWithParReleased bte token speculativeSlaves
   where
-    Color.Scheme{..} = Color.scheme
-    hinted = S.fromList $ targetAllInputs tdTarget
-    mkInputSlaves (inputPath, desc)
-      | inputPath `S.member` hinted = return []
-      | otherwise = mkInputSlavesFor desc inputPath
-    bteImplicit = bte { bteExplicitlyDemanded = False, bteSpeculative = True }
     mkInputSlavesFor desc inputPath =
       case fromFileDesc desc of
         Nothing -> return []
@@ -563,6 +559,12 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell TargetDesc{..} Db.Executi
           { bteReason =
             "Remembered from previous build (speculative): " <> depReason
           } $ slaveReqForAccessType accessType inputPath
+    mkInputSlaves (inputPath, desc)
+      | inputPath `S.member` hinted = return []
+      | otherwise = mkInputSlavesFor desc inputPath
+    Color.Scheme{..} = Color.scheme
+    hinted = S.fromList $ targetAllInputs tdTarget
+    bteImplicit = bte { bteExplicitlyDemanded = False, bteSpeculative = True }
     fromFileDesc (Db.FileDescNonExisting depReason) =
       -- The access may be larger than mode-only, but we only need to
       -- know if it exists or not because we only need to know whether
@@ -582,24 +584,25 @@ parentDirs :: [FilePath] -> [FilePath]
 parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
 
 buildManyWithParReleased ::
-  (ColorText -> Reason) -> BuildTargetEnv -> Parallelism.Cell -> [SlaveRequest] -> IO BuiltTargets
-buildManyWithParReleased mkReason bte@BuildTargetEnv{..} parCell =
-  waitForSlavesWithParReleased bte parCell <=< fmap concat . mapM mkSlave
+  (ColorText -> Reason) -> BuildTargetEnv -> Parallelism.TokenCell -> [SlaveRequest] -> IO BuiltTargets
+buildManyWithParReleased mkReason bte@BuildTargetEnv{..} token slaveRequests =
+  do
+    waitForSlavesWithParReleased bte token =<< fmap concat (mapM mkSlave slaveRequests)
   where
-    Color.Scheme{..} = Color.scheme
     mkSlave req =
       slavesFor bte { bteReason = mkReason (cTarget (show (inputFilePath req))) } req
+    Color.Scheme{..} = Color.scheme
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
-findApplyExecutionLog bte@BuildTargetEnv{..} parCell TargetDesc{..} = do
+findApplyExecutionLog :: BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
+findApplyExecutionLog bte@BuildTargetEnv{..} token TargetDesc{..} = do
   mExecutionLog <- readIRef $ Db.executionLog tdTarget $ bsDb bteBuildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return Nothing
     Just executionLog -> do
-      eRes <- tryApplyExecutionLog bte parCell TargetDesc{..} executionLog
+      eRes <- tryApplyExecutionLog bte token TargetDesc{..} executionLog
       case eRes of
         Left err -> do
           printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
@@ -642,28 +645,34 @@ fst3 :: (a, b, c) -> a
 fst3 (x, _, _) = x
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO (Slave Stats)
+getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO (Parallelism.Fork, Slave Stats)
 getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
   | any ((== tdRep) . fst3) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
   | otherwise =
+    -- SyncMap.insert action should be fully masked (non-blocking or
+    -- uninterruptibleMask). The code here is non-blocking, so we
+    -- don't need uninterruptibleMask. We cannot use
+    -- uninterruptibleMask because the spawned slave's "unmask"
+    -- action fully unmasks, whereas we need to become
+    -- interruptible-masked (impossible from uninterruptibleMask in
+    -- a thread).
     SyncMap.insert (bsSlaveByTargetRep bteBuildsome) tdRep $
     panicOnError $ withTimeout $ do
-      -- Everything under handle is synchronous, so should not
-      -- be interruptible. There shouldn't be a danger of a sync
-      -- or async exception here, so the putMVar is supposed to be
-      -- guaranteed.
-      depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
-      depPrinter <- Printer.newFrom btePrinter depPrinterId
-      -- NOTE: allocParCell MUST be called to avoid leak!
-      allocParCell <- Parallelism.startAlloc btePriority $ bsParallelism bteBuildsome
-      Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
-        \unmask -> annotateException failureMsg $ do
-          -- Must remain masked through allocParCell so it gets a
+    -- SyncMap runs this uninterruptible, so should not block
+    -- indefinitely.
+    depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
+    depPrinter <- Printer.newFrom btePrinter depPrinterId
+    -- NOTE: finishFork MUST be called to avoid leak!
+    fork <- Parallelism.fork (bsParPool bteBuildsome) btePriority
+    slave <- Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
+      \unmask -> annotateException failureMsg $
+          -- Must remain masked through finishFork so it gets a
           -- chance to handle alloc/exception!
-          allocParCell $ \parCell -> unmask $ do
+          Parallelism.wrapForkedChild fork $ \token -> unmask $ do
             let newBte = bte { bteParents = newParents, btePrinter = depPrinter }
-            buildTarget newBte parCell TargetDesc{..}
+            buildTarget newBte token TargetDesc{..}
+    return (fork, slave)
     where
       Color.Scheme{..} = Color.scheme
       failureMsg =
@@ -765,17 +774,17 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
   registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
 makeImplicitInputs ::
-  IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Cell -> Reason ->
+  IORef BuiltTargets -> BuildTargetEnv -> Parallelism.TokenCell -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
-makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} parCell accessDoc inputs outputs =
+makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} token accessDoc inputs outputs =
   do
     targetParentsBuilt <-
       buildManyWithParReleased (("Container directory of: " <>) . (<> (" " <> accessDoc)))
-      bteImplicit parCell $ map SlaveRequestDirect $ parentDirs allPaths
+      bteImplicit token $ map SlaveRequestDirect $ parentDirs allPaths
 
     inputsBuilt <-
       buildManyWithParReleased (<> (": " <> accessDoc))
-      bteImplicit parCell $ map slaveReqForHookInput inputs
+      bteImplicit token $ map slaveReqForHookInput inputs
 
     atomicModifyIORef_ builtTargetsRef (<> (targetParentsBuilt <> inputsBuilt))
   where
@@ -789,11 +798,10 @@ fsAccessHandlers ::
   IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
   IORef BuiltTargets ->
   BuildTargetEnv ->
-  Parallelism.Cell ->
+  Parallelism.TokenCell ->
   TargetType FilePath input ->
   FSHook.FSAccessHandlers
-fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
-  parCell target =
+fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} token target =
     FSHook.FSAccessHandlers
     { delayedFSAccessHandler = fsDelayedAccessHandler
     , undelayedFSAccessHandler = fsUndelayedAccessHandler
@@ -806,7 +814,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
     fsDelayedAccessHandler accessDoc rawInputs rawOutputs =
       commonAccessHandler accessDoc rawInputs rawOutputs
       FSHook.outputPath delayedOutputEffect $
-      makeImplicitInputs builtTargetsRef bte parCell accessDoc
+      makeImplicitInputs builtTargetsRef bte token accessDoc
 
     targetOutputsSet = S.fromList $ targetOutputs target
 
@@ -835,12 +843,12 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..}
         mapM_ (recordInput inputsRef accessDoc) $
           filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
 
-runCmd :: BuildTargetEnv -> Parallelism.Cell -> Target -> IO RunCmdResults
-runCmd bte@BuildTargetEnv{..} parCell target = do
+runCmd :: BuildTargetEnv -> Parallelism.TokenCell -> Target -> IO RunCmdResults
+runCmd bte@BuildTargetEnv{..} token target = do
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef M.empty
   builtTargetsRef <- newIORef mempty
-  let accessHandlers = fsAccessHandlers outputsRef inputsRef builtTargetsRef bte' parCell target
+  let accessHandlers = fsAccessHandlers outputsRef inputsRef builtTargetsRef bte' token target
   (time, stdOutputs) <-
     FSHook.timedRunCommand hook rootPath shellCmd renderedTargetOutputs accessHandlers
   inputs <- readIORef inputsRef
@@ -940,13 +948,13 @@ deleteOldTargetOutputs BuildTargetEnv{..} target = do
     targetOutputs target
 
 buildTargetHints ::
-  BuildTargetEnv -> Parallelism.Cell -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
-buildTargetHints bte@BuildTargetEnv{..} parCell target =
+  BuildTargetEnv -> Parallelism.TokenCell -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
+buildTargetHints bte@BuildTargetEnv{..} token target =
   do
     let parentPaths = parentDirs $ targetOutputs target
     targetParentsBuilt <-
-      buildManyWithParReleased ("Container directory of output: " <>) bte parCell $
-      map SlaveRequestDirect parentPaths
+      buildManyWithParReleased ("Container directory of output: " <>) bte
+      token $ map SlaveRequestDirect parentPaths
     explicitParentsBuilt <- assertExplicitInputsExist bte parentPaths
     case explicitParentsBuilt of
       ExplicitPathsNotBuilt -> return (ExplicitPathsNotBuilt, targetParentsBuilt)
@@ -954,20 +962,20 @@ buildTargetHints bte@BuildTargetEnv{..} parCell target =
         (explicitPathsBuilt, inputsBuilt) <-
           buildExplicitWithParReleased
             bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) }
-            parCell $ map SlaveRequestDirect $ targetAllInputs target
+            token $ map SlaveRequestDirect $ targetAllInputs target
         return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
   where
     Color.Scheme{..} = Color.scheme
 
 buildTargetReal ::
-  BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO (Db.ExecutionLog, BuiltTargets)
-buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
+  BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc -> IO (Db.ExecutionLog, BuiltTargets)
+buildTargetReal bte@BuildTargetEnv{..} token TargetDesc{..} =
   Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
     deleteOldTargetOutputs bte tdTarget
 
     Print.executionCmd verbosityCommands btePrinter tdTarget
 
-    RunCmdResults{..} <- runCmd bte parCell tdTarget
+    RunCmdResults{..} <- runCmd bte token tdTarget
 
     outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.keysSet rcrOutputs) tdTarget
     executionLog <-
@@ -981,20 +989,20 @@ buildTargetReal bte@BuildTargetEnv{..} parCell TargetDesc{..} =
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
 
-buildTarget :: BuildTargetEnv -> Parallelism.Cell -> TargetDesc -> IO Stats
-buildTarget bte@BuildTargetEnv{..} parCell TargetDesc{..} =
+buildTarget :: BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc -> IO Stats
+buildTarget bte@BuildTargetEnv{..} token TargetDesc{..} =
   maybeRedirectExceptions bte TargetDesc{..} $ do
-    (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte parCell tdTarget
+    (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte token tdTarget
     case explicitPathsBuilt of
       ExplicitPathsNotBuilt ->
         -- Failed to build our hints when allowed, just leave with collected stats
         return $ builtStats hintedBuiltTargets
       ExplicitPathsBuilt -> do
-        mSlaveStats <- findApplyExecutionLog bte parCell TargetDesc{..}
+        mSlaveStats <- findApplyExecutionLog bte token TargetDesc{..}
         (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
           case mSlaveStats of
           Just res -> return (Stats.FromCache, res)
-          Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte parCell TargetDesc{..}
+          Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte token TargetDesc{..}
         let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
         return $ stats <>
           Stats
@@ -1109,12 +1117,11 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     -- external processes are invoked in parallel. The Parallelism lib
     -- (in Lib/Parallelism) is used by slaves to allocate parallelism
     -- tokens, up to optParallelism tokens at once.
-    parallelism <- Parallelism.new $ fromMaybe 1 optParallelism
-    freshPrinterIds <- Fresh.new 1
+    pool <- Parallelism.newPool $ fromMaybe 1 optParallelism
+    freshPrinterIds <- Fresh.new $ Printer.Id 1
     buildId <- BuildId.new
     rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
-    let
-      buildMaps = BuildMaps.make makefile
+    let buildMaps = BuildMaps.make makefile
     deleteRemovedOutputs printer db buildMaps
 
     runOnce <- once
@@ -1136,12 +1143,12 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         , bsDb = db
         , bsFsHook = fsHook
         , bsSlaveByTargetRep = slaveMapByTargetRep
-        , bsParallelism = parallelism
         , bsFreshPrinterIds = freshPrinterIds
         , bsFastKillBuild = case optKeepGoing of
             Opts.KeepGoing -> const (return ())
             Opts.DieQuickly -> killOnce "Build step failed, no -k specified"
         , bsRender = Printer.render printer
+        , bsParPool = pool
         }
     withInstalledSigintHandler
       (killOnce "\nBuild interrupted by Ctrl-C, shutting down."
