@@ -1,2 +1,5 @@
 :set -Wall
 :set -isrc -idist/build/autogen
+:set -DMIN_VERSION_optparse_applicative(a,b,c)=1
+:set -DMIN_VERSION_base(a,b,c)=1
+:set -DMIN_VERSION_time(a,b,c)=0
