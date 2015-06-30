@@ -12,7 +12,7 @@ module Lib.Exception
 
 import qualified Control.Exception as E
 #if MIN_VERSION_base(4,7,0)
-import           Control.Exception (AsyncException, SomeAsyncException)
+import           Control.Exception (SomeAsyncException)
 #else
 import           Data.Typeable
 #endif
@@ -74,16 +74,6 @@ instance E.Exception SomeAsyncException
 
 instance Show SomeAsyncException where
   showsPrec p (SomeAsyncException e) = showsPrec p e
-
--- | 'toException' implementation for asynchronous exceptions
-asyncExceptionToException :: E.Exception e => e -> E.SomeException
-asyncExceptionToException = E.toException . SomeAsyncException
-
--- | 'fromException' implementation for asynchronous exceptions
-asyncExceptionFromException :: E.Exception e => E.SomeException -> Maybe e
-asyncExceptionFromException x = do
-  SomeAsyncException a <- E.fromException x
-  cast a
 #endif
 
 isAsynchronous :: E.SomeException -> Bool
