@@ -18,6 +18,7 @@ import qualified Lib.Fifo as Fifo
 newtype Priority = Priority Int
   deriving (Eq, Ord, Show, Num)
 
+--- TODO: IntMap
 newtype PriorityQueue a = PriorityQueue
   { _fifoPriority :: Map Priority (Fifo a) -- invariant: All fifos are non-empty
   }
