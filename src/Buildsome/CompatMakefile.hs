@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TupleSections #-}
 module Buildsome.CompatMakefile
   ( Phonies, make
   ) where
@@ -9,7 +9,6 @@ import Prelude.Compat hiding (FilePath)
 import Buildsome.BuildMaps (TargetRep)
 import Buildsome.Stats (Stats)
 
-import Control.Monad (filterM)
 import Control.Monad.Trans.Class (MonadTrans(..))
 import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
@@ -33,7 +32,7 @@ isDir path = maybe False Posix.isDirectory <$> Directory.getMFileStatus path
 type M = Revisit.M TargetRep IO
 
 data MakefileTarget = MakefileTarget
-  { makefileTargetPath :: FilePath
+  { makefileTargetPath :: [FilePath]
   , makefileTargetDirs :: [FilePath]
   , isDirectory :: Bool
   }
@@ -41,10 +40,10 @@ data MakefileTarget = MakefileTarget
 makefileTarget :: Target -> IO MakefileTarget
 makefileTarget target = do
   repIsDir <- isDir repPath
-  targetDirs <- filterM isDir (targetOutputs target)
+  targetOutputsByIsDir <- mapM (\t -> (, t) <$> isDir t) (targetOutputs target)
   return MakefileTarget
-    { makefileTargetPath = if repIsDir then repPath </> ".dir" else repPath
-    , makefileTargetDirs = targetDirs
+    { makefileTargetPath = map (\(isDir', t) -> if isDir' then t </> ".dir" else t) targetOutputsByIsDir
+    , makefileTargetDirs = map snd $ filter fst targetOutputsByIsDir
     , isDirectory = repIsDir
     }
   where
@@ -54,7 +53,7 @@ targetCmdLines :: MakefileTarget -> Target -> [ByteString]
 targetCmdLines tgt target =
   ["rm -rf " <> dir | dir <- makefileTargetDirs tgt] ++
   (BS8.lines . targetCmds) target ++
-  ["touch " <> makefileTargetPath tgt | isDirectory tgt]
+  (if isDirectory tgt then map ("touch " <>) (makefileTargetPath tgt) else [])
 
 type Phonies = Set FilePath
 
@@ -64,16 +63,15 @@ onOneTarget phoniesSet cwd stats target =
   Revisit.avoid targetRep $ do
     depsLines <- depBuildCommands
     tgt <- lift $ makefileTarget target
-    depTgts <- lift $ mapM makefileTarget directDeps
     let
       targetDecl = mconcat
-        [ "T := ", makefileTargetPath tgt, "\n$(T):"
-        , spaceUnwords $ map makefileTargetPath depTgts
+        [ "T := ", spaceUnwords (makefileTargetPath tgt)
+        , "\n$(T):", spaceUnwords $ Set.toList $ Set.fromList inputs
         ]
       myLines =
         [ "#" <> BS8.pack (showPos (targetPos target)) ] ++
-        [ ".PHONY: " <> makefileTargetPath tgt
-        | makefileTargetPath tgt `Set.member` phoniesSet
+        [ ".PHONY: " <> t
+        | t <- makefileTargetPath tgt, t `Set.member` phoniesSet
         ] ++
         [ targetDecl ] ++
         map ("\t" <>) (targetCmdLines tgt target) ++
@@ -81,6 +79,10 @@ onOneTarget phoniesSet cwd stats target =
     return $ myLines ++ depsLines
   where
     spaceUnwords = BS8.concat . map (" " <>)
+    inputs =
+      fromMaybe
+      (error "compat makefile requested without tsExistingInputs being calculated?!")
+      $ Stats.tsExistingInputs targetStats
     targetRep = BuildMaps.computeTargetRep target
     directDeps = Stats.tsDirectDeps targetStats
     targetStats =

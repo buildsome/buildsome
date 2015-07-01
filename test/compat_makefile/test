@@ -1,0 +1,12 @@
+#!/bin/bash -eu
+buildsome=${1:-buildsome}
+
+cd $(dirname $0)
+$buildsome -M
+strip_comments='grep -v ^#.*'
+$strip_comments expected > expected.stripped
+$strip_comments compat-makefile > compat-makefile.stripped
+diff expected.stripped compat-makefile.stripped || (echo "ERROR: compat-makefile differs from expected!" ; exit 1)
+$buildsome clean
+make -f compat-makefile
+
