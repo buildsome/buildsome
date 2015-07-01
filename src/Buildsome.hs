@@ -643,42 +643,38 @@ getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO (Slave Stats)
 getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
   | any ((== tdRep) . fst3) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
-  | otherwise = do
-      SyncMap.insert (bsSlaveByTargetRep bteBuildsome) tdRep $
-        mkSlave $ \unmask printer allocParCell ->
+  | otherwise =
+    SyncMap.insert (bsSlaveByTargetRep bteBuildsome) tdRep $
+    panicOnError $ withTimeout $ do
+      -- Everything under handle is synchronous, so should not
+      -- be interruptible. There shouldn't be a danger of a sync
+      -- or async exception here, so the putMVar is supposed to be
+      -- guaranteed.
+      depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
+      depPrinter <- Printer.newFrom btePrinter depPrinterId
+      -- NOTE: allocParCell MUST be called to avoid leak!
+      allocParCell <- Parallelism.startAlloc btePriority $ bsParallelism bteBuildsome
+      Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
+        \unmask -> annotateException failureMsg $ do
           -- Must remain masked through allocParCell so it gets a
           -- chance to handle alloc/exception!
           allocParCell $ \parCell -> unmask $ do
-            let newBte = bte { bteParents = newParents, btePrinter = printer }
+            let newBte = bte { bteParents = newParents, btePrinter = depPrinter }
             buildTarget newBte parCell TargetDesc{..}
     where
       Color.Scheme{..} = Color.scheme
-      annotate =
-        annotateException $ BS8.unpack $ bsRender bteBuildsome $
+      failureMsg =
+        BS8.unpack $ bsRender bteBuildsome $
         "build failure of " <> cTarget (show (targetOutputs tdTarget)) <> ":\n"
       newParents = (tdRep, tdTarget, bteReason) : bteParents
       panicHandler e@E.SomeException {} =
         panic (bsRender bteBuildsome) $ "FAILED during making of slave: " ++ show e
       panicOnError = handle panicHandler
-      mkSlave action =
-        Timeout.warning (Timeout.millis 100)
-        (Printer.render btePrinter
-         ("Slave creation of " <> cTarget (show tdRep) <>
-          " took more than 100 millis!")) $
-        do
-          -- Everything under handle is synchronous, so should not
-          -- be interruptible. There shouldn't be a danger of a sync
-          -- or async exception here, so the putMVar is supposed to be
-          -- guaranteed.
-          panicOnError $ do
-            depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
-            depPrinter <- Printer.newFrom btePrinter depPrinterId
-            -- NOTE: allocParCell MUST be called to avoid leak!
-            allocParCell <-
-              Parallelism.startAlloc btePriority $
-              bsParallelism bteBuildsome
-            Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
-              \unmask -> annotate $ action unmask depPrinter allocParCell
+      withTimeout =
+          Timeout.warning (Timeout.millis 100)
+          (Printer.render btePrinter
+           ("Slave creation of " <> cTarget (show tdRep) <>
+            " took more than 100 millis!"))
 
 data UnregisteredOutputFileExists = UnregisteredOutputFileExists (ColorText -> ByteString) FilePath
   deriving (Typeable)
