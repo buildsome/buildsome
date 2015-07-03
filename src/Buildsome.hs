@@ -657,22 +657,27 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
     -- action fully unmasks, whereas we need to become
     -- interruptible-masked (impossible from uninterruptibleMask in
     -- a thread).
-    SyncMap.insert (bsSlaveByTargetRep bteBuildsome) tdRep $
-    panicOnError $ withTimeout $ do
-    -- SyncMap runs this uninterruptible, so should not block
-    -- indefinitely.
-    depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
-    depPrinter <- Printer.newFrom btePrinter depPrinterId
-    -- NOTE: finishFork MUST be called to avoid leak!
-    fork <- Parallelism.fork (bsParPool bteBuildsome) btePriority
-    slave <- Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
-      \unmask -> annotateException failureMsg $
-          -- Must remain masked through finishFork so it gets a
-          -- chance to handle alloc/exception!
-          Parallelism.wrapForkedChild fork $ \token -> unmask $ do
-            let newBte = bte { bteParents = newParents, btePrinter = depPrinter }
-            buildTarget newBte token TargetDesc{..}
-    return (fork, slave)
+    do
+      (fork, slave) <-
+        SyncMap.insert (bsSlaveByTargetRep bteBuildsome) tdRep $
+        panicOnError $ withTimeout $
+        do
+          -- SyncMap runs this uninterruptible, so should not block
+          -- indefinitely.
+          depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
+          depPrinter <- Printer.newFrom btePrinter depPrinterId
+          -- NOTE: finishFork MUST be called to avoid leak!
+          fork <- Parallelism.fork (bsParPool bteBuildsome) btePriority
+          slave <- Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
+            \unmask -> annotateException failureMsg $
+                -- Must remain masked through finishFork so it gets a
+                -- chance to handle alloc/exception!
+                Parallelism.wrapForkedChild fork $ \token -> unmask $ do
+                  let newBte = bte { bteParents = newParents, btePrinter = depPrinter }
+                  buildTarget newBte token TargetDesc{..}
+          return (fork, slave)
+      Parallelism.forkBoostPriority btePriority fork
+      return (fork, slave)
     where
       Color.Scheme{..} = Color.scheme
       failureMsg =

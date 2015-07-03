@@ -301,7 +301,8 @@ forkBoostPriority priority f =
     do
         curPriority <- readIORef $ forkPriority f
         when (priority > curPriority) $
+            writeIORef (forkPriority f) priority
+            `finally`
             do
-                writeIORef (forkPriority f) priority
                 PoolAlloc.changePriority (forkAlloc f) priority
                 mapM_ (wcBoostPriority priority) =<< readIORef (forkWCs f)
