@@ -28,13 +28,14 @@ data TokenCellState
     | TokenCellReleasedToChildren Int
     | TokenCellFinished -- released back to parent
 
-newtype TokenCell = TokenCell
+data TokenCell = TokenCell
     { tokenCellState :: IORef TokenCellState
+    , tokenCellFrom :: Maybe Fork
     }
 
 data WaitContext = WaitContext
     { wcPriority :: Priority
-    , wcChildCount :: IORef Int
+    , wcChildren :: IORef [Fork]
     , wcParentAlloc :: MVar (Alloc ParId)
     }
 
@@ -46,6 +47,8 @@ data Fork = Fork
     , -- This is only valid between the fork call and the
       -- wrapForkedChild
       forkAlloc :: Alloc ParId
+    , forkPriority :: Priority
+    , forkWCs :: IORef [WaitContext]
     }
 instance Eq Fork where
     (==) = (==) `on` forkState -- compare ioref identities
@@ -57,7 +60,10 @@ rootTokenCell :: Pool -> IO TokenCell
 rootTokenCell pool =
     do
         state <- newIORef . TokenCellAlloced =<< PoolAlloc.alloc (Priority 0) pool
-        return $ TokenCell state
+        return $ TokenCell
+            { tokenCellState = state
+            , tokenCellFrom = Nothing
+            }
 
 waitContextDone :: PoolAlloc ParId -> WaitContext -> IO ()
 waitContextDone pool wc =
@@ -84,15 +90,14 @@ cancelParentAllocation pool wc =
                 -- release:
                 void $ forkIO $ PoolAlloc.finish alloc >>= PoolAlloc.release pool
 
-notifyParentChildDone :: PoolAlloc ParId -> WaitContext -> IO ()
-notifyParentChildDone pool wc =
-    join $ atomicModifyIORef (wcChildCount wc) $
-    \n -> (n - 1, refCountUpdated (n - 1))
-    where
-        refCountUpdated n
-            | n > 0 = return ()
-            | n == 0 = waitContextDone pool wc
-            | otherwise = error "Negative refcount?!"
+notifyParentChildDone :: PoolAlloc ParId -> Fork -> WaitContext -> IO ()
+notifyParentChildDone pool child wc =
+    join $ atomicModifyIORef (wcChildren wc) $
+    \children ->
+    case List.partition (== child) children of
+    ([_], []) -> ([], waitContextDone pool wc)
+    ([_], rest) -> (rest, return ())
+    _ -> error "Expecting to find child WC exactly once in list of children"
 
 childDone :: PoolAlloc ParId -> Fork -> IO ()
 childDone pool child =
@@ -100,7 +105,7 @@ childDone pool child =
     case oldState of
     ForkStarted parents ->
         ( ForkDone
-        , mapM_ (notifyParentChildDone pool) parents
+        , mapM_ (notifyParentChildDone pool child) parents
         )
     ForkDone -> error "Child done twice?!"
 
@@ -109,7 +114,7 @@ linkChild pool wc child =
     join $ atomicModifyIORef (forkState child) $ \oldState ->
     case oldState of
     ForkStarted parents -> (ForkStarted (wc:parents), return ())
-    ForkDone -> (ForkDone, notifyParentChildDone pool wc)
+    ForkDone -> (ForkDone, notifyParentChildDone pool child wc)
 
 unlinkChild :: WaitContext -> Fork -> IO ()
 unlinkChild wc child =
@@ -166,16 +171,23 @@ regainToken token wc =
 -- happens anywhere whenever there is hidden concurrency in a build
 -- step, so it's not a big deal.
 
+addWC :: WaitContext -> TokenCell -> IO ()
+addWC wc token =
+    case tokenCellFrom token of
+    Nothing -> return ()
+    Just parentFork -> atomicModifyIORef_ (forkWCs parentFork) (wc:)
+
 withReleased :: Pool -> TokenCell -> Priority -> [Fork] -> IO a -> IO a
 withReleased pool token priority dupChildren action =
     do  mvar <- newEmptyMVar
-        childCount <- newIORef (length children)
+        childrenRef <- newIORef children
         let wc = WaitContext
                 { wcPriority = priority
-                , wcChildCount = childCount
+                , wcChildren = childrenRef
                 , wcParentAlloc = mvar
                 }
-            beforeRelease =
+        addWC wc token
+        let beforeRelease =
                 do
                     -- Bracket's mask is enough here, this is non-blocking:
                     mapM_ (linkChild pool wc) children
@@ -189,8 +201,7 @@ withReleased pool token priority dupChildren action =
                         do
                             mapM_ (unlinkChild wc) children
                             cancelParentAllocation pool wc
-            afterRelease =
-                regainToken token wc
+        let afterRelease = regainToken token wc
         bracket_ beforeRelease afterRelease action
     where
         children = List.nub dupChildren
@@ -208,7 +219,11 @@ wrapForkedChild child =
                 -- by an exception and then cancelFork will make sure
                 -- nobody waits for us forever
                 parId <- PoolAlloc.finish $ forkAlloc child
-                fmap TokenCell . newIORef $ TokenCellAlloced parId
+                cellState <- newIORef $ TokenCellAlloced parId
+                return TokenCell
+                    { tokenCellState = cellState
+                    , tokenCellFrom = Just child
+                    }
         afterChild token =
             modifyTokenState token $
             \oldState ->
@@ -228,8 +243,11 @@ fork pool priority =
     do
         alloc <- PoolAlloc.startAlloc priority pool
         state <- newIORef $ ForkStarted []
+        wcs <- newIORef []
         return Fork
             { forkPool = pool
             , forkState = state
             , forkAlloc = alloc
+            , forkPriority = priority
+            , forkWCs = wcs
             }
