@@ -138,11 +138,14 @@ onAllSlaves shouldCancel printer bs =
         -- created during cancellation
         go curSlaveMap
 
-verbosePutLn :: Buildsome -> String -> IO ()
-verbosePutLn buildsome str =
-  when verbose $ putLn str
+whenVerbose :: Buildsome -> IO () -> IO ()
+whenVerbose buildsome = when verbose
   where
     verbose = Opts.verbosityGeneral $ optVerbosity $ bsOpts buildsome
+
+verbosePutLn :: Buildsome -> String -> IO ()
+verbosePutLn buildsome str =
+  whenVerbose buildsome $ putLn str
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
