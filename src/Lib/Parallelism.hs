@@ -3,10 +3,13 @@ module Lib.Parallelism
   ( ParId
   , Pool, newPool
   , Priority(..)
-  , Fork(..), fork, wrapForkedChild
+  , Fork(..), fork, wrapForkedChild, forkBoostPriority
   , TokenCell, rootTokenCell
   , withReleased
   ) where
+
+-- TODO: Verify/guarantee that priorities of deps are always given as
+-- higher than parent
 
 import           Control.Concurrent (forkIO)
 import           Control.Concurrent.MVar
@@ -33,8 +36,12 @@ data TokenCell = TokenCell
     , tokenCellFrom :: Maybe Fork
     }
 
+data WaitContextState
+    = WaitContextWaiting
+    | WaitContextAllocating
+
 data WaitContext = WaitContext
-    { wcPriority :: Priority
+    { wcState :: IORef (WaitContextState, Priority) -- becomes Nothing when already read and allocation starts
     , wcChildren :: IORef [Fork]
     , wcParentAlloc :: MVar (Alloc ParId)
     }
@@ -44,10 +51,8 @@ data ForkState = ForkStarted [WaitContext] | ForkDone
 data Fork = Fork
     { forkPool :: Pool
     , forkState :: IORef ForkState
-    , -- This is only valid between the fork call and the
-      -- wrapForkedChild
-      forkAlloc :: Alloc ParId
-    , forkPriority :: Priority
+    , forkAlloc :: Alloc ParId
+    , forkPriority :: IORef Priority
     , forkWCs :: IORef [WaitContext]
     }
 instance Eq Fork where
@@ -69,7 +74,10 @@ waitContextDone :: PoolAlloc ParId -> WaitContext -> IO ()
 waitContextDone pool wc =
     do
         -- Allocate on behalf of parent
-        parentAlloc <- PoolAlloc.startAlloc (wcPriority wc) pool
+        priority <-
+            atomicModifyIORef (wcState wc) $
+            \(WaitContextWaiting, p) -> ((WaitContextAllocating, p), p)
+        parentAlloc <- PoolAlloc.startAlloc priority pool
         putMVar (wcParentAlloc wc) parentAlloc
 
 cancelParentAllocation :: Pool -> WaitContext -> IO ()
@@ -77,7 +85,7 @@ cancelParentAllocation pool wc =
     do
         -- The children were unlinked, so nobody can fill the mvar
         -- anymore, so this is not a race:
-        mAlloc <- tryTakeMVar (wcParentAlloc wc)
+        mAlloc <- tryReadMVar (wcParentAlloc wc)
         case mAlloc of
             Nothing ->
                 -- children didn't start alloc for us, nothing to do
@@ -149,7 +157,7 @@ regainToken token wc =
             case state of
             TokenCellReleasedToChildren 0 ->
                 ( TokenCellAllocating mvar
-                , (takeMVar (wcParentAlloc wc) >>= PoolAlloc.finish >>= setAlloced)
+                , (readMVar (wcParentAlloc wc) >>= PoolAlloc.finish >>= setAlloced)
                   `finally` putMVar mvar ()
                 )
             TokenCellReleasedToChildren n ->
@@ -171,18 +179,50 @@ regainToken token wc =
 -- happens anywhere whenever there is hidden concurrency in a build
 -- step, so it's not a big deal.
 
+wcBoostPriority :: Priority -> WaitContext -> IO ()
+wcBoostPriority priority wc =
+    do
+        needsUpdate <-
+            join $ atomicModifyIORef (wcState wc) $
+            \state ->
+            case state of
+            (_, oldPriority)
+                | priority <= oldPriority -> (state, return False)
+            (WaitContextWaiting, _) ->
+                ( (WaitContextWaiting, priority)
+                , return True -- the alloc will use the new priority, we're done
+                )
+            (WaitContextAllocating, _) ->
+                ( (WaitContextAllocating, priority)
+                , do
+                    alloc <- readMVar (wcParentAlloc wc)
+                    PoolAlloc.changePriority alloc priority
+                    return True
+                )
+        when needsUpdate $
+            readIORef (wcChildren wc) >>= mapM_ (forkBoostPriority priority)
+
 addWC :: WaitContext -> TokenCell -> IO ()
 addWC wc token =
     case tokenCellFrom token of
     Nothing -> return ()
-    Just parentFork -> atomicModifyIORef_ (forkWCs parentFork) (wc:)
+    Just parentFork ->
+        do
+            atomicModifyIORef_ (forkWCs parentFork) (wc:)
+            newForkPriority <- readIORef (forkPriority parentFork)
+            -- if we added the wc right after a fork priority boost,
+            -- it may have missed our addition, but then we know the
+            -- fork priority is necessarily already set, so read that
+            -- to see if boost needed
+            wcBoostPriority newForkPriority wc
 
 withReleased :: Pool -> TokenCell -> Priority -> [Fork] -> IO a -> IO a
 withReleased pool token priority dupChildren action =
     do  mvar <- newEmptyMVar
         childrenRef <- newIORef children
+        stateRef <- newIORef $ (WaitContextWaiting, priority)
         let wc = WaitContext
-                { wcPriority = priority
+                { wcState = stateRef
                 , wcChildren = childrenRef
                 , wcParentAlloc = mvar
                 }
@@ -243,11 +283,25 @@ fork pool priority =
     do
         alloc <- PoolAlloc.startAlloc priority pool
         state <- newIORef $ ForkStarted []
+        priorityRef <- newIORef priority
         wcs <- newIORef []
         return Fork
             { forkPool = pool
             , forkState = state
             , forkAlloc = alloc
-            , forkPriority = priority
+            , forkPriority = priorityRef
             , forkWCs = wcs
             }
+
+-- | Boost the priority of a fork and all of its dependencies to at
+-- least the given priority. This assumes dependencies of all forks
+-- are always at least as high in their priority as their parent.
+forkBoostPriority :: Priority -> Fork -> IO ()
+forkBoostPriority priority f =
+    do
+        curPriority <- readIORef $ forkPriority f
+        when (priority > curPriority) $
+            do
+                writeIORef (forkPriority f) priority
+                PoolAlloc.changePriority (forkAlloc f) priority
+                mapM_ (wcBoostPriority priority) =<< readIORef (forkWCs f)
