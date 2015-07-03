@@ -2,17 +2,18 @@ module Lib.PoolAlloc
   ( PoolAlloc, new
   , Priority(..)
   , startAlloc
-  , Alloc, finish
+  , Alloc, finish, changePriority
   , alloc, release
   ) where
 
-import Control.Applicative ((<$>))
-import Control.Concurrent.MVar
-import Control.Monad (join)
-import Data.IORef
-import Lib.Exception (onException)
-import Lib.PriorityQueue (PriorityQueue, Priority)
+import           Control.Applicative ((<$>))
+import           Control.Concurrent.MVar
 import qualified Control.Exception as E
+import           Control.Monad (join)
+import           Data.IORef
+import           Lib.Exception (onException)
+import           Lib.IORef (atomicModifyIORef_)
+import           Lib.PriorityQueue (PriorityQueue, Priority)
 import qualified Lib.PriorityQueue as PriorityQueue
 
 data PoolState a = PoolState
@@ -27,7 +28,10 @@ newtype PoolAlloc a = PoolAlloc
 new :: [a] -> IO (PoolAlloc a)
 new xs = PoolAlloc <$> newIORef (PoolState xs PriorityQueue.empty)
 
-newtype Alloc a = Alloc { finish :: IO a }
+data Alloc a = Alloc
+    { finish :: IO a
+    , changePriority :: Priority -> IO ()
+    }
 
 -- | start an allocation, and return an action that blocks to finish
 -- the allocation
@@ -38,21 +42,43 @@ startAlloc priority (PoolAlloc stateRef) = do
   candidate <- newEmptyMVar
   let f (PoolState [] waiters) =
         ( PoolState [] (PriorityQueue.enqueue priority candidate waiters)
-        , Alloc (takeMVar candidate `onException` stopAllocation candidate)
+        , Alloc
+          { finish = takeMVar candidate `onException` stopAllocation candidate
+          , changePriority = \newPriority -> changeAllocationPriority newPriority candidate
+          }
         )
       f (PoolState (x:xs) waiters)
-        | PriorityQueue.null waiters = (PoolState xs waiters, Alloc (return x))
+        | PriorityQueue.null waiters =
+          ( PoolState xs waiters
+          , Alloc
+            { finish = return x
+            , changePriority = const $ return ()
+            }
+          )
         | otherwise = error "Invariant broken: waiters when free elements exist (startAlloc)"
   atomicModifyIORef' stateRef f
   where
-    removeCandidate candidate ps@(PoolState xs waiters) =
+    extract waiters candidate notThere extracted =
       case PriorityQueue.extract priority (== candidate) waiters of
-        -- Got out in time, whew:
-        (waiters', [_]) -> (PoolState xs waiters', return ())
-        -- Oops: Someone handed us over an allocation already, release it!
-        (_, []) -> (ps, takeMVar candidate >>= release (PoolAlloc stateRef))
-        (_, _) -> error "Expecting to find 0 or 1 candidate in waiter list"
-    stopAllocation candidate = join $ atomicModifyIORef stateRef (removeCandidate candidate)
+      (waiters', [_]) -> extracted waiters'
+      (_, []) -> notThere
+      (_, _) -> error "Expecting to find 0 or 1 candidate in waiter list"
+    removeCandidate candidate ps@(PoolState xs waiters) =
+      extract waiters candidate
+      -- Oops: Someone handed us over an allocation already, release it!
+      (ps, takeMVar candidate >>= release (PoolAlloc stateRef))
+      -- Got out in time, whew:
+      $ \waiters' -> (PoolState xs waiters', return ())
+    changePriorityCandidate newPriority candidate ps@(PoolState xs waiters) =
+      extract waiters candidate
+      -- Allocation already done, priority change irrelevant:
+      ps
+      -- Got out, re-insert with different priority:
+      $ \waiters' ->
+        PoolState xs $ PriorityQueue.enqueue newPriority candidate waiters'
+    stopAllocation = join . atomicModifyIORef stateRef . removeCandidate
+    changeAllocationPriority newPriority =
+        atomicModifyIORef_ stateRef . changePriorityCandidate newPriority
 
 -- NOTE: Must run alloc with proper masking!
 alloc :: Priority -> PoolAlloc a -> IO a
