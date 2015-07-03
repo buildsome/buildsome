@@ -47,7 +47,7 @@ new n = PoolAlloc.new [1..n]
 startAlloc :: Priority -> Parallelism -> IO ((Cell -> IO r) -> IO r)
 startAlloc priority parallelism = do
   alloc <- PoolAlloc.startAlloc priority parallelism
-  return $ bracket (newIORef . CellAlloced =<< alloc) (release parallelism)
+  return $ bracket (newIORef . CellAlloced =<< PoolAlloc.finish alloc) (release parallelism)
 
 release :: Parallelism -> Cell -> IO ()
 release parallelism cell = go
