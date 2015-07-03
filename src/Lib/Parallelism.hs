@@ -8,13 +8,13 @@ module Lib.Parallelism
   , withReleased
   ) where
 
-import Control.Concurrent.MVar
-import Control.Monad
-import Data.IORef
-import Lib.Exception (bracket, bracket_, finally)
-import Lib.IORef (atomicModifyIORef_)
-import Lib.PoolAlloc (PoolAlloc, Priority(..))
+import           Control.Concurrent.MVar
 import qualified Control.Exception as E
+import           Control.Monad
+import           Data.IORef
+import           Lib.Exception (bracket, bracket_, finally)
+import           Lib.IORef (atomicModifyIORef_)
+import           Lib.PoolAlloc (PoolAlloc, Priority(..))
 import qualified Lib.PoolAlloc as PoolAlloc
 
 -- NOTE: withReleased may be called multiple times on the same Cell,
@@ -44,7 +44,7 @@ new n = PoolAlloc.new [1..n]
 startAlloc :: Priority -> Parallelism -> IO ((Cell -> IO r) -> IO r)
 startAlloc priority parallelism = do
   alloc <- PoolAlloc.startAlloc priority parallelism
-  return $ bracket (newIORef . CellAlloced =<< alloc) (release parallelism)
+  return $ bracket (newIORef . CellAlloced =<< PoolAlloc.finish alloc) (release parallelism)
 
 release :: Parallelism -> Cell -> IO ()
 release parallelism cell = go

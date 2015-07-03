@@ -2,6 +2,7 @@ module Lib.PoolAlloc
   ( PoolAlloc, new
   , Priority(..)
   , startAlloc
+  , Alloc, finish
   , alloc, release
   ) where
 
@@ -26,18 +27,21 @@ newtype PoolAlloc a = PoolAlloc
 new :: [a] -> IO (PoolAlloc a)
 new xs = PoolAlloc <$> newIORef (PoolState xs PriorityQueue.empty)
 
+newtype Alloc a = Alloc { finish :: IO a }
+
 -- | start an allocation, and return an action that blocks to finish
 -- the allocation
 -- NOTE: MUST run startAlloc with proper masking to avoid leaking the token!
 --       MUST run the returned alloc action to avoid leaking!
-startAlloc :: Priority -> PoolAlloc a -> IO (IO a)
+startAlloc :: Priority -> PoolAlloc a -> IO (Alloc a)
 startAlloc priority (PoolAlloc stateRef) = do
   candidate <- newEmptyMVar
   let f (PoolState [] waiters) =
         ( PoolState [] (PriorityQueue.enqueue priority candidate waiters)
-        , takeMVar candidate `onException` stopAllocation candidate )
+        , Alloc (takeMVar candidate `onException` stopAllocation candidate)
+        )
       f (PoolState (x:xs) waiters)
-        | PriorityQueue.null waiters = (PoolState xs waiters, return x)
+        | PriorityQueue.null waiters = (PoolState xs waiters, Alloc (return x))
         | otherwise = error "Invariant broken: waiters when free elements exist (startAlloc)"
   atomicModifyIORef' stateRef f
   where
@@ -52,7 +56,7 @@ startAlloc priority (PoolAlloc stateRef) = do
 
 -- NOTE: Must run alloc with proper masking!
 alloc :: Priority -> PoolAlloc a -> IO a
-alloc priority = join . startAlloc priority
+alloc priority = join . fmap finish . startAlloc priority
 
 -- | May release items that were never in the pool
 release :: PoolAlloc a -> a -> IO ()
