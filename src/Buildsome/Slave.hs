@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, RankNTypes #-}
+{-# LANGUAGE RecordWildCards, OverloadedStrings, RankNTypes #-}
 module Buildsome.Slave
   ( Slave, newWithUnmask
   , target
@@ -7,17 +7,20 @@ module Buildsome.Slave
   , cancel
   ) where
 
-import Control.Applicative ((<$>))
-import Control.Concurrent.Async (Async)
-import Data.Monoid
-import Data.String (IsString(..))
-import Lib.FilePath (FilePath)
-import Lib.Makefile (Target)
-import Lib.TimeInstances ()
-import Prelude hiding (FilePath)
+import           Prelude hiding (show, FilePath)
+
+import qualified Buildsome.Color as Color
+import           Control.Applicative ((<$>))
+import           Control.Concurrent.Async (Async)
 import qualified Control.Concurrent.Async as Async
 import qualified Control.Exception as E
+import           Data.Monoid
+import           Lib.ColorText (ColorText)
+import           Lib.FilePath (FilePath)
+import           Lib.Makefile (Target)
 import qualified Lib.Printer as Printer
+import           Lib.Show (show)
+import           Lib.TimeInstances ()
 
 data Slave a = Slave
   { slaveTarget :: Target
@@ -33,10 +36,11 @@ newWithUnmask :: Target -> Printer.Id -> [FilePath] -> ((forall b. IO b -> IO b)
 newWithUnmask tgt printerId outputPaths action =
   Slave tgt printerId outputPaths <$> Async.asyncWithUnmask action
 
-str :: (Monoid str, IsString str) => Slave a -> str
+str :: Slave a -> ColorText
 str slave =
-  Printer.idStr (slavePrinterId slave) <> ": " <>
-  fromString (show (slaveOutputPaths slave))
+  Printer.idStr (slavePrinterId slave) <> ": " <> cTarget (show (slaveOutputPaths slave))
+  where
+    Color.Scheme{..} = Color.scheme
 
 wait :: Slave a -> IO a
 wait = Async.wait . slaveExecution

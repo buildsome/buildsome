@@ -113,7 +113,7 @@ onAllSlaves shouldCancel printer bs =
   where
     Color.Scheme{..} = Color.scheme
     timeoutWarning str time slave =
-      Timeout.warning time $
+      Timeout.warning time $ bsRender bs $
       mconcat ["Slave ", Slave.str slave, " did not ", str, " in ", show time, "!"]
     go alreadyCancelled = do
       curSlaveMap <- SyncMap.toMap $ bsSlaveByTargetRep bs
@@ -325,11 +325,10 @@ slaveReqForAccessType FSHook.AccessTypeStat =
 -- slaves, i.e: when waiting for them, in this function.
 -- Do NOT release parallelism in any other context!
 waitForSlavesWithParReleased ::
-  Parallelism.Priority -> Parallelism.Cell -> Buildsome ->
-  [Slave Stats] -> IO BuiltTargets
-waitForSlavesWithParReleased _ _ _ [] = return mempty
-waitForSlavesWithParReleased priority parCell buildsome slaves =
-  Parallelism.withReleased priority parCell (bsParallelism buildsome) $
+  BuildTargetEnv -> Parallelism.Cell -> [Slave Stats] -> IO BuiltTargets
+waitForSlavesWithParReleased _ _ [] = return mempty
+waitForSlavesWithParReleased BuildTargetEnv{..} parCell slaves =
+  Parallelism.withReleased btePriority parCell (bsParallelism bteBuildsome) $
   do
     stats <- mconcat <$> mapM Slave.wait slaves
     return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
@@ -339,7 +338,7 @@ buildExplicitWithParReleased ::
   IO (ExplicitPathsBuilt, BuiltTargets)
 buildExplicitWithParReleased bte@BuildTargetEnv{..} parCell inputs = do
   built <-
-    waitForSlavesWithParReleased btePriority parCell bteBuildsome . concat =<<
+    waitForSlavesWithParReleased bte parCell . concat =<<
     mapM (slavesFor bte) inputs
   explicitPathsBuilt <- assertExplicitInputsExist bte $ map inputFilePath inputs
   return (explicitPathsBuilt, built)
@@ -545,8 +544,7 @@ executionLogBuildInputs bte@BuildTargetEnv{..} parCell TargetDesc{..} Db.Executi
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
-  waitForSlavesWithParReleased btePriority parCell bteBuildsome
-    speculativeSlaves
+  waitForSlavesWithParReleased bte parCell speculativeSlaves
   where
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs tdTarget
@@ -583,8 +581,7 @@ parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
 buildManyWithParReleased ::
   (ColorText -> Reason) -> BuildTargetEnv -> Parallelism.Cell -> [SlaveRequest] -> IO BuiltTargets
 buildManyWithParReleased mkReason bte@BuildTargetEnv{..} parCell =
-  waitForSlavesWithParReleased btePriority parCell bteBuildsome <=<
-  fmap concat . mapM mkSlave
+  waitForSlavesWithParReleased bte parCell <=< fmap concat . mapM mkSlave
   where
     Color.Scheme{..} = Color.scheme
     mkSlave req =
