@@ -10,6 +10,7 @@ import           Control.Applicative ((<$>))
 import           Control.Concurrent.MVar
 import qualified Control.Exception as E
 import           Control.Monad (join)
+import           Data.Function (on)
 import           Data.IORef
 import           Lib.Exception (onException)
 import           Lib.IORef (atomicModifyIORef_)
@@ -31,7 +32,10 @@ new xs = PoolAlloc <$> newIORef (PoolState xs PriorityQueue.empty)
 data Alloc a = Alloc
     { finish :: IO a
     , changePriority :: Priority -> IO ()
+    , identity :: IORef ()
     }
+instance Eq (Alloc a) where
+    (==) = (==) `on` identity
 
 -- | start an allocation, and return an action that blocks to finish
 -- the allocation
@@ -40,11 +44,13 @@ data Alloc a = Alloc
 startAlloc :: Priority -> PoolAlloc a -> IO (Alloc a)
 startAlloc priority (PoolAlloc stateRef) = do
   candidate <- newEmptyMVar
+  ident <- newIORef ()
   let f (PoolState [] waiters) =
         ( PoolState [] (PriorityQueue.enqueue priority candidate waiters)
         , Alloc
           { finish = takeMVar candidate `onException` stopAllocation candidate
           , changePriority = \newPriority -> changeAllocationPriority newPriority candidate
+          , identity = ident
           }
         )
       f (PoolState (x:xs) waiters)
@@ -53,6 +59,7 @@ startAlloc priority (PoolAlloc stateRef) = do
           , Alloc
             { finish = return x
             , changePriority = const $ return ()
+            , identity = ident
             }
           )
         | otherwise = error "Invariant broken: waiters when free elements exist (startAlloc)"
