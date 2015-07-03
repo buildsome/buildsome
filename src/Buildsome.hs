@@ -330,6 +330,9 @@ waitForSlavesWithParReleased _ _ [] = return mempty
 waitForSlavesWithParReleased BuildTargetEnv{..} parCell slaves =
   Parallelism.withReleased btePriority parCell (bsParallelism bteBuildsome) $
   do
+    whenVerbose bteBuildsome $
+        Printer.printStrLn btePrinter $
+        "Waiting for " <> ColorText.intercalate ", " (map Slave.str slaves)
     stats <- mconcat <$> mapM Slave.wait slaves
     return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
 
