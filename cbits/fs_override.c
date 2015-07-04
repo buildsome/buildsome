@@ -283,22 +283,19 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 }
 
 /* Depends on the full path */
-DEFINE_WRAPPER(int, __xstat, (int vers, const char *path, struct stat *buf))
-{
-    bool needs_await = false;
-    DEFINE_MSG(msg, stat);
-    IN_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(needs_await, msg, __xstat, vers, path, buf);
+#define DEFINE_STAT_WRAPPER(name, msg_type, stat_struct)                \
+DEFINE_WRAPPER(int, name, (int vers, const char *path, struct stat_struct *buf)) \
+{                                                                       \
+    bool needs_await = false;                                           \
+    DEFINE_MSG(msg, msg_type);                                          \
+    IN_PATH_COPY(needs_await, msg.args.path, path);                     \
+    return AWAIT_CALL_REAL(needs_await, msg, name, vers, path, buf);    \
 }
 
-/* Depends on the full direct path */
-DEFINE_WRAPPER(int, __lxstat, (int vers, const char *path, struct stat *buf))
-{
-    bool needs_await = false;
-    DEFINE_MSG(msg, lstat);
-    IN_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(needs_await, msg, __lxstat, vers, path, buf);
-}
+DEFINE_STAT_WRAPPER(   __xstat,  stat, stat  )
+DEFINE_STAT_WRAPPER(  __lxstat, lstat, stat  )
+DEFINE_STAT_WRAPPER( __xstat64,  stat, stat64)
+DEFINE_STAT_WRAPPER(__lxstat64, lstat, stat64)
 
 /* Depends on the full path */
 DEFINE_WRAPPER(DIR *, opendir, (const char *path))
