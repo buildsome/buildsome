@@ -11,7 +11,9 @@ module Lib.Parallelism
 import           Control.Concurrent (forkIO)
 import           Control.Concurrent.MVar
 import           Control.Monad (void, join)
+import           Data.Function (on)
 import           Data.IORef
+import qualified Data.List as List
 import           Lib.Exception (bracket, bracket_, finally, onException)
 import           Lib.IORef (atomicModifyIORef_)
 import           Lib.PoolAlloc (PoolAlloc, Priority(..), Alloc)
@@ -45,6 +47,8 @@ data Fork = Fork
       -- wrapForkedChild
       forkAlloc :: Alloc ParId
     }
+instance Eq Fork where
+    (==) = (==) `on` forkState -- compare ioref identities
 
 newPool :: ParId -> IO Pool
 newPool n = PoolAlloc.new [1..n]
@@ -163,7 +167,7 @@ regainToken token wc =
 -- step, so it's not a big deal.
 
 withReleased :: Pool -> TokenCell -> Priority -> [Fork] -> IO a -> IO a
-withReleased pool token priority children action =
+withReleased pool token priority dupChildren action =
     do  mvar <- newEmptyMVar
         childCount <- newIORef (length children)
         let wc = WaitContext
@@ -188,6 +192,8 @@ withReleased pool token priority children action =
             afterRelease =
                 regainToken token wc
         bracket_ beforeRelease afterRelease action
+    where
+        children = List.nub dupChildren
 
 -- Must run masked (so allocation gets a chance to run)
 wrapForkedChild :: Fork -> (TokenCell -> IO r) -> IO r
