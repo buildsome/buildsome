@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, CPP #-}
 module Lib.Parallelism
   ( ParId
   , Pool, newPool
@@ -21,6 +21,12 @@ import           Lib.Exception (bracket, bracket_, finally, onException)
 import           Lib.IORef (atomicModifyIORef_)
 import           Lib.PoolAlloc (PoolAlloc, Priority(..), Alloc)
 import qualified Lib.PoolAlloc as PoolAlloc
+
+#if __GLASGOW_HASKELL__ <= 706
+-- missing tryReadMVar
+tryReadMVar :: MVar a -> IO (Maybe a)
+tryReadMVar mvar = bracket (tryTakeMVar mvar) (maybe (return ()) (putMVar mvar)) return
+#endif
 
 type ParId = Int
 type Pool = PoolAlloc ParId
