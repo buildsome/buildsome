@@ -113,7 +113,7 @@ getRequestedTargets printer extraOutputs ts
       }
   where
     (requestPaths, reason) = case ts of
-      [] -> (["default"], "implicit 'default' target")
+      [] -> (["default"], "implicit 'default' target" :: ColorText)
       _ -> (ts, "explicit request from cmdline")
 
 setBuffering :: IO ()
