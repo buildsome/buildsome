@@ -798,6 +798,21 @@ DEFINE_WRAPPER(FILE *, freopen64, (const char *path, const char *modestr, FILE *
     FOPEN_HANDLER(freopen64, path, modestr, stream);
 }
 
+/* NOTE: The real implementation of dlopen does nasty things like
+ * looking up who called it, reading elf variables specifying where to
+ * search for the given filename, and more.
+ *
+ * This all means that even a trivial wrapper hook for dlopen changes
+ * its behavior observably.
+ *
+ * For example, the `pdwtags' program uses dlopen on a .so filename
+ * that is found in a directory specified in the elf variable of
+ * libdw.so (which does the dlopen call). When buildsome hooks this
+ * call, the elf variable is not found, and thus the given file is not
+ * found, altering the output to an incorrect one.
+ *
+ * Switching to fuse should resolve this issue.
+ */
 DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
 {
     if(!filename) return SILENT_CALL_REAL(dlopen, filename, flag);
