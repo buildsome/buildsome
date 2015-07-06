@@ -94,6 +94,7 @@ alloc priority = join . fmap finish . startAlloc priority
 -- | May release items that were never in the pool
 release :: PoolAlloc a -> a -> IO ()
 release (PoolAlloc stateRef) x =
+  -- E.mask_ would be enough here, but I assume uninterruptibleMask_ is as cheap
   E.uninterruptibleMask_ $ join $ atomicModifyIORef stateRef f
   where
     f (PoolState [] waiters) =

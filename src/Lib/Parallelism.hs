@@ -49,7 +49,8 @@ data WaitContextState
 data WaitContext = WaitContext
     { wcState :: IORef (WaitContextState, Priority) -- becomes Nothing when already read and allocation starts
     , wcChildren :: IORef [Fork]
-    , wcParentAlloc :: MVar (Alloc ParId)
+    , -- REVIEW(Eyal): Move inside WaitContextAllocating?
+      wcParentAlloc :: MVar (Alloc ParId)
     }
 
 data ForkState = ForkStarted [WaitContext] | ForkDone
@@ -76,6 +77,8 @@ rootTokenCell pool =
             , tokenCellFrom = Nothing
             }
 
+-- Should run under mask, and then it is exception-safe (putMVar will
+-- not block)
 waitContextDone :: PoolAlloc ParId -> WaitContext -> IO ()
 waitContextDone pool wc =
     do
@@ -86,24 +89,7 @@ waitContextDone pool wc =
         parentAlloc <- PoolAlloc.startAlloc priority pool
         putMVar (wcParentAlloc wc) parentAlloc
 
-cancelParentAllocation :: Pool -> WaitContext -> IO ()
-cancelParentAllocation pool wc =
-    do
-        -- The children were unlinked, so nobody can fill the mvar
-        -- anymore, so this is not a race:
-        mAlloc <- tryReadMVar (wcParentAlloc wc)
-        case mAlloc of
-            Nothing ->
-                -- children didn't start alloc for us, nothing to do
-                return ()
-            Just alloc ->
-                -- children started alloc for us before we managed to
-                -- unlink them. There's no facility to cancel a
-                -- started allocation, but we can at least detach it
-                -- to a background thread that just allocates to
-                -- release:
-                void $ forkIO $ PoolAlloc.finish alloc >>= PoolAlloc.release pool
-
+-- Should run under mask, and then it is exception safe (non-blocking)
 notifyParentChildDone :: PoolAlloc ParId -> Fork -> WaitContext -> IO ()
 notifyParentChildDone pool child wc =
     join $ atomicModifyIORef (wcChildren wc) $
@@ -113,6 +99,7 @@ notifyParentChildDone pool child wc =
     ([_], rest) -> (rest, return ())
     _ -> error "Expecting to find child WC exactly once in list of children"
 
+-- Should run under mask, and then it is exception safe (non-blocking)
 childDone :: PoolAlloc ParId -> Fork -> IO ()
 childDone pool child =
     join $ atomicModifyIORef (forkState child) $ \oldState ->
@@ -123,6 +110,7 @@ childDone pool child =
         )
     ForkDone -> error "Child done twice?!"
 
+-- Should run under mask, and then it is exception safe (non-blocking)
 linkChild :: Pool -> WaitContext -> Fork -> IO ()
 linkChild pool wc child =
     join $ atomicModifyIORef (forkState child) $ \oldState ->
@@ -143,6 +131,7 @@ unlinkChild wc child =
 modifyTokenState :: TokenCell -> (TokenCellState -> (TokenCellState, IO a)) -> IO a
 modifyTokenState token = join . atomicModifyIORef (tokenCellState token)
 
+-- Interruptible, but exception-safe (no effect if async exception)
 releaseToken :: Pool -> TokenCell -> IO ()
 releaseToken pool token =
     modifyTokenState token $
@@ -155,6 +144,7 @@ releaseToken pool token =
     TokenCellAllocating mvar -> (state, readMVar mvar >> releaseToken pool token)
     TokenCellFinished -> error "TokenCellFinished???"
 
+-- Runs under uninterruptibleMask, thus exception-safe
 regainToken :: TokenCell -> WaitContext -> IO ()
 regainToken token wc =
     do
@@ -176,15 +166,9 @@ regainToken token wc =
             TokenCellAllocating {} -> (TokenCellAlloced parId, return ())
             _ -> error "Token state changed underneath us?!"
 
--- NOTE: withReleased may be called multiple times on the same Cell,
--- concurrently. This is allowed, but the parallelism will only be
--- released and regained once. The regain will occur after all
--- withReleased sections completed. This means that not every
--- "withReleased" completion actually incurs a re-allocation -- so
--- withReleased can complete without parallelism being allocated. This
--- happens anywhere whenever there is hidden concurrency in a build
--- step, so it's not a big deal.
-
+-- Exception-safe modulu partial/incorrect change of priority (while
+-- specified priority is incorrectly updated as if priority fully
+-- changed)
 wcBoostPriority :: Priority -> WaitContext -> IO ()
 wcBoostPriority priority wc =
     do
@@ -208,6 +192,8 @@ wcBoostPriority priority wc =
         when needsUpdate $
             readIORef (wcChildren wc) >>= mapM_ (forkBoostPriority priority)
 
+-- Exception-safe modolu incorrect priority of wc upon exception (but
+-- WC will die at that point, so that is moot)
 addWC :: WaitContext -> TokenCell -> IO ()
 addWC wc token =
     case tokenCellFrom token of
@@ -222,33 +208,63 @@ addWC wc token =
             -- to see if boost needed
             wcBoostPriority newForkPriority wc
 
+cancelParentAllocation :: Pool -> WaitContext -> IO ()
+cancelParentAllocation pool wc =
+    do
+        -- The children were unlinked, so nobody can fill the mvar
+        -- anymore, so this is not a race:
+        mAlloc <- tryReadMVar (wcParentAlloc wc)
+        case mAlloc of
+            Nothing ->
+                -- children didn't start alloc for us, nothing to do
+                return ()
+            Just alloc ->
+                -- children started alloc for us before we managed to
+                -- unlink them. There's no facility to cancel a
+                -- started allocation, but we can at least detach it
+                -- to a background thread that just allocates to
+                -- release:
+                void $ forkIO $ PoolAlloc.finish alloc >>= PoolAlloc.release pool
+
+-- NOTE: withReleased may be called multiple times on the same Cell,
+-- concurrently. This is allowed, but the parallelism will only be
+-- released and regained once. The regain will occur after all
+-- withReleased sections completed. This means that not every
+-- "withReleased" completion actually incurs a re-allocation -- so
+-- withReleased can complete without parallelism being allocated. This
+-- happens anywhere whenever there is hidden concurrency in a build
+-- step, so it's not a big deal.
+
 withReleased :: Pool -> TokenCell -> Priority -> [Fork] -> IO a -> IO a
 withReleased pool token priority dupChildren action =
-    do  mvar <- newEmptyMVar
-        childrenRef <- newIORef children
-        stateRef <- newIORef $ (WaitContextWaiting, priority)
-        let wc = WaitContext
-                { wcState = stateRef
-                , wcChildren = childrenRef
-                , wcParentAlloc = mvar
-                }
-        addWC wc token
-        let beforeRelease =
+    do  let beforeRelease =
                 do
-                    -- Bracket's mask is enough here, this is non-blocking:
+                    -- {
+                    mvar <- newEmptyMVar
+                    childrenRef <- newIORef children
+                    stateRef <- newIORef $ (WaitContextWaiting, priority)
+                    let wc = WaitContext
+                            { wcState = stateRef
+                            , wcChildren = childrenRef
+                            , wcParentAlloc = mvar
+                            }
+                    addWC wc token
                     mapM_ (linkChild pool wc) children
-                    -- However, this is blocking (on a parallel
-                    -- allocation of the same TokenCell). Instead of
-                    -- handling an exception here, we assume whoever
-                    -- blocks us by allocating is properly
-                    -- interruptible
+                    -- }-- REVIEW(Eyal): braced code should be entry
+                    -- to its own bracketOnError (missing in
+                    -- Lib.Exception!), with unlinkChildren as cleanup
+
+                    -- If releaseToken blocks and is interrupted by an
+                    -- async exception, it had no effect, so it is
+                    -- safe
                     releaseToken pool token
                         `onException`
                         do
                             mapM_ (unlinkChild wc) children
+                            -- REVIEW(Eyal): What was I thinking?! Don't cancelParentAllocation, but regain!
                             cancelParentAllocation pool wc
         let afterRelease = regainToken token wc
-        bracket_ beforeRelease afterRelease action
+        bracket beforeRelease afterRelease action
     where
         children = List.nub dupChildren
 
@@ -271,6 +287,7 @@ wrapForkedChild child =
                     , tokenCellFrom = Just child
                     }
         afterChild token =
+            -- runs under uninterruptibleMask
             modifyTokenState token $
             \oldState ->
             case oldState of
