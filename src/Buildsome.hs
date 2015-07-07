@@ -96,7 +96,7 @@ data Buildsome = Buildsome
     -- dynamic:
   , bsDb :: Db
   , bsFsHook :: FSHook
-  , bsSlaveByTargetRep :: SyncMap TargetRep (Parallelism.Fork, Slave Stats)
+  , bsSlaveByTargetRep :: SyncMap TargetRep (Parallelism.Entity, Slave Stats)
   , bsFreshPrinterIds :: Fresh Printer.Id
   , bsFastKillBuild :: E.SomeException -> IO ()
   , bsRender :: ColorText -> ByteString
@@ -231,9 +231,9 @@ want printer buildsome reason paths = do
         , btePriority = priority
         , bteSpeculative = False
         }
-  token <- Parallelism.rootTokenCell $ bsParPool buildsome
+  entity <- Parallelism.rootEntity (Parallelism.Priority 0) $ bsParPool buildsome
   (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
-    timeIt $ buildExplicitWithParReleased bte token $ map SlaveRequestDirect paths
+    timeIt $ buildExplicitWithParReleased bte entity $ map SlaveRequestDirect paths
   let stdErrs = Stats.stdErr $ builtStats builtTargets
       lastLinePrefix
         | not (S.null stdErrs) =
@@ -266,7 +266,7 @@ isPhony bs path = path `S.member` bsPhoniesSet bs
 targetIsPhony :: Buildsome -> Target -> Bool
 targetIsPhony bs = all (isPhony bs) . targetOutputs
 
-slaveForDirectPath :: BuildTargetEnv -> FilePath -> IO (Maybe (Parallelism.Fork, Slave Stats))
+slaveForDirectPath :: BuildTargetEnv -> FilePath -> IO (Maybe (Parallelism.Entity, Slave Stats))
 slaveForDirectPath bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path =
     -- Only project-relative paths may have output rules:
@@ -281,7 +281,7 @@ slaveForDirectPath bte@BuildTargetEnv{..} path
           bteExplicitlyDemanded || targetKind == BuildMaps.TargetSimple }
     (TargetDesc targetRep target)
 
-slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [(Parallelism.Fork, Slave Stats)]
+slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [(Parallelism.Entity, Slave Stats)]
 slavesForChildrenOf bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | not (null childPatterns) =
@@ -302,7 +302,7 @@ inputFilePath :: SlaveRequest -> FilePath
 inputFilePath (SlaveRequestDirect path) = path
 inputFilePath (SlaveRequestFull path) = path
 
-slavesFor :: BuildTargetEnv -> SlaveRequest -> IO [(Parallelism.Fork, Slave Stats)]
+slavesFor :: BuildTargetEnv -> SlaveRequest -> IO [(Parallelism.Entity, Slave Stats)]
 slavesFor bte (SlaveRequestDirect path) =
     maybeToList <$> slaveForDirectPath bte path
 slavesFor bte@BuildTargetEnv{..} (SlaveRequestFull path) = do
@@ -326,10 +326,10 @@ slaveReqForAccessType FSHook.AccessTypeStat =
 -- TODO: All 3 applications of this function concat in the same
 -- pattern, reduce code duplication
 waitForSlavesWithParReleased ::
-  BuildTargetEnv -> Parallelism.TokenCell -> [(Parallelism.Fork, Slave Stats)] -> IO BuiltTargets
+  BuildTargetEnv -> Parallelism.Entity -> [(Parallelism.Entity, Slave Stats)] -> IO BuiltTargets
 waitForSlavesWithParReleased _ _ [] = return mempty
-waitForSlavesWithParReleased BuildTargetEnv{..} token forkedSlaves =
-  Parallelism.withReleased (bsParPool bteBuildsome) token btePriority forks $
+waitForSlavesWithParReleased BuildTargetEnv{..} entity forkedSlaves =
+  Parallelism.withReleased btePriority (bsParPool bteBuildsome) entity forks $
   do
     whenVerbose bteBuildsome $
         Printer.printStrLn btePrinter $
@@ -341,11 +341,11 @@ waitForSlavesWithParReleased BuildTargetEnv{..} token forkedSlaves =
     slaves = map snd forkedSlaves
 
 buildExplicitWithParReleased ::
-  BuildTargetEnv -> Parallelism.TokenCell -> [SlaveRequest] ->
+  BuildTargetEnv -> Parallelism.Entity -> [SlaveRequest] ->
   IO (ExplicitPathsBuilt, BuiltTargets)
-buildExplicitWithParReleased bte@BuildTargetEnv{..} token inputs = do
+buildExplicitWithParReleased bte@BuildTargetEnv{..} entity inputs = do
   built <-
-    waitForSlavesWithParReleased bte token . concat =<< mapM (slavesFor bte) inputs
+    waitForSlavesWithParReleased bte entity . concat =<< mapM (slavesFor bte) inputs
   explicitPathsBuilt <- assertExplicitInputsExist bte $ map inputFilePath inputs
   return (explicitPathsBuilt, built)
 
@@ -486,15 +486,15 @@ data ExecutionLogFailure
   | SpeculativeBuildFailure E.SomeException
 
 tryApplyExecutionLog ::
-  BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc -> Db.ExecutionLog ->
+  BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Db.ExecutionLog ->
   IO (Either ExecutionLogFailure (Db.ExecutionLog, BuiltTargets))
-tryApplyExecutionLog bte@BuildTargetEnv{..} token targetDesc executionLog = do
+tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog = do
   runEitherT $ do
     builtTargets <-
       EitherT $
       syncCatchAndLogSpeculativeErrors btePrinter targetDesc
       (Left . SpeculativeBuildFailure)
-      (Right <$> executionLogBuildInputs bte token targetDesc executionLog)
+      (Right <$> executionLogBuildInputs bte entity targetDesc executionLog)
     bimapEitherT MismatchedFiles id $
       executionLogVerifyFilesState bte targetDesc executionLog
     return (executionLog, builtTargets)
@@ -542,14 +542,14 @@ executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionL
           left $ (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
 executionLogBuildInputs ::
-  BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc ->
+  BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->
   Db.ExecutionLog -> IO BuiltTargets
-executionLogBuildInputs bte@BuildTargetEnv{..} token TargetDesc{..} Db.ExecutionLog {..} = do
+executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} Db.ExecutionLog {..} = do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
   speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
-  waitForSlavesWithParReleased bte token speculativeSlaves
+  waitForSlavesWithParReleased bte entity speculativeSlaves
   where
     mkInputSlavesFor desc inputPath =
       case fromFileDesc desc of
@@ -584,10 +584,10 @@ parentDirs :: [FilePath] -> [FilePath]
 parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
 
 buildManyWithParReleased ::
-  (ColorText -> Reason) -> BuildTargetEnv -> Parallelism.TokenCell -> [SlaveRequest] -> IO BuiltTargets
-buildManyWithParReleased mkReason bte@BuildTargetEnv{..} token slaveRequests =
+  (ColorText -> Reason) -> BuildTargetEnv -> Parallelism.Entity -> [SlaveRequest] -> IO BuiltTargets
+buildManyWithParReleased mkReason bte@BuildTargetEnv{..} entity slaveRequests =
   do
-    waitForSlavesWithParReleased bte token =<< fmap concat (mapM mkSlave slaveRequests)
+    waitForSlavesWithParReleased bte entity =<< fmap concat (mapM mkSlave slaveRequests)
   where
     mkSlave req =
       slavesFor bte { bteReason = mkReason (cTarget (show (inputFilePath req))) } req
@@ -595,14 +595,14 @@ buildManyWithParReleased mkReason bte@BuildTargetEnv{..} token slaveRequests =
 
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
-findApplyExecutionLog :: BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
-findApplyExecutionLog bte@BuildTargetEnv{..} token TargetDesc{..} = do
+findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
+findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
   mExecutionLog <- readIRef $ Db.executionLog tdTarget $ bsDb bteBuildsome
   case mExecutionLog of
     Nothing -> -- No previous execution log
       return Nothing
     Just executionLog -> do
-      eRes <- tryApplyExecutionLog bte token TargetDesc{..} executionLog
+      eRes <- tryApplyExecutionLog bte entity TargetDesc{..} executionLog
       case eRes of
         Left err -> do
           printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
@@ -645,7 +645,7 @@ fst3 :: (a, b, c) -> a
 fst3 (x, _, _) = x
 
 -- Find existing slave for target, or spawn a new one
-getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO (Parallelism.Fork, Slave Stats)
+getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO (Parallelism.Entity, Slave Stats)
 getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
   | any ((== tdRep) . fst3) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
@@ -667,16 +667,16 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
           depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
           depPrinter <- Printer.newFrom btePrinter depPrinterId
           -- NOTE: finishFork MUST be called to avoid leak!
-          fork <- Parallelism.fork (bsParPool bteBuildsome) btePriority
+          (fork, wrapChild) <- Parallelism.fork (bsParPool bteBuildsome) btePriority
           slave <- Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
             \unmask -> annotateException failureMsg $
                 -- Must remain masked through finishFork so it gets a
                 -- chance to handle alloc/exception!
-                Parallelism.wrapForkedChild fork $ \token -> unmask $ do
+                wrapChild $ unmask $ do
                   let newBte = bte { bteParents = newParents, btePrinter = depPrinter }
-                  buildTarget newBte token TargetDesc{..}
+                  buildTarget newBte fork TargetDesc{..}
           return (fork, slave)
-      Parallelism.forkBoostPriority btePriority fork
+      Parallelism.boostPriority btePriority fork
       return (fork, slave)
     where
       Color.Scheme{..} = Color.scheme
@@ -779,17 +779,17 @@ recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
   registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
 makeImplicitInputs ::
-  IORef BuiltTargets -> BuildTargetEnv -> Parallelism.TokenCell -> Reason ->
+  IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Entity -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
-makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} token accessDoc inputs outputs =
+makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} entity accessDoc inputs outputs =
   do
     targetParentsBuilt <-
       buildManyWithParReleased (("Container directory of: " <>) . (<> (" " <> accessDoc)))
-      bteImplicit token $ map SlaveRequestDirect $ parentDirs allPaths
+      bteImplicit entity $ map SlaveRequestDirect $ parentDirs allPaths
 
     inputsBuilt <-
       buildManyWithParReleased (<> (": " <> accessDoc))
-      bteImplicit token $ map slaveReqForHookInput inputs
+      bteImplicit entity $ map slaveReqForHookInput inputs
 
     atomicModifyIORef_ builtTargetsRef (<> (targetParentsBuilt <> inputsBuilt))
   where
@@ -803,10 +803,10 @@ fsAccessHandlers ::
   IORef (Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus)) ->
   IORef BuiltTargets ->
   BuildTargetEnv ->
-  Parallelism.TokenCell ->
+  Parallelism.Entity ->
   TargetType FilePath input ->
   FSHook.FSAccessHandlers
-fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} token target =
+fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} entity target =
     FSHook.FSAccessHandlers
     { delayedFSAccessHandler = fsDelayedAccessHandler
     , undelayedFSAccessHandler = fsUndelayedAccessHandler
@@ -819,7 +819,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} tok
     fsDelayedAccessHandler accessDoc rawInputs rawOutputs =
       commonAccessHandler accessDoc rawInputs rawOutputs
       FSHook.outputPath delayedOutputEffect $
-      makeImplicitInputs builtTargetsRef bte token accessDoc
+      makeImplicitInputs builtTargetsRef bte entity accessDoc
 
     targetOutputsSet = S.fromList $ targetOutputs target
 
@@ -848,12 +848,13 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} tok
         mapM_ (recordInput inputsRef accessDoc) $
           filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
 
-runCmd :: BuildTargetEnv -> Parallelism.TokenCell -> Target -> IO RunCmdResults
-runCmd bte@BuildTargetEnv{..} token target = do
+runCmd :: BuildTargetEnv -> Parallelism.Entity -> Target -> IO RunCmdResults
+runCmd bte@BuildTargetEnv{..} entity target = do
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef M.empty
   builtTargetsRef <- newIORef mempty
-  let accessHandlers = fsAccessHandlers outputsRef inputsRef builtTargetsRef bte' token target
+  let accessHandlers =
+          fsAccessHandlers outputsRef inputsRef builtTargetsRef bte' entity target
   (time, stdOutputs) <-
     FSHook.timedRunCommand hook rootPath shellCmd renderedTargetOutputs accessHandlers
   inputs <- readIORef inputsRef
@@ -953,13 +954,13 @@ deleteOldTargetOutputs BuildTargetEnv{..} target = do
     targetOutputs target
 
 buildTargetHints ::
-  BuildTargetEnv -> Parallelism.TokenCell -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
-buildTargetHints bte@BuildTargetEnv{..} token target =
+  BuildTargetEnv -> Parallelism.Entity -> TargetType FilePath FilePath -> IO (ExplicitPathsBuilt, BuiltTargets)
+buildTargetHints bte@BuildTargetEnv{..} entity target =
   do
     let parentPaths = parentDirs $ targetOutputs target
     targetParentsBuilt <-
       buildManyWithParReleased ("Container directory of output: " <>) bte
-      token $ map SlaveRequestDirect parentPaths
+      entity $ map SlaveRequestDirect parentPaths
     explicitParentsBuilt <- assertExplicitInputsExist bte parentPaths
     case explicitParentsBuilt of
       ExplicitPathsNotBuilt -> return (ExplicitPathsNotBuilt, targetParentsBuilt)
@@ -967,20 +968,20 @@ buildTargetHints bte@BuildTargetEnv{..} token target =
         (explicitPathsBuilt, inputsBuilt) <-
           buildExplicitWithParReleased
             bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) }
-            token $ map SlaveRequestDirect $ targetAllInputs target
+            entity $ map SlaveRequestDirect $ targetAllInputs target
         return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
   where
     Color.Scheme{..} = Color.scheme
 
 buildTargetReal ::
-  BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc -> IO (Db.ExecutionLog, BuiltTargets)
-buildTargetReal bte@BuildTargetEnv{..} token TargetDesc{..} =
+  BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Db.ExecutionLog, BuiltTargets)
+buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
   Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
     deleteOldTargetOutputs bte tdTarget
 
     Print.executionCmd verbosityCommands btePrinter tdTarget
 
-    RunCmdResults{..} <- runCmd bte token tdTarget
+    RunCmdResults{..} <- runCmd bte entity tdTarget
 
     outputs <- verifyTargetSpec bte (M.keysSet rcrInputs) (M.keysSet rcrOutputs) tdTarget
     executionLog <-
@@ -994,20 +995,20 @@ buildTargetReal bte@BuildTargetEnv{..} token TargetDesc{..} =
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
 
-buildTarget :: BuildTargetEnv -> Parallelism.TokenCell -> TargetDesc -> IO Stats
-buildTarget bte@BuildTargetEnv{..} token TargetDesc{..} =
+buildTarget :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO Stats
+buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
   maybeRedirectExceptions bte TargetDesc{..} $ do
-    (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte token tdTarget
+    (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte entity tdTarget
     case explicitPathsBuilt of
       ExplicitPathsNotBuilt ->
         -- Failed to build our hints when allowed, just leave with collected stats
         return $ builtStats hintedBuiltTargets
       ExplicitPathsBuilt -> do
-        mSlaveStats <- findApplyExecutionLog bte token TargetDesc{..}
+        mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
         (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
           case mSlaveStats of
           Just res -> return (Stats.FromCache, res)
-          Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte token TargetDesc{..}
+          Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..}
         let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
         return $ stats <>
           Stats

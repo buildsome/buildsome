@@ -3,329 +3,289 @@ module Lib.Parallelism
   ( ParId
   , Pool, newPool
   , Priority(..)
-  , Fork(..), fork, wrapForkedChild, forkBoostPriority
-  , TokenCell, rootTokenCell
+  , Entity, rootEntity
+  , fork
+  , boostPriority
   , withReleased
   ) where
 
 -- TODO: Verify/guarantee that priorities of deps are always given as
 -- higher than parent
 
-import           Control.Concurrent (forkIO)
 import           Control.Concurrent.MVar
 import           Control.Monad (void, join)
 import           Data.Function (on)
 import           Data.IORef
 import qualified Data.List as List
-import           Lib.Exception (bracket, bracket_, finally, onException)
+import           Lib.Exception (bracket_, onException)
 import           Lib.IORef (atomicModifyIORef_)
 import           Lib.PoolAlloc (PoolAlloc, Priority(..), Alloc)
 import qualified Lib.PoolAlloc as PoolAlloc
 
-#if __GLASGOW_HASKELL__ <= 706
--- missing tryReadMVar
-tryReadMVar :: MVar a -> IO (Maybe a)
-tryReadMVar mvar = bracket (tryTakeMVar mvar) (maybe (return ()) (putMVar mvar)) return
-#endif
-
 type ParId = Int
 type Pool = PoolAlloc ParId
 
-data TokenCellState
-    = TokenCellAlloced ParId
-    | TokenCellAllocating (MVar ())
-    | TokenCellReleasedToChildren Int
-    | TokenCellFinished -- released back to parent
+data EntityState
+    = EntityForking !Priority !(Alloc ParId)
+    | EntityReallocating !Priority !(Alloc ParId)
+      {-Alloc complete: -}!(MVar ParId)
+    | EntityAlloced !ParId
+    | EntityReleasedToChildren
+      {-will realloc at: -}!Priority
+      {-children:       -}![Entity]
+      {-Moved to EntityReallocating: -}!(MVar (Alloc ParId))
+    | EntityReallocStarting !Priority {-Moved to EntityReallocating: -}!(MVar (Alloc ParId))
+      -- ^ Intermediate state towards EntityReallocating
+    | EntityFinished -- released back to parent
 
-data TokenCell = TokenCell
-    { tokenCellState :: IORef TokenCellState
-    , tokenCellFrom :: Maybe Fork
+data EntityNotifyParents
+    = EntityWillNotify {-parents-}[Entity]
+    | EntityAlreadyNotified
+
+data Entity = Entity
+    { entityState :: !(IORef EntityState)
+    , entityReleaseCounter :: !(IORef Int)
+    , entityNotifyParents :: !(IORef EntityNotifyParents)
     }
-
-data WaitContextState
-    = WaitContextWaiting
-    | WaitContextAllocating
-
-data WaitContext = WaitContext
-    { wcState :: IORef (WaitContextState, Priority) -- becomes Nothing when already read and allocation starts
-    , wcChildren :: IORef [Fork]
-    , -- REVIEW(Eyal): Move inside WaitContextAllocating?
-      wcParentAlloc :: MVar (Alloc ParId)
-    }
-
-data ForkState = ForkStarted [WaitContext] | ForkDone
-
-data Fork = Fork
-    { forkPool :: Pool
-    , forkState :: IORef ForkState
-    , forkAlloc :: Alloc ParId
-    , forkPriority :: IORef Priority
-    , forkWCs :: IORef [WaitContext]
-    }
-instance Eq Fork where
-    (==) = (==) `on` forkState -- compare ioref identities
+instance Eq Entity where
+    (==) = (==) `on` entityState -- compare ioref identities
 
 newPool :: ParId -> IO Pool
 newPool n = PoolAlloc.new [1..n]
 
-rootTokenCell :: Pool -> IO TokenCell
-rootTokenCell pool =
+rootEntity :: Priority -> Pool -> IO Entity
+rootEntity priority pool =
     do
-        state <- newIORef . TokenCellAlloced =<< PoolAlloc.alloc (Priority 0) pool
-        return $ TokenCell
-            { tokenCellState = state
-            , tokenCellFrom = Nothing
+        state <- newIORef . EntityAlloced =<< PoolAlloc.alloc priority pool
+        notifyParents <- newIORef $ EntityWillNotify []
+        releaseCounterRef <- newIORef 0
+        return $ Entity
+            { entityState = state
+            , entityNotifyParents = notifyParents
+            , entityReleaseCounter = releaseCounterRef
             }
 
--- Should run under mask, and then it is exception-safe (putMVar will
--- not block)
-waitContextDone :: PoolAlloc ParId -> WaitContext -> IO ()
-waitContextDone pool wc =
+modifyEntityState :: Entity -> (EntityState -> (EntityState, IO a)) -> IO a
+modifyEntityState entity = join . atomicModifyIORef (entityState entity)
+
+modifyEntityState_ :: Entity -> (EntityState -> EntityState) -> IO ()
+modifyEntityState_ = atomicModifyIORef_ . entityState
+
+-- runs under mask (non-blocking)
+allChildrenDone :: Priority -> Pool -> Entity -> IO ()
+allChildrenDone priority pool parent =
     do
-        -- Allocate on behalf of parent
-        priority <-
-            atomicModifyIORef (wcState wc) $
-            \(WaitContextWaiting, p) -> ((WaitContextAllocating, p), p)
-        parentAlloc <- PoolAlloc.startAlloc priority pool
-        putMVar (wcParentAlloc wc) parentAlloc
+        alloc <- PoolAlloc.startAlloc priority pool
+        allocCompletionMVar <- newEmptyMVar
+        modifyEntityState parent $
+            \(EntityReallocStarting priority' allocStartedMVar) ->
+            ( EntityReallocating (max priority priority') alloc allocCompletionMVar
+            , do
+                when (priority' > priority) $
+                    PoolAlloc.changePriority alloc priority'
+                putMVar allocStartedMVar alloc
+            )
 
--- Should run under mask, and then it is exception safe (non-blocking)
-notifyParentChildDone :: PoolAlloc ParId -> Fork -> WaitContext -> IO ()
-notifyParentChildDone pool child wc =
-    join $ atomicModifyIORef (wcChildren wc) $
-    \children ->
+-- runs under mask (non-blocking)
+notifyParent :: Pool -> Entity -> Entity -> IO ()
+notifyParent pool child parent =
+    modifyEntityState parent $
+    \(EntityReleasedToChildren priority children allocStartedMVar) ->
     case List.partition (== child) children of
-    ([_], []) -> ([], waitContextDone pool wc)
-    ([_], rest) -> (rest, return ())
-    _ -> error "Expecting to find child WC exactly once in list of children"
-
--- Should run under mask, and then it is exception safe (non-blocking)
-childDone :: PoolAlloc ParId -> Fork -> IO ()
-childDone pool child =
-    join $ atomicModifyIORef (forkState child) $ \oldState ->
-    case oldState of
-    ForkStarted parents ->
-        ( ForkDone
-        , mapM_ (notifyParentChildDone pool child) parents
+    ([_], []) ->
+        ( EntityReallocStarting priority allocStartedMVar
+        , allChildrenDone priority pool parent
         )
-    ForkDone -> error "Child done twice?!"
+    ([_], rest) ->
+        ( EntityReleasedToChildren priority rest allocStartedMVar
+        , return ()
+        )
+    _ -> error "Expecting to find child exactly once in parent's list of children"
 
--- Should run under mask, and then it is exception safe (non-blocking)
-linkChild :: Pool -> WaitContext -> Fork -> IO ()
-linkChild pool wc child =
-    join $ atomicModifyIORef (forkState child) $ \oldState ->
+-- runs under mask (non-blocking)
+childDone :: Pool -> Entity -> IO ()
+childDone pool child =
+    join $ atomicModifyIORef (entityNotifyParents child) $ \oldState ->
     case oldState of
-    ForkStarted parents -> (ForkStarted (wc:parents), return ())
-    ForkDone -> (ForkDone, notifyParentChildDone pool child wc)
+    EntityWillNotify parents ->
+        ( EntityAlreadyNotified
+        , mapM_ (notifyParent pool child) parents
+        )
+    EntityAlreadyNotified -> error "Child done twice?!"
 
-unlinkChild :: WaitContext -> Fork -> IO ()
-unlinkChild wc child =
-    atomicModifyIORef_ (forkState child) $ \oldState ->
+-- runs under mask (non-blocking)
+linkChild :: Pool -> Entity -> Entity -> IO ()
+linkChild pool parent child =
+    join $ atomicModifyIORef (entityNotifyParents child) $ \oldState ->
     case oldState of
-    ForkStarted parents ->
-        ForkStarted $ filter ((myMVar /=) . wcParentAlloc) parents
-    ForkDone -> ForkDone
-    where
-        myMVar = wcParentAlloc wc
+    EntityWillNotify parents -> (EntityWillNotify (parent:parents), return ())
+    EntityAlreadyNotified -> (EntityAlreadyNotified, notifyParent pool child parent)
 
-modifyTokenState :: TokenCell -> (TokenCellState -> (TokenCellState, IO a)) -> IO a
-modifyTokenState token = join . atomicModifyIORef (tokenCellState token)
-
+-- Runs under mask
 -- Interruptible, but exception-safe (no effect if async exception)
-releaseToken :: Pool -> TokenCell -> IO ()
-releaseToken pool token =
-    modifyTokenState token $
-    \state ->
-    case state of
-    TokenCellAlloced parId ->
-        (TokenCellReleasedToChildren 0, PoolAlloc.release pool parId)
-    TokenCellReleasedToChildren n ->
-        (TokenCellReleasedToChildren (n + 1), return ())
-    TokenCellAllocating mvar -> (state, readMVar mvar >> releaseToken pool token)
-    TokenCellFinished -> error "TokenCellFinished???"
+releaseToChildren :: Priority -> Pool -> Entity -> [Entity] -> IO ()
+releaseToChildren priority pool parent children =
+    do
+        allocStartedMVar <- newEmptyMVar
+        let
+            loop =
+                modifyEntityState parent $
+                \state ->
+                case state of
+                EntityForking {} -> error "withReleased must be invoked in a child context"
+                EntityAlloced parId ->
+                    ( EntityReleasedToChildren priority children allocStartedMVar
+                    , do
+                        -- The following don't throw exceptions and are non-blocking (we're not interruptible)
+                        mapM_ (linkChild pool parent) children
+                        PoolAlloc.release pool parId
+                    )
+                EntityReallocStarting allocPriority mvar ->
+                    ( EntityReallocStarting (max priority allocPriority) mvar
+                    , -- blocking readMVar may throw async exception, but
+                      -- that is a no-op at this point, so is fine
+                      readMVar mvar >> loop
+                    )
+                EntityReallocating _priority _alloc mvar ->
+                    ( state
+                    , -- ditto about blocking
+                      readMVar mvar >> loop
+                    )
+                EntityReleasedToChildren {} -> error "entityReleaseCounter should prevent this!"
+                EntityFinished -> error "EntityFinished in release to children?!"
+        loop
 
 -- Runs under uninterruptibleMask, thus exception-safe
-regainToken :: TokenCell -> WaitContext -> IO ()
-regainToken token wc =
-    do
-        mvar <- newEmptyMVar
-        modifyTokenState token $ \state ->
-            case state of
-            TokenCellReleasedToChildren 0 ->
-                ( TokenCellAllocating mvar
-                , (readMVar (wcParentAlloc wc) >>= PoolAlloc.finish >>= setAlloced)
-                  `finally` putMVar mvar ()
-                )
-            TokenCellReleasedToChildren n ->
-                ( TokenCellReleasedToChildren (n-1), return () )
-            _ -> error "regain at invalid state"
+reallocFromChildren :: Priority -> Entity -> IO ()
+reallocFromChildren priority parent =
+    modifyEntityState parent $ \state ->
+    case state of
+    EntityReleasedToChildren reallocPriority children allocStartedMVar ->
+        ( EntityReleasedToChildren (max priority reallocPriority) children
+          allocStartedMVar
+        , finishAlloc allocStartedMVar
+        )
+    EntityReallocStarting reallocPriority allocStartedMVar ->
+        ( EntityReallocStarting (max priority reallocPriority) allocStartedMVar
+        , finishAlloc allocStartedMVar
+        )
+    EntityReallocating reallocPriority alloc allocCompletionMVar ->
+        ( EntityReallocating (max priority reallocPriority) alloc allocCompletionMVar
+        , do
+            when (priority > reallocPriority) $
+                PoolAlloc.changePriority alloc priority
+            PoolAlloc.finish alloc >>= setAlloced
+        )
+    _ -> error "realloc at invalid state"
     where
+        finishAlloc allocStartedMVar =
+            readMVar allocStartedMVar
+            >>= PoolAlloc.finish
+            >>= setAlloced
         setAlloced parId =
-            modifyTokenState token $ \state ->
+            modifyEntityState parent $ \state ->
             case state of
-            TokenCellAllocating {} -> (TokenCellAlloced parId, return ())
-            _ -> error "Token state changed underneath us?!"
-
--- Exception-safe modulu partial/incorrect change of priority (while
--- specified priority is incorrectly updated as if priority fully
--- changed)
-wcBoostPriority :: Priority -> WaitContext -> IO ()
-wcBoostPriority priority wc =
-    do
-        needsUpdate <-
-            join $ atomicModifyIORef (wcState wc) $
-            \state ->
-            case state of
-            (_, oldPriority)
-                | priority <= oldPriority -> (state, return False)
-            (WaitContextWaiting, _) ->
-                ( (WaitContextWaiting, priority)
-                , return True -- the alloc will use the new priority, we're done
-                )
-            (WaitContextAllocating, _) ->
-                ( (WaitContextAllocating, priority)
-                , do
-                    alloc <- readMVar (wcParentAlloc wc)
-                    PoolAlloc.changePriority alloc priority
-                    return True
-                )
-        when needsUpdate $
-            readIORef (wcChildren wc) >>= mapM_ (forkBoostPriority priority)
-
--- Exception-safe modolu incorrect priority of wc upon exception (but
--- WC will die at that point, so that is moot)
-addWC :: WaitContext -> TokenCell -> IO ()
-addWC wc token =
-    case tokenCellFrom token of
-    Nothing -> return ()
-    Just parentFork ->
-        do
-            atomicModifyIORef_ (forkWCs parentFork) (wc:)
-            newForkPriority <- readIORef (forkPriority parentFork)
-            -- if we added the wc right after a fork priority boost,
-            -- it may have missed our addition, but then we know the
-            -- fork priority is necessarily already set, so read that
-            -- to see if boost needed
-            wcBoostPriority newForkPriority wc
-
-cancelParentAllocation :: Pool -> WaitContext -> IO ()
-cancelParentAllocation pool wc =
-    do
-        -- The children were unlinked, so nobody can fill the mvar
-        -- anymore, so this is not a race:
-        mAlloc <- tryReadMVar (wcParentAlloc wc)
-        case mAlloc of
-            Nothing ->
-                -- children didn't start alloc for us, nothing to do
-                return ()
-            Just alloc ->
-                -- children started alloc for us before we managed to
-                -- unlink them. There's no facility to cancel a
-                -- started allocation, but we can at least detach it
-                -- to a background thread that just allocates to
-                -- release:
-                void $ forkIO $ PoolAlloc.finish alloc >>= PoolAlloc.release pool
+            EntityReallocating _reallocPriority _alloc allocCompleteMVar ->
+                (EntityAlloced parId, putMVar allocCompleteMVar parId)
+            _ -> error "Entity state changed underneath us?!"
 
 -- NOTE: withReleased may be called multiple times on the same Cell,
 -- concurrently. This is allowed, but the parallelism will only be
--- released and regained once. The regain will occur after all
+-- released and realloced once. The realloc will occur after all
 -- withReleased sections completed. This means that not every
 -- "withReleased" completion actually incurs a re-allocation -- so
 -- withReleased can complete without parallelism being allocated. This
 -- happens anywhere whenever there is hidden concurrency in a build
 -- step, so it's not a big deal.
 
-withReleased :: Pool -> TokenCell -> Priority -> [Fork] -> IO a -> IO a
-withReleased pool token priority dupChildren action =
-    do  let beforeRelease =
-                do
-                    -- {
-                    mvar <- newEmptyMVar
-                    childrenRef <- newIORef children
-                    stateRef <- newIORef $ (WaitContextWaiting, priority)
-                    let wc = WaitContext
-                            { wcState = stateRef
-                            , wcChildren = childrenRef
-                            , wcParentAlloc = mvar
-                            }
-                    addWC wc token
-                    mapM_ (linkChild pool wc) children
-                    -- }-- REVIEW(Eyal): braced code should be entry
-                    -- to its own bracketOnError (missing in
-                    -- Lib.Exception!), with unlinkChildren as cleanup
-
-                    -- If releaseToken blocks and is interrupted by an
-                    -- async exception, it had no effect, so it is
-                    -- safe
-                    releaseToken pool token
-                        `onException`
-                        do
-                            mapM_ (unlinkChild wc) children
-                            -- REVIEW(Eyal): What was I thinking?! Don't cancelParentAllocation, but regain!
-                            cancelParentAllocation pool wc
-        let afterRelease = regainToken token wc
-        bracket beforeRelease afterRelease action
+withReleased :: Priority -> Pool -> Entity -> [Entity] -> IO r -> IO r
+withReleased priority pool parent dupChildren =
+    bracket_ maybeReleaseToChildren maybeReallocFromChildren
     where
+        maybeReleaseToChildren =
+            onReleaseCounter $
+            \n -> (n + 1, when (n == 0) $ releaseToChildren priority pool parent children)
+        maybeReallocFromChildren =
+            onReleaseCounter $
+            \n -> (n - 1, when (n == 1) $ reallocFromChildren priority parent)
+        onReleaseCounter = join . atomicModifyIORef' (entityReleaseCounter parent)
         children = List.nub dupChildren
 
--- Must run masked (so allocation gets a chance to run)
-wrapForkedChild :: Fork -> (TokenCell -> IO r) -> IO r
-wrapForkedChild child =
-    bracket (beforeChild `onException` cancelFork) afterChild
+-- | Must use the resulting wrapper on the child (which implies
+-- masking this call)!
+fork :: Pool -> Priority -> IO (Entity, IO a -> IO a)
+fork pool priority =
+    do
+        alloc <- PoolAlloc.startAlloc priority pool
+        stateRef <- newIORef $ EntityForking priority alloc
+        notifyParentsRef <- newIORef $ EntityWillNotify []
+        releaseCounterRef <- newIORef 0
+        let entity =
+                Entity
+                { entityState = stateRef
+                , entityReleaseCounter = releaseCounterRef
+                , entityNotifyParents = notifyParentsRef
+                }
+        return (entity, wrapChild pool entity alloc)
+
+-- Must run masked (implied by wrapChild being guaranteed to run)
+wrapChild :: Pool -> Entity -> Alloc ParId -> IO a -> IO a
+wrapChild pool child alloc =
+    bracket_ (beforeChild `onException` cancel) afterChild
     where
-        pool = forkPool child
-        cancelFork = childDone pool child
-        beforeChild =
-            do
-                -- This blocks and may be interruptible legitimately
-                -- by an exception and then cancelFork will make sure
-                -- nobody waits for us forever
-                parId <- PoolAlloc.finish $ forkAlloc child
-                cellState <- newIORef $ TokenCellAlloced parId
-                return TokenCell
-                    { tokenCellState = cellState
-                    , tokenCellFrom = Just child
-                    }
-        afterChild token =
+        setStateAfterForking newState =
+            modifyEntityState_ child $ \state ->
+            case state of
+                EntityForking _priority _alloc -> newState
+                _ -> error "wrapChild called in invalid state"
+        cancel = setStateAfterForking EntityFinished >> childDone pool child
+        beforeChild = setStateAfterForking . EntityAlloced =<< PoolAlloc.finish alloc
+        afterChild =
             -- runs under uninterruptibleMask
-            modifyTokenState token $
+            modifyEntityState child $
             \oldState ->
             case oldState of
-            TokenCellAlloced parId ->
-                ( TokenCellFinished
+            EntityAlloced parId ->
+                ( EntityFinished
                 , do
                     childDone pool child
                     PoolAlloc.release pool parId
                 )
             _ -> error "forked child did not return to Alloced state"
 
--- | Must call wrapForkedChild at the child context!
--- Must mask this call to guarantee the above!
-fork :: Pool -> Priority -> IO Fork
-fork pool priority =
-    do
-        alloc <- PoolAlloc.startAlloc priority pool
-        state <- newIORef $ ForkStarted []
-        priorityRef <- newIORef priority
-        wcs <- newIORef []
-        return Fork
-            { forkPool = pool
-            , forkState = state
-            , forkAlloc = alloc
-            , forkPriority = priorityRef
-            , forkWCs = wcs
-            }
-
--- | Boost the priority of a fork and all of its dependencies to at
--- least the given priority. This assumes dependencies of all forks
--- are always at least as high in their priority as their parent.
-forkBoostPriority :: Priority -> Fork -> IO ()
-forkBoostPriority priority f =
-    do
-        curPriority <- readIORef $ forkPriority f
-        when (priority > curPriority) $
-            writeIORef (forkPriority f) priority
-            `finally`
-            do
-                PoolAlloc.changePriority (forkAlloc f) priority
-                mapM_ (wcBoostPriority priority) =<< readIORef (forkWCs f)
+-- | Boost the priority of an entity and all of its dependencies to at
+-- least the given priority. This assumes dependencies of all entities
+-- are always at least as high in their priority as their parent (an
+-- invariant that is currently unchecked)
+boostPriority :: Priority -> Entity -> IO ()
+boostPriority priority entity =
+    modifyEntityState entity $
+    \state ->
+        let doNothing = (state, return ())
+            boost oldPriority pair
+                | priority > oldPriority = pair
+                | otherwise = doNothing
+        in
+        case state of
+        EntityForking forkPriority alloc ->
+            boost forkPriority
+            ( EntityForking priority alloc
+            , PoolAlloc.changePriority alloc priority
+            )
+        EntityReallocating reallocPriority alloc mvar ->
+            boost reallocPriority
+            ( EntityReallocating priority alloc mvar
+            , PoolAlloc.changePriority alloc priority
+            )
+        EntityReleasedToChildren reallocPriority children mvar ->
+            boost reallocPriority
+            ( EntityReleasedToChildren priority children mvar
+            , mapM_ (boostPriority priority) children
+            )
+        EntityReallocStarting reallocPriority mvar ->
+            ( EntityReallocStarting (max priority reallocPriority) mvar
+            , return ()
+            )
+        -- Not waiting for children, not allocating, do nothing:
+        EntityAlloced _parId -> doNothing
+        EntityFinished -> doNothing

@@ -5,7 +5,7 @@ module Lib.Exception
   ( finally
   , onException, onExceptionWith
   , catch, handle
-  , bracket, bracket_
+  , bracket, bracket_, bracketOnError
   , logErrors
   , handleSync
   ) where
@@ -57,6 +57,9 @@ bracket before after = E.bracket before (E.uninterruptibleMask_ . after)
 
 bracket_ :: IO a -> IO () -> IO b -> IO b
 bracket_ before after = E.bracket_ before (E.uninterruptibleMask_ after)
+
+bracketOnError :: IO a -> (a -> IO ()) -> (a -> IO b) -> IO b
+bracketOnError before after = E.bracketOnError before (E.uninterruptibleMask_ . after)
 
 
 ---------------------------------------------------------------------------
