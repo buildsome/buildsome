@@ -1,5 +1,9 @@
 {-# LANGUAGE DeriveDataTypeable #-}
-module Lib.AnnotatedException (annotateException, AnnotatedException(..)) where
+module Lib.AnnotatedException
+  ( annotateException
+  , AnnotatedException(..)
+  , unannotateException
+  ) where
 
 import Data.Typeable (Typeable)
 import qualified Control.Exception as E
@@ -15,3 +19,8 @@ annotateException str = E.handle wrapper
   where
     wrapper e@E.SomeException {} = E.throwIO (AnnotatedException str e)
 
+unannotateException :: E.SomeException -> E.SomeException
+unannotateException e =
+    case E.fromException e of
+    Just (AnnotatedException _ inner) -> unannotateException inner
+    _ -> e

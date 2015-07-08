@@ -45,7 +45,7 @@ import           Data.Time (DiffTime)
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Traversable (traverse)
 import           Data.Typeable (Typeable)
-import           Lib.AnnotatedException (annotateException)
+import           Lib.AnnotatedException (annotateException, unannotateException)
 import qualified Lib.Cmp as Cmp
 import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
@@ -469,12 +469,14 @@ showFirstLine = fromString . concat . take 1 . lines . show
 
 syncCatchAndLogSpeculativeErrors :: Printer -> TargetDesc -> (E.SomeException -> a) -> IO a -> IO a
 syncCatchAndLogSpeculativeErrors printer TargetDesc{..} errRes =
-  handleSync $ \e@E.SomeException {} ->
-    do
-      Print.posMessage printer (targetPos tdTarget) $ cWarning $
-        "Warning: Ignoring failed build of speculative target: " <>
-        cTarget (show tdRep) <> " " <> showFirstLine e
-      return (errRes e)
+  handleSync $ \e ->
+  do
+    case E.fromException (unannotateException e) of
+      Just E.ThreadKilled -> return ()
+      _ -> Print.posMessage printer (targetPos tdTarget) $ cWarning $
+           "Warning: Ignoring failed build of speculative target: " <>
+           cTarget (show tdRep) <> " " <> showFirstLine e
+    return (errRes e)
   where
     Color.Scheme{..} = Color.scheme
 
