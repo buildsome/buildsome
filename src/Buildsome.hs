@@ -669,7 +669,9 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
     do
       (fork, slave) <-
         SyncMap.insert (bsSlaveByTargetRep bteBuildsome) tdRep $
-        panicOnError $ withTimeout $
+        panicOnError $
+        E.uninterruptibleMask $ \restoreUninterruptible ->
+        withTimeout $
         do
           -- SyncMap runs this uninterruptible, so should not block
           -- indefinitely.
@@ -677,7 +679,9 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
           depPrinter <- Printer.newFrom btePrinter depPrinterId
           -- NOTE: finishFork MUST be called to avoid leak!
           (fork, wrapChild) <- Parallelism.fork (bsParPool bteBuildsome) btePriority
-          slave <- Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
+          slave <-
+            restoreUninterruptible $
+            Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
             \unmask -> annotateException failureMsg $
                 -- Must remain masked through finishFork so it gets a
                 -- chance to handle alloc/exception!
