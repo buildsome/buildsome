@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-BUILDSOME=buildsome
+buildsome=${1:-buildsome}
 
 cd $(dirname $0)
 
@@ -24,7 +24,7 @@ bar.%: src.%
 
 EOF
 
-${BUILDSOME}
+${buildsome}
 
 # Without src.1 the pattern rule no longer holds, so buildsome should
 # delete {foo,bar}.1 and know not to use it even though it *was* a
@@ -47,6 +47,6 @@ bar.%: src.%
 
 EOF
 
-${BUILDSOME}
+${buildsome}
 
 rm -rf ${FILES}

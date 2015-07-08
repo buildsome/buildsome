@@ -2,35 +2,40 @@
 
 set -e
 
-buildsome=../dist/build/buildsome/buildsome
+buildsome=$(realpath ../dist/build/buildsome/buildsome)
 
 # DLopen
-${buildsome} -f dlopen && ${buildsome} -f dlopen
+${buildsome} -f dlopen
+${buildsome} -f dlopen
 git clean -fdx -- dlopen
 
 ifs/test
 git clean -fdx -- ifs
 
-${buildsome} -f implicitpat && ${buildsome} -f implicitpat
+${buildsome} -f implicitpat
+${buildsome} -f implicitpat
 git clean -fdx -- implicitpat
 
-${buildsome} -f par -j4 && ${buildsome} -f par -j4
+${buildsome} -f par -j4 || echo Failure expected
+${buildsome} -f par -j4 || echo Failure expected
 git clean -fdx -- par
 
-remove_pattern_target/test
+remove_pattern_target/test ${buildsome}
 git clean -fdx -- remove_pattern_target
 
-scratch/run_tests
+scratch/run_tests ${buildsome}
 git clean -fdx -- scratch
 
-${buildsome} -f stat && ${buildsome} -f stat
+${buildsome} -f stat
+${buildsome} -f stat
 git clean -fdx -- stat
 
-wrongparorder/test
+wrongparorder/test ${buildsome}
 git clean -fdx -- wrongparorder
 
-${buildsome} -f overpar && ${buildsome} -f overpar
+${buildsome} -f overpar
+${buildsome} -f overpar
 git clean -fdx -- overpar
 
-speculative_error/test
+speculative_error/test ${buildsome}
 git clean -fdx -- speculative_error

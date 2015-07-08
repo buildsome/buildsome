@@ -1,4 +1,5 @@
 #!/bin/bash
+buildsome=${1:-buildsome}
 cd $(dirname $0)
 set -e
 mkdir files 2>/dev/null || true
@@ -18,6 +19,6 @@ staticinput.%:
 	echo > \$@
 	sync
 EOF
-(cd files && buildsome)
+(cd files && ${buildsome})
 ls -1tr files/{staticinput.[12],[12].input,a} > files/order
 diff -u expected files/order || exit 1
