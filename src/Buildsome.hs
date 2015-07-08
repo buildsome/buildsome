@@ -470,15 +470,20 @@ maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..}
 showFirstLine :: (Show a, IsString b) => a -> b
 showFirstLine = fromString . concat . take 1 . lines . show
 
+isThreadKilled :: E.SomeException -> Bool
+isThreadKilled e =
+  case E.fromException (unannotateException e) of
+  Just E.ThreadKilled -> True
+  _ -> False
+
 syncCatchAndLogSpeculativeErrors :: Printer -> TargetDesc -> (E.SomeException -> a) -> IO a -> IO a
 syncCatchAndLogSpeculativeErrors printer TargetDesc{..} errRes =
   handleSync $ \e ->
   do
-    case E.fromException (unannotateException e) of
-      Just E.ThreadKilled -> return ()
-      _ -> Print.posMessage printer (targetPos tdTarget) $ cWarning $
-           "Warning: Ignoring failed build of speculative target: " <>
-           cTarget (show tdRep) <> " " <> showFirstLine e
+    unless (isThreadKilled e) $
+      Print.posMessage printer (targetPos tdTarget) $ cWarning $
+      "Warning: Ignoring failed build of speculative target: " <>
+      cTarget (show tdRep) <> " " <> showFirstLine e
     return (errRes e)
   where
     Color.Scheme{..} = Color.scheme
@@ -606,6 +611,8 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
     Just executionLog -> do
       eRes <- tryApplyExecutionLog bte entity TargetDesc{..} executionLog
       case eRes of
+        Left (SpeculativeBuildFailure exception)
+          | isThreadKilled exception -> return Nothing
         Left err -> do
           printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
             [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
