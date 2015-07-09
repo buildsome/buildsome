@@ -278,12 +278,12 @@ handleRequested
 
 main :: IO ()
 main = do
+  setBuffering
   setNumCapabilities =<< getNumProcessors
   opts <- Opts.get
   render <- getColorRender opts
   printer <- Printer.new render 0
   handleOpts printer opts $
     \db opt requested finalMakefilePath makefile -> do
-      setBuffering
       Buildsome.with printer db finalMakefilePath makefile opt $ \buildsome ->
         handleRequested buildsome printer requested
