@@ -49,11 +49,14 @@ dequeue (PriorityQueue priorities) =
             | otherwise = Map.insert priority fifo' priorities
 
 extract :: Priority -> (a -> Bool) -> PriorityQueue a -> (PriorityQueue a, [a])
-extract priority p (PriorityQueue priorities) =
+extract priority p old@(PriorityQueue priorities) =
   case Map.lookup priority priorities of
-  Nothing -> (PriorityQueue priorities, [])
+  Nothing -> (old, [])
   Just fifo ->
-    ( PriorityQueue $ Map.insert priority fifo' priorities
+    ( PriorityQueue $
+      if Fifo.null fifo'
+      then Map.delete priority       priorities
+      else Map.insert priority fifo' priorities
     , xs )
     where
       (fifo', xs) = Fifo.extract p fifo
