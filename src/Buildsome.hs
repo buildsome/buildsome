@@ -661,7 +661,7 @@ instance Show PanicError where
 
 panic :: (ColorText -> ByteString) -> String -> IO a
 panic render msg = do
-  IO.hPutStrLn IO.stderr $ "PANIC: " ++ msg
+  putLn IO.stderr $ "PANIC: " ++ msg
   E.throwIO $ PanicError render msg
 
 fst3 :: (a, b, c) -> a
@@ -1144,8 +1144,8 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     errorRef <- newIORef Nothing
     let
       killOnce msg exception =
-        void $ runOnce $ do
-          putStrLn msg
+        void $ E.uninterruptibleMask_ $ runOnce $ do
+          putLn IO.stderr msg
           atomicModifyIORef_ errorRef $ maybe (Just exception) Just
           forkIO $ onAllSlaves CancelAndWait printer buildsome
       buildsome =

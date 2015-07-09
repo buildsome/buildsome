@@ -97,10 +97,10 @@ idStr = fromString . printf "T%03d"
 
 {-# INLINE printStrLn #-}
 printStrLn :: Printable str => Printer -> str -> IO ()
-printStrLn (Printer pid toBS indentRef) str = do
+printStrLn printer@(Printer pid _ indentRef) str = do
   indentLevel <- readIORef indentRef
   let prefix = idStr pid <> " " <> mconcat (replicate indentLevel "  ")
-  wrapOutputCall $ putStrLn toBS $ intercalate "\n" $ map (prefix <>) $ lines str
+  rawPrintStrLn printer $ intercalate "\n" $ map (prefix <>) $ lines str
 
 {-# INLINE rawPrintStrLn #-}
 rawPrintStrLn :: Printable str => Printer -> str -> IO ()
