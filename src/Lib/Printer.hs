@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings, FlexibleInstances, RecordWildCards #-}
 module Lib.Printer
-  ( Id, idStr, strLn
+  ( Id, idStr
   , Printable
   , Printer, new, newFrom, render
   , printStrLn, rawPrintStrLn
@@ -74,7 +74,7 @@ instance Printable ColorText where
   {-# INLINE putStrLn #-}
 
 data Printer = Printer
-  { printerId :: Id
+  { _printerId :: Id
   , printerRender :: ColorText -> ByteString
   , printerIndentLevelRef :: IORef Int
   }
@@ -94,9 +94,6 @@ newFrom (Printer _id toBS indentRef) pid =
 {-# INLINE idStr #-}
 idStr :: IsString str => Id -> str
 idStr = fromString . printf "T%03d"
-
-strLn :: (Monoid str, IsString str) => Printer -> str -> str
-strLn printer str = idStr (printerId printer) <> ": " <> str
 
 {-# INLINE printStrLn #-}
 printStrLn :: Printable str => Printer -> str -> IO ()
