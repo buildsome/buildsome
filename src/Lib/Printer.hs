@@ -39,8 +39,8 @@ ignoreResourceVanished act = do
 wrapOutputCall :: IO () -> IO ()
 wrapOutputCall = E.uninterruptibleMask_ . ignoreResourceVanished
 
-putLn :: String -> IO ()
-putLn = wrapOutputCall . IO.hPutStrLn IO.stderr
+putLn :: IO.Handle -> String -> IO ()
+putLn handle = wrapOutputCall . IO.hPutStrLn handle
 
 type Id = Int
 
@@ -130,7 +130,7 @@ printWrap ColorScheme{..} printer str entryMsg body = do
 
 {-# INLINE rawPrintWrap #-}
 rawPrintWrap :: String -> IO a -> IO a
-rawPrintWrap str = bracket_ (putLn (str ++ "{")) (putLn (str ++ "}"))
+rawPrintWrap str = bracket_ (putLn IO.stdout (str ++ "{")) (putLn IO.stdout (str ++ "}"))
 
 {-# INLINE rawPrinterWrap #-}
 rawPrinterWrap :: Printer -> String -> IO a -> IO a

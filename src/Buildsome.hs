@@ -142,9 +142,9 @@ whenVerbose buildsome = when verbose
   where
     verbose = Opts.verbosityGeneral $ optVerbosity $ bsOpts buildsome
 
-verbosePutLn :: Buildsome -> String -> IO ()
-verbosePutLn buildsome str =
-  whenVerbose buildsome $ putLn str
+verbosePutLn :: Buildsome -> IO.Handle -> String -> IO ()
+verbosePutLn buildsome outHandle str =
+  whenVerbose buildsome $ putLn outHandle str
 
 updateGitIgnore :: Buildsome -> FilePath -> IO ()
 updateGitIgnore buildsome makefilePath = do
@@ -154,7 +154,7 @@ updateGitIgnore buildsome makefilePath = do
       gitIgnorePath = dir </> ".gitignore"
       gitIgnoreBasePath = dir </> gitignoreBaseName
       extraIgnored = [buildDbFilename makefilePath, ".gitignore"]
-  verbosePutLn buildsome "Updating .gitignore"
+  verbosePutLn buildsome IO.stdout "Updating .gitignore"
   base <- Dir.catchDoesNotExist
           (fmap BS8.lines $ BS8.readFile $  BS8.unpack gitIgnoreBasePath)
           $ return []
