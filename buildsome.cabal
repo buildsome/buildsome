@@ -46,7 +46,6 @@ executable buildsome
                ,     Buildsome.Print
                ,     Buildsome.Slave
                ,     Buildsome.Stats
-               ,     Lib.AnnotatedException
                ,     Lib.AnsiConsoleUtils
                ,     Lib.Argv0
                ,     Lib.AsyncContext

@@ -45,7 +45,6 @@ import           Data.Time (DiffTime)
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Traversable (traverse)
 import           Data.Typeable (Typeable)
-import           Lib.AnnotatedException (annotateException, unannotateException)
 import qualified Lib.Cmp as Cmp
 import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
@@ -453,14 +452,32 @@ data TargetDesc = TargetDesc
   , tdTarget :: Target
   }
 
+data WrapException = WrapException (ColorText -> ByteString) Parents E.SomeException
+  deriving (Typeable)
+instance E.Exception WrapException
+instance Show WrapException where
+  show (WrapException render parents exc) =
+    BS8.unpack $ render $ cError $
+    "While trying to build:" <> showParents parents <>
+    ":\n" <> show exc
+    where
+      Color.Scheme{..} = Color.scheme
+
+unwrapException :: E.SomeException -> E.SomeException
+unwrapException e =
+    case E.fromException e of
+    Just (WrapException _ _ inner) -> unwrapException inner
+    _ -> e
+
 maybeRedirectExceptions :: BuildTargetEnv -> TargetDesc -> IO a -> IO a
-maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..}
-  | bteSpeculative = id
-  | otherwise =
-    handleSync $ \e@E.SomeException {} -> do
-      Printer.printStrLn btePrinter $ cTarget (show tdRep) <> ": " <> cError "Failed"
-      bsFastKillBuild bteBuildsome e
-      E.throwIO e
+maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..} =
+  handleSync $ \e@E.SomeException {} -> do
+    let e' = WrapException (bsRender bteBuildsome) bteParents e
+    unless bteSpeculative $
+      do
+        Printer.printStrLn btePrinter $ cTarget (show tdRep) <> ": " <> cError "Failed"
+        bsFastKillBuild bteBuildsome (E.SomeException e')
+    E.throwIO e'
   where
     Color.Scheme{..} = Color.scheme
 
@@ -469,7 +486,7 @@ showFirstLine = fromString . concat . take 1 . lines . show
 
 isThreadKilled :: E.SomeException -> Bool
 isThreadKilled e =
-  case E.fromException (unannotateException e) of
+  case E.fromException (unwrapException e) of
   Just E.ThreadKilled -> True
   _ -> False
 
@@ -667,7 +684,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
       -- NOTE: allocParCell MUST be called to avoid leak!
       allocParCell <- Parallelism.startAlloc btePriority $ bsParallelism bteBuildsome
       Slave.newWithUnmask tdTarget depPrinterId (targetOutputs tdTarget) $
-        \unmask -> annotateException failureMsg $ do
+        \unmask ->
           -- Must remain masked through allocParCell so it gets a
           -- chance to handle alloc/exception!
           allocParCell $ \parCell -> unmask $ do
@@ -675,9 +692,6 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
             buildTarget newBte parCell TargetDesc{..}
     where
       Color.Scheme{..} = Color.scheme
-      failureMsg =
-        BS8.unpack $ bsRender bteBuildsome $
-        "build failure of " <> cTarget (show (targetOutputs tdTarget)) <> ":\n"
       newParents = (tdRep, tdTarget, bteReason) : bteParents
       panicHandler e@E.SomeException {} =
         panic (bsRender bteBuildsome) $ "FAILED during making of slave: " ++ show e
