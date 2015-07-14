@@ -37,14 +37,14 @@ priorityVal (Priority True val) = 1+val
 
 data EntityRunningState
     = EntityForking !(Alloc ParId)
-    | EntityReallocating !(Alloc ParId)
-      {-Alloc complete: -}!(MVar ParId)
     | EntityAlloced !ParId
     | EntityReleasedToChildren
       {-children:       -}![Entity]
       {-Moved to EntityReallocating: -}!(MVar (Alloc ParId))
     | EntityReallocStarting {-Moved to EntityReallocating: -}!(MVar (Alloc ParId))
       -- ^ Intermediate state towards EntityReallocating
+    | EntityReallocating !(Alloc ParId)
+      {-Alloc complete: -}!(MVar ParId)
 
 data EntityRunning = EntityRunning
     { entityRunningParents :: [Entity]
@@ -144,11 +144,11 @@ linkChild :: Printer -> Pool -> Entity -> Entity -> IO ()
 linkChild printer pool parent child =
     modifyEntityState child $ \oldState ->
     case oldState of
+    EntityStateFinished -> (EntityStateFinished, notifyParent printer pool child parent)
     EntityStateRunning er ->
         ( EntityStateRunning er { entityRunningParents = parent:entityRunningParents er }
         , return ()
         )
-    EntityStateFinished -> (EntityStateFinished, notifyParent printer pool child parent)
 
 cancelAllocation :: Pool -> Alloc ParId -> IO ()
 cancelAllocation pool alloc =
@@ -194,11 +194,14 @@ maybeReleaseToChildrenLoop allocStartedMVar printer pool parent children =
         , -- ditto about blocking
           readMVar mvar >> loop
         )
+
+    -- All children are done:
     EntityReallocating alloc allocCompletionMVar ->
         ( (rc + 1, EntityReleasedToChildren children allocStartedMVar)
+          -- TODO: readMVar allocStartedMVar >> loop
         , do
             mapM_ linkBoost children
-            putMVar allocCompletionMVar $ error $
+            True <- tryPutMVar allocCompletionMVar $ error $
                 "Only releaseToChildren(rc == 0) should read this " ++
                 "mvar but we increased counter so it should not be " ++
                 "invoked! reallocFromChildren should put to this " ++
@@ -210,8 +213,7 @@ maybeReleaseToChildrenLoop allocStartedMVar printer pool parent children =
     EntityReleasedToChildren {} | rc == 0 -> error "Cannot be releaseToChildren when got token!"
     EntityReleasedToChildren oldChildren oldAllocStartedMVar ->
         ( ( rc + 1
-          , EntityReleasedToChildren (uniqueChildren ++ oldChildren)
-            oldAllocStartedMVar
+          , EntityReleasedToChildren (uniqueChildren ++ oldChildren) oldAllocStartedMVar
           )
         , mapM_ linkBoost uniqueChildren
         )
@@ -251,13 +253,14 @@ maybeReallocFromChildren _printer parent =
         , return ()
         )
     where
-        finishAlloc alloc = PoolAlloc.finish alloc >>= setAlloced
-        setAlloced parId =
-            modifyEntityRunningState parent $ \_running state ->
-            case state of
-            EntityReallocating _alloc allocCompleteMVar ->
-                (EntityAlloced parId, putMVar allocCompleteMVar parId)
-            _ -> error "Entity state changed underneath us?!"
+        finishAlloc alloc =
+            do
+                parId <- PoolAlloc.finish alloc
+                modifyEntityRunningState parent $ \_running state ->
+                    case state of
+                    EntityReallocating _alloc allocCompleteMVar ->
+                        (EntityAlloced parId, putMVar allocCompleteMVar parId)
+                    _ -> error "Entity state changed underneath us?!"
 
 -- NOTE: withReleased may be called multiple times on the same Cell,
 -- concurrently. This is allowed, but the parallelism will only be
@@ -298,6 +301,7 @@ fork ident _printer pool =
         return (entity, wrapChild pool entity alloc)
 
 -- Called only if the fork allocation has failed!
+-- Runs under uninterruptibleMask
 cancelFork :: Printer -> Pool -> Entity -> IO ()
 cancelFork printer pool child =
     modifyEntityState child $ \state ->
@@ -352,18 +356,18 @@ boostPriority printer upgrade entity =
     EntityStateRunning (EntityRunning parents oldPriority rc runState)
         | priorityVal newPriority <= priorityVal oldPriority -> (state, return ())
         | otherwise ->
-            (,)
-            (EntityStateRunning (EntityRunning parents newPriority rc runState)) $
-            case runState of
-            EntityForking alloc ->
-                PoolAlloc.changePriority alloc (priorityVal newPriority)
-            EntityReallocating alloc _mvar ->
-                PoolAlloc.changePriority alloc (priorityVal newPriority)
-            EntityReleasedToChildren children _mvar ->
-                mapM_ (boostChildPriority printer (priorityVal newPriority)) children
-            EntityReallocStarting _ -> return ()
-            -- Not waiting for children, not allocating, do nothing:
-            EntityAlloced _ -> return ()
+            ( EntityStateRunning (EntityRunning parents newPriority rc runState)
+            , case runState of
+              EntityForking alloc ->
+                  PoolAlloc.changePriority alloc (priorityVal newPriority)
+              EntityReallocating alloc _mvar ->
+                  PoolAlloc.changePriority alloc (priorityVal newPriority)
+              EntityReleasedToChildren children _mvar ->
+                  mapM_ (boostChildPriority printer (priorityVal newPriority)) children
+              EntityReallocStarting _ -> return ()
+              -- Not waiting for children, not allocating, do nothing:
+              EntityAlloced _ -> return ()
+            )
         where
             newPriority = upgrade oldPriority
 
