@@ -47,7 +47,9 @@ startAlloc :: Priority -> PoolAlloc a -> IO (Alloc a)
 startAlloc priority (PoolAlloc stateRef) = do
   candidate <- newEmptyMVar
   ident <- newIORef ()
-  let f (PoolState [] waiters) =
+  atomicModifyIORef' stateRef $ \(PoolState tokens waiters) ->
+    case tokens of
+      [] ->
         ( PoolState [] (PriorityQueue.enqueue priority candidate waiters)
         , Alloc
           { finish = takeMVar candidate `onException` stopAllocation candidate
@@ -55,8 +57,10 @@ startAlloc priority (PoolAlloc stateRef) = do
           , identity = ident
           }
         )
-      f (PoolState (x:xs) waiters)
-        | PriorityQueue.null waiters =
+      x:xs
+        | not (PriorityQueue.null waiters) ->
+          error "Invariant broken: waiters when free elements exist (startAlloc)"
+        | otherwise ->
           ( PoolState xs waiters
           , Alloc
             { finish = return x
@@ -64,8 +68,6 @@ startAlloc priority (PoolAlloc stateRef) = do
             , identity = ident
             }
           )
-        | otherwise = error "Invariant broken: waiters when free elements exist (startAlloc)"
-  atomicModifyIORef' stateRef f
   where
     extract waiters candidate notThere extracted =
       case PriorityQueue.extract priority (== candidate) waiters of
