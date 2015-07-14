@@ -462,16 +462,22 @@ instance Show WrapException where
     where
       Color.Scheme{..} = Color.scheme
 
+wrapException :: Buildsome -> Parents -> E.SomeException -> E.SomeException
+wrapException buildsome parents exc =
+    case E.fromException exc of
+    Just WrapException {} -> exc
+    Nothing -> E.SomeException (WrapException (bsRender buildsome) parents exc)
+
 unwrapException :: E.SomeException -> E.SomeException
-unwrapException e =
-    case E.fromException e of
+unwrapException exc =
+    case E.fromException exc of
     Just (WrapException _ _ inner) -> unwrapException inner
-    _ -> e
+    Nothing -> exc
 
 maybeRedirectExceptions :: BuildTargetEnv -> TargetDesc -> IO a -> IO a
 maybeRedirectExceptions BuildTargetEnv{..} TargetDesc{..} =
   handleSync $ \e@E.SomeException {} -> do
-    let e' = WrapException (bsRender bteBuildsome) bteParents e
+    let e' = wrapException bteBuildsome bteParents e
     unless bteSpeculative $
       do
         Printer.printStrLn btePrinter $ cTarget (show tdRep) <> ": " <> cError "Failed"
