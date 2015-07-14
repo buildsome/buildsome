@@ -710,6 +710,11 @@ DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
     OPEN_HANDLER(open64, path, flags);
 }
 
+DEFINE_WRAPPER(int, __open_2, (const char *path, int flags, ...))
+{
+    OPEN_HANDLER(__open_2, path, flags);
+}
+
 struct fopen_mode_bools {
     bool is_create;
     bool is_write;
