@@ -457,9 +457,8 @@ data WrapException = WrapException (ColorText -> ByteString) Parents E.SomeExcep
 instance E.Exception WrapException
 instance Show WrapException where
   show (WrapException render parents exc) =
-    BS8.unpack $ render $ cError $
-    "While trying to build:" <> showParents parents <>
-    ":\n" <> show exc
+    BS8.unpack $ render $ show exc <>
+    "\nWhile trying to build:" <> showParents parents
     where
       Color.Scheme{..} = Color.scheme
 
