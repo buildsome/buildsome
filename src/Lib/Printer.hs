@@ -7,42 +7,23 @@ module Lib.Printer
   , printWrap
   , ColorScheme(..)
   , rawPrintWrap, rawPrinterWrap
-  , putLn
   ) where
 
 import qualified Prelude
 import           Prelude hiding (lines, putStrLn)
-
 import           Control.Applicative ((<$>))
-import qualified Control.Exception as E
-import           Control.Monad (unless)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef
 import qualified Data.List as List
 import           Data.Monoid
 import           Data.String (IsString(..))
-import qualified GHC.IO.Exception as G
 import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
-import           Lib.Exception (onExceptionWith, bracket_)
+import           Lib.Exception (onExceptionWith, bracket_, putLn, swallowExceptions)
 import qualified Lib.Show as Show
 import qualified System.IO as IO
 import           Text.Printf (printf)
-
-ignoreResourceVanished :: IO () -> IO ()
-ignoreResourceVanished act = do
-  res <- E.try act
-  case res of
-    Right x -> return x
-    Left e@(G.IOError { G.ioe_type = t }) ->
-      unless (t == G.ResourceVanished) $ E.throwIO e
-
-wrapOutputCall :: IO () -> IO ()
-wrapOutputCall = E.uninterruptibleMask_ . ignoreResourceVanished
-
-putLn :: IO.Handle -> String -> IO ()
-putLn handle = wrapOutputCall . IO.hPutStrLn handle
 
 newtype Id = Id Int
     deriving Enum
@@ -107,7 +88,7 @@ printStrLn printer@(Printer pid _ indentRef) str = do
 
 {-# INLINE rawPrintStrLn #-}
 rawPrintStrLn :: Printable str => Printer -> str -> IO ()
-rawPrintStrLn (Printer _ toBS _) = wrapOutputCall . putStrLn toBS
+rawPrintStrLn (Printer _ toBS _) = swallowExceptions . putStrLn toBS
 
 data ColorScheme = ColorScheme
   { cException :: ColorText -> ColorText

@@ -49,7 +49,7 @@ import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
 import           Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import qualified Lib.Directory as Dir
-import           Lib.Exception (finally, logErrors, handle, catch, handleSync)
+import           Lib.Exception (finally, logErrors, handle, catch, handleSync, putLn)
 import           Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
 import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
@@ -62,7 +62,7 @@ import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllIn
 import           Lib.Once (once)
 import           Lib.Parallelism (Parallelism)
 import qualified Lib.Parallelism as Parallelism
-import           Lib.Printer (Printer, printStrLn, putLn)
+import           Lib.Printer (Printer, printStrLn)
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import qualified Lib.Set as LibSet

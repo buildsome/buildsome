@@ -8,6 +8,8 @@ module Lib.Exception
   , bracket, bracket_, bracketOnError
   , logErrors
   , handleSync
+  , putLn
+  , swallowExceptions
   ) where
 
 import qualified Control.Exception as E
@@ -18,6 +20,12 @@ import           Data.Typeable
 #endif
 import           Data.Maybe        (isJust)
 import qualified System.IO         as IO
+
+putLn :: IO.Handle -> String -> IO ()
+putLn h = swallowExceptions . IO.hPutStrLn h
+
+swallowExceptions :: IO () -> IO ()
+swallowExceptions = E.uninterruptibleMask_ . handle (\E.SomeException {} -> return ())
 
 infixl 1 `finally`
 finally :: IO a -> IO () -> IO a
@@ -50,8 +58,7 @@ onExceptionWith act f =
 infixl 1 `logErrors`
 logErrors :: IO a -> String -> IO a
 logErrors act prefix = onExceptionWith act $ \e ->
-  IO.hPutStrLn IO.stderr (prefix ++ ": " ++ show e)
-  `catch` \E.SomeException {} -> return () -- nothing to do...
+  putLn IO.stderr (prefix ++ ": " ++ show e)
 
 bracket :: IO a -> (a -> IO ()) -> (a -> IO b) -> IO b
 bracket before after = E.bracket before (E.uninterruptibleMask_ . after)
