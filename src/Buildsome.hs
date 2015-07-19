@@ -106,8 +106,8 @@ data Buildsome = Buildsome
 data WaitOrCancel = Wait | CancelAndWait
   deriving Eq
 
-onAllSlaves :: WaitOrCancel -> Printer -> Buildsome -> IO ()
-onAllSlaves shouldCancel printer bs =
+onAllSlaves :: WaitOrCancel -> Buildsome -> IO ()
+onAllSlaves shouldCancel bs =
   go M.empty `logErrors` "BUG: Exception from onAllSlaves: "
   where
     Color.Scheme{..} = Color.scheme
@@ -115,24 +115,19 @@ onAllSlaves shouldCancel printer bs =
       Timeout.warning time $ bsRender bs $
       mconcat ["Slave ", Slave.str slave, " did not ", str, " in ", show time, "!"]
     go alreadyCancelled = do
-      curSlaveMap <- SyncMap.toMap $ bsSlaveByTargetRep bs
+      curSlaveMap <- snd . M.mapEither id <$> SyncMap.toMap (bsSlaveByTargetRep bs)
       let slaves = curSlaveMap `M.difference` alreadyCancelled
       unless (M.null slaves) $ do
         _ <-
           (`logErrors` "cancel of slaves failed: ") $
-          (`mapConcurrently` slaves) $ \resultSlave ->
-          case resultSlave of
-          Left _ ->
-            Printer.printStrLn printer
-            ("Slave had an exception on creation, nothing to cancel!" :: String)
-          Right slave ->
-            do
-              when (shouldCancel == CancelAndWait) $
-                timeoutWarning "cancel" (Timeout.millis 1000) slave $
-                Slave.cancel slave
-              _ <- timeoutWarning "finish" (Timeout.seconds 2) slave $
-                Slave.waitCatch slave
-              return ()
+          (`mapConcurrently` slaves) $ \slave ->
+          do
+            when (shouldCancel == CancelAndWait) $
+              timeoutWarning "cancel" (Timeout.millis 1000) slave $
+              Slave.cancel slave
+            _ <- timeoutWarning "finish" (Timeout.seconds 2) slave $
+              Slave.waitCatch slave
+            return ()
         -- Make sure to cancel any potential new slaves that were
         -- created during cancellation
         go curSlaveMap
@@ -1152,7 +1147,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         void $ E.uninterruptibleMask_ $ runOnce $ do
           putLn IO.stderr msg
           atomicModifyIORef_ errorRef $ maybe (Just exception) Just
-          forkIO $ onAllSlaves CancelAndWait printer buildsome
+          forkIO $ onAllSlaves CancelAndWait buildsome
       buildsome =
         Buildsome
         { bsOpts = opt
@@ -1177,7 +1172,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
       body buildsome
         -- We must not leak running slaves as we're not allowed to
         -- access fsHook, db, etc after leaving here:
-        `finally` onAllSlaves Wait printer buildsome
+        `finally` onAllSlaves Wait buildsome
         -- Must update gitIgnore after all the slaves finished updating
         -- the registered output lists:
         `finally` maybeUpdateGitIgnore buildsome
