@@ -25,8 +25,7 @@ import qualified Buildsome.Slave as Slave
 import           Buildsome.Stats (Stats(Stats))
 import qualified Buildsome.Stats as Stats
 import           Control.Applicative ((<$>))
-import           Control.Concurrent (forkIO)
-import           Control.Concurrent.Async (mapConcurrently)
+import           Control.Concurrent (forkIO, threadDelay)
 import qualified Control.Exception as E
 import           Control.Monad
 import           Control.Monad.IO.Class (MonadIO(..))
@@ -108,29 +107,41 @@ data WaitOrCancel = Wait | CancelAndWait
 
 onAllSlaves :: WaitOrCancel -> Buildsome -> IO ()
 onAllSlaves shouldCancel bs =
-  go M.empty `logErrors` "BUG: Exception from onAllSlaves: "
+  do
+    completedRef <- newIORef M.empty
+    let
+      go alreadyCancelled = do
+        curSlaveMap <-
+            snd . M.mapEither id <$> SyncMap.toMap (bsSlaveByTargetRep bs)
+        curCompleted <- readIORef completedRef
+        let liveSlaves = curSlaveMap `M.difference` curCompleted
+        unless (M.null liveSlaves) $
+          do
+            let slavesToCancel = liveSlaves `M.difference` alreadyCancelled
+            forM_ (M.toList slavesToCancel) $ \(key, slave) ->
+              forkIO $
+              do
+                when (shouldCancel == CancelAndWait) $
+                  timeoutWarning "cancel" (Timeout.seconds 1) slave $
+                  Slave.cancel slave
+                _ <- timeoutWarning "finish" (Timeout.seconds 2) slave $
+                  Slave.waitCatch slave
+                return ()
+              `finally` atomicModifyIORef'_ completedRef (M.insert key slave)
+              `logErrors` BS8.unpack ("cancel of slave " <> bsRender bs (Slave.str slave) <> " failed: ")
+            when (M.null slavesToCancel) $
+              -- live slaves but nothing to try and cancel, poll every
+              -- 10ms (TODO: Nicer waiting)
+              threadDelay 10000
+            -- Make sure to cancel any potential new slaves that were
+            -- created during cancellation
+            go curSlaveMap
+    go M.empty `logErrors` "BUG: Exception from onAllSlaves: "
   where
     Color.Scheme{..} = Color.scheme
     timeoutWarning str time slave =
       Timeout.warning time $ bsRender bs $
       mconcat ["Slave ", Slave.str slave, " did not ", str, " in ", show time, "!"]
-    go alreadyCancelled = do
-      curSlaveMap <- snd . M.mapEither id <$> SyncMap.toMap (bsSlaveByTargetRep bs)
-      let slaves = curSlaveMap `M.difference` alreadyCancelled
-      unless (M.null slaves) $ do
-        _ <-
-          (`logErrors` "cancel of slaves failed: ") $
-          (`mapConcurrently` slaves) $ \slave ->
-          do
-            when (shouldCancel == CancelAndWait) $
-              timeoutWarning "cancel" (Timeout.millis 1000) slave $
-              Slave.cancel slave
-            _ <- timeoutWarning "finish" (Timeout.seconds 2) slave $
-              Slave.waitCatch slave
-            return ()
-        -- Make sure to cancel any potential new slaves that were
-        -- created during cancellation
-        go curSlaveMap
 
 whenVerbose :: Buildsome -> IO () -> IO ()
 whenVerbose buildsome = when verbose
