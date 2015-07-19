@@ -99,6 +99,13 @@ modifyEntityRunningState entity f =
            )
     EntityStateFinished -> error "Expecting a running entity"
 
+-- | Avoid potentially blocking putMVar as all MVars here are only ever put once
+assertPutMVar :: MVar a -> a -> IO ()
+assertPutMVar mvar val =
+    do
+        True <- tryPutMVar mvar val
+        return ()
+
 -- runs under mask (non-blocking)
 allChildrenDone :: Printer -> PoolAlloc.Priority -> Pool -> Entity -> IO ()
 allChildrenDone _printer priority pool parent =
@@ -112,7 +119,7 @@ allChildrenDone _printer priority pool parent =
                   let priority' = priorityVal (entityRunningPriority running)
                   when (priority' > priority) $
                       PoolAlloc.changePriority alloc priority'
-                  putMVar allocStartedMVar alloc
+                  assertPutMVar allocStartedMVar alloc
             )
 
 -- runs under mask (non-blocking)
@@ -201,7 +208,7 @@ maybeReleaseToChildrenLoop allocStartedMVar printer pool parent children =
           -- TODO: readMVar allocStartedMVar >> loop
         , do
             mapM_ linkBoost children
-            True <- tryPutMVar allocCompletionMVar $ error $
+            assertPutMVar allocCompletionMVar $ error $
                 "Only releaseToChildren(rc == 0) should read this " ++
                 "mvar but we increased counter so it should not be " ++
                 "invoked! reallocFromChildren should put to this " ++
@@ -259,7 +266,7 @@ maybeReallocFromChildren _printer parent =
                 modifyEntityRunningState parent $ \_running state ->
                     case state of
                     EntityReallocating _alloc allocCompleteMVar ->
-                        (EntityAlloced parId, putMVar allocCompleteMVar parId)
+                        (EntityAlloced parId, assertPutMVar allocCompleteMVar parId)
                     _ -> error "Entity state changed underneath us?!"
 
 -- NOTE: withReleased may be called multiple times on the same Cell,
@@ -373,6 +380,6 @@ boostPriority printer upgrade entity =
 
 upgradePriority :: Printer -> Entity -> IO ()
 upgradePriority printer entity =
-    boostPriority printer upgrade entity
+    E.mask_ $ boostPriority printer upgrade entity
     where
         upgrade p = p { priorityIsUpgraded = True }
