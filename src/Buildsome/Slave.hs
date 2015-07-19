@@ -34,7 +34,17 @@ target = slaveTarget
 
 newWithUnmask :: Target -> Printer.Id -> [FilePath] -> ((forall b. IO b -> IO b) -> IO a) -> IO (Slave a)
 newWithUnmask tgt printerId outputPaths action =
-    Slave tgt printerId outputPaths <$> Async.asyncWithUnmask action
+    E.uninterruptibleMask $ \unmaskUninterruptible ->
+    Slave tgt printerId outputPaths
+    <$> Async.asyncWithUnmask
+        -- NOTE: Using unmaskUninterruptible is not allowed in the
+        -- child thread! However, it is impossible to put
+        -- uninterruptibleMask just on the parent side of the thread
+        -- creation while still allowing child to inherit a mask state
+        -- EXCEPT using this undefined behavior. And without
+        -- uninterruptibleMask wrapping of this, double async
+        -- exception stops the exception handler, leaking threads.
+        (\unmask -> unmaskUninterruptible (action unmask))
 
 str :: Slave a -> ColorText
 str slave =

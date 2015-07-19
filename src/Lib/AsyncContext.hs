@@ -30,7 +30,7 @@ new body = do
 spawn :: AsyncContext -> IO a -> IO (Async a)
 spawn (AsyncContext freshNames cancelActionsVar) act = do
   name <- Fresh.next freshNames
-  E.mask_ $ do
+  E.uninterruptibleMask_ $ do
     actAsync <-
       asyncWithUnmask $
       \unmask -> unmask act

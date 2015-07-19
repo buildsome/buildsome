@@ -2,6 +2,7 @@
 module Lib.Process (getOutputs, Env, CmdSpec(..)) where
 
 import Control.Concurrent.Async
+import Control.Exception (uninterruptibleMask)
 import Control.Monad
 import Data.Foldable (traverse_)
 import Lib.Exception (bracket, finally)
@@ -54,8 +55,13 @@ getOutputs cmd inheritedEnvs envs = do
     -- Read both stdout and stderr concurrently to prevent deadlock - e.g. if we read them
     -- sequentially (stdout then stderr) and the child writes to both interleaved, it can block
     -- indefinitely on stderr due to full buffers since we are not reading it yet.
-    withAsync (BS.hGetContents stdoutHandle) $ \stdoutReader ->
-      withAsync (BS.hGetContents stderrHandle) $ \stderrReader -> do
+
+    -- NOTE: withAsync has unsafe interruptible exception handler,
+    -- protect it with uninterruptibleMask_
+    uninterruptibleMask $ \restore ->
+      withAsyncWithUnmask (\unmask -> unmask (BS.hGetContents stdoutHandle)) $ \stdoutReader ->
+      withAsyncWithUnmask (\unmask -> unmask (BS.hGetContents stderrHandle)) $ \stderrReader ->
+      restore $ do
         exitCode <- waitForProcess processHandle
         stdout <- wait stdoutReader
         stderr <- wait stderrReader
