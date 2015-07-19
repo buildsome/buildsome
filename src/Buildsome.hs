@@ -118,21 +118,23 @@ onAllSlaves shouldCancel bs =
         unless (M.null liveSlaves) $
           do
             let slavesToCancel = liveSlaves `M.difference` alreadyCancelled
-            forM_ (M.toList slavesToCancel) $ \(key, slave) ->
-              forkIO $
-              do
-                when (shouldCancel == CancelAndWait) $
-                  timeoutWarning "cancel" (Timeout.seconds 1) slave $
-                  Slave.cancel slave
-                _ <- timeoutWarning "finish" (Timeout.seconds 2) slave $
-                  Slave.waitCatch slave
-                return ()
-              `finally` atomicModifyIORef'_ completedRef (M.insert key slave)
-              `logErrors` BS8.unpack ("cancel of slave " <> bsRender bs (Slave.str slave) <> " failed: ")
-            when (M.null slavesToCancel) $
-              -- live slaves but nothing to try and cancel, poll every
-              -- 10ms (TODO: Nicer waiting)
-              threadDelay 10000
+            if M.null slavesToCancel
+              then
+                -- live slaves but nothing to try and cancel, poll every
+                -- 10ms (TODO: Nicer waiting)
+                threadDelay 10000
+              else
+                forM_ (M.toList slavesToCancel) $ \(key, slave) ->
+                forkIO $
+                do
+                  when (shouldCancel == CancelAndWait) $
+                    timeoutWarning "cancel" (Timeout.seconds 1) slave $
+                    Slave.cancel slave
+                  _ <- timeoutWarning "finish" (Timeout.seconds 1) slave $
+                    Slave.waitCatch slave
+                  return ()
+                `finally` atomicModifyIORef'_ completedRef (M.insert key slave)
+                `logErrors` BS8.unpack ("cancel of slave " <> bsRender bs (Slave.str slave) <> " failed: ")
             -- Make sure to cancel any potential new slaves that were
             -- created during cancellation
             go curSlaveMap
