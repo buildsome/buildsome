@@ -38,6 +38,7 @@ import qualified Data.Map as M
 import qualified Lib.ColorText as ColorText
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Makefile as Makefile
+
 import qualified Lib.Printer as Printer
 import qualified Lib.Version as Version
 import qualified Prelude
@@ -266,15 +267,15 @@ handleRequested
    (TargetsRequest requestedTargetPaths reason
     (Opts.ExtraOutputs mChartPath mClangCommandsPath compatMakefile)))
   = do
-    Buildsome.BuiltTargets rootTargets slaveStats <-
-      Buildsome.want printer buildsome reason requestedTargetPaths
-    maybe (return ()) (Chart.make slaveStats) mChartPath
-    cwd <- Posix.getWorkingDirectory
-    maybe (return ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
-    case compatMakefile of
-      Opts.NoCompatMakefile -> return ()
-      Opts.CompatMakefile ->
-        CompatMakefile.make (Buildsome.bsPhoniesSet buildsome) cwd slaveStats rootTargets "compat-makefile"
+      Buildsome.BuiltTargets rootTargets slaveStats <-
+        Buildsome.want printer buildsome reason requestedTargetPaths
+      maybe (return ()) (Chart.make slaveStats) mChartPath
+      cwd <- Posix.getWorkingDirectory
+      maybe (return ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
+      case compatMakefile of
+        Opts.NoCompatMakefile -> return ()
+        Opts.CompatMakefile ->
+          CompatMakefile.make (Buildsome.bsPhoniesSet buildsome) cwd slaveStats rootTargets "compat-makefile"
 
 main :: IO ()
 main = do
