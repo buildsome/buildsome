@@ -22,6 +22,7 @@ newtype ColorText = ColorText { colorTextPairs :: [([Console.SGR], ByteString)] 
   deriving (Monoid, Show, Generic)
 instance Binary ColorText
 
+{-# INLINE onFirst #-}
 onFirst :: (a -> a') -> (a, b) -> (a', b)
 onFirst f (x, y) = (f x, y)
 
