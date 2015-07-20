@@ -283,7 +283,7 @@ main = do
   setNumCapabilities =<< getNumProcessors
   opts <- Opts.get
   render <- getColorRender opts
-  printer <- Printer.new render 0
+  printer <- Printer.new render $ Printer.Id 0
   handleOpts printer opts $
     \db opt requested finalMakefilePath makefile -> do
       Buildsome.with printer db finalMakefilePath makefile opt $ \buildsome ->

@@ -38,7 +38,7 @@ newWithUnmask tgt printerId outputPaths action =
 
 str :: Slave a -> ColorText
 str slave =
-  Printer.idStr (slavePrinterId slave) <> ": " <> cTarget (show (slaveOutputPaths slave))
+  show (slavePrinterId slave) <> ": " <> cTarget (show (slaveOutputPaths slave))
   where
     Color.Scheme{..} = Color.scheme
 

@@ -1138,7 +1138,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     -- (in Lib/Parallelism) is used by slaves to allocate parallelism
     -- tokens, up to optParallelism tokens at once.
     parallelism <- Parallelism.new $ fromMaybe 1 optParallelism
-    freshPrinterIds <- Fresh.new 1
+    freshPrinterIds <- Fresh.new $ Printer.Id 1
     buildId <- BuildId.new
     rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
     let
