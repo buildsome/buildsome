@@ -4,7 +4,7 @@ module Pretty () where
 
 import Data.ByteString (ByteString)
 import Data.Time (DiffTime, NominalDiffTime)
-import Lib.BuildId (BuildId(..))
+import Buildsome.BuildId (BuildId(..))
 import Lib.ColorText (ColorText)
 import Lib.FileDesc (FileModeDesc(..), FileStatDesc(..), FileContentDesc(..))
 import Lib.StdOutputs(StdOutputs(..))
@@ -69,11 +69,12 @@ instance Pretty a => Pretty (StdOutputs a) where
   pPrint (StdOutputs out err) = "(stdout=" <> pPrint out <+> "err=" <> pPrint err <> ")"
 
 instance Pretty Db.ExecutionLog where
-  pPrint (Db.ExecutionLog buildId inputs outputs stdOuts selfTime) =
+  pPrint (Db.ExecutionLog buildId cmd inputs outputs stdOuts selfTime) =
     "ExecutionLog" $+$
     "  " <>
     PP.vcat
     [ pPrint buildId
+    , pPrint cmd
     , pPrint inputs
     , pPrint outputs
     , pPrint stdOuts
