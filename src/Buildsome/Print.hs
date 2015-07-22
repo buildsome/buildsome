@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
 module Buildsome.Print
   ( targetWrap, targetTiming
@@ -9,6 +10,8 @@ module Buildsome.Print
   , outputsStr
   , replay
   ) where
+
+import Prelude.Compat hiding (show)
 
 import qualified Buildsome.Color as Color
 import           Buildsome.Db (Reason)
@@ -30,7 +33,6 @@ import           Lib.Show (show)
 import           Lib.StdOutputs (StdOutputs(..))
 import qualified Lib.StdOutputs as StdOutputs
 import qualified Lib.Version as Version
-import           Prelude hiding (show)
 import           Text.Parsec (SourcePos)
 
 fromBytestring8 :: IsString str => ByteString -> str

@@ -1,6 +1,9 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Argv0 (getArgv0) where
 
-import Control.Applicative ((<$>))
+
+import Prelude.Compat
+
 import Data.ByteString (ByteString)
 import Filesystem.Path.CurrentOS (encodeString)
 import qualified Data.ByteString.Char8 as BS8

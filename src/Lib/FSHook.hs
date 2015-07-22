@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveDataTypeable, OverloadedStrings #-}
 module Lib.FSHook
   ( getLdPreloadPath
@@ -15,10 +16,12 @@ module Lib.FSHook
   , runCommand, timedRunCommand
   ) where
 
-import Control.Applicative (Applicative(..), (<$>))
+
+import Prelude.Compat hiding (FilePath)
+
 import Control.Concurrent (ThreadId, myThreadId, killThread)
 import Control.Concurrent.MVar
-import Control.Monad
+import Control.Monad (forever, void, unless, (<=<))
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
@@ -42,7 +45,6 @@ import Lib.Sock (recvFrame, recvLoop_, withUnixStreamListener)
 import Lib.TimeIt (timeIt)
 import Network.Socket (Socket)
 import Paths_buildsome (getDataFileName)
-import Prelude hiding (FilePath)
 import System.IO (hPutStrLn, stderr)
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8

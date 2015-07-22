@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Directory
   ( getMFileStatus
   , catchDoesNotExist
@@ -8,11 +9,12 @@ module Lib.Directory
   , makeAbsolutePath
   ) where
 
-import Control.Applicative ((<$>))
+
+import Prelude.Compat hiding (FilePath)
+
 import Control.Monad
 import Lib.Exception (bracket)
 import Lib.FilePath (FilePath, (</>))
-import Prelude hiding (FilePath)
 import System.IO.Error
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8

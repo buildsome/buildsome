@@ -1,9 +1,12 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Fresh
   ( Fresh, new
   , next
   ) where
 
-import Control.Applicative ((<$>))
+
+import Prelude.Compat
+
 import Data.IORef
 
 newtype Fresh a = Fresh (IORef a)

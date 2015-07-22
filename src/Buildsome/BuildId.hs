@@ -1,9 +1,12 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveGeneric, CPP #-}
 module Buildsome.BuildId
   ( BuildId(..), new
   ) where
 
-import Control.Applicative ((<$>))
+
+import Prelude.Compat
+
 import Data.Binary (Binary)
 import Data.Time.Clock (getCurrentTime)
 

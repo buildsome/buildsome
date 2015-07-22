@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Fifo
   ( Fifo
   , empty, null
@@ -5,8 +6,9 @@ module Lib.Fifo
   , extract
   ) where
 
+import Prelude.Compat hiding (null)
+
 import Data.List (partition)
-import Prelude hiding (null)
 
 data Fifo a = Fifo
   { _new :: [a] -- reverse order (fast prepend)

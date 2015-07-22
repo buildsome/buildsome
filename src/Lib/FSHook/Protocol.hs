@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.FSHook.Protocol
   ( parseMsg, helloPrefix
@@ -10,7 +11,9 @@ module Lib.FSHook.Protocol
   , Msg(..)
   ) where
 
-import Control.Applicative
+import Prelude.Compat hiding (FilePath)
+
+
 import Control.Monad
 import Data.Binary.Get
 import Data.Bits
@@ -21,7 +24,6 @@ import Lib.ByteString (truncateAt)
 import Lib.Directory (catchDoesNotExist)
 import Lib.FilePath (FilePath, (</>))
 import Numeric (showOct)
-import Prelude hiding (FilePath)
 import System.Posix.Files.ByteString (fileAccess)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL

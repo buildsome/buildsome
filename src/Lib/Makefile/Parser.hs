@@ -1,18 +1,21 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE Rank2Types, OverloadedStrings, DeriveDataTypeable, CPP, FlexibleContexts #-}
 module Lib.Makefile.Parser
   ( makefile, parse, interpolateCmds, metaVariable
   , Vars, VarName, VarValue
   ) where
 
-import Control.Applicative (Applicative(..), (<$>), (<$), (<|>))
-import Control.Monad
+import Prelude.Compat hiding (FilePath)
+
+import Control.Applicative ((<|>))
+import Control.Monad (when, unless, join, void)
 import Control.Monad.Trans.Class (MonadTrans(..))
 import Data.ByteString (ByteString)
 import Data.Char (isAlphaNum)
 import Data.List (partition)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Data.Monoid (Monoid(..), (<>))
+import Data.Monoid ((<>))
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Lib.ByteString (unprefixed)
@@ -22,7 +25,6 @@ import Lib.Makefile.CondState (CondState)
 import Lib.Makefile.MonadClass (MonadMakefileParser)
 import Lib.Makefile.Types
 import Lib.Parsec (showErr, showPos)
-import Prelude hiding (FilePath)
 import Text.Parsec ((<?>))
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8

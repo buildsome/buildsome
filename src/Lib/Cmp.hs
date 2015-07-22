@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DefaultSignatures, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings #-}
 module Lib.Cmp
   ( ComparisonResult(..), Reasons
@@ -6,12 +7,12 @@ module Lib.Cmp
   , cmpGetter, cmpGetterBy
   ) where
 
-import Prelude hiding (show)
+import Prelude.Compat hiding (show)
 
 import Data.ByteString (ByteString)
-import Data.Foldable (Foldable)
-import Data.Monoid(Monoid(..), (<>))
-import Data.Traversable (Traversable)
+
+import Data.Monoid((<>))
+
 import Lib.Show (show)
 
 type Reasons = [ByteString]

@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveGeneric #-}
 module Lib.Makefile.Types
   ( TargetType(..), targetAllInputs
@@ -9,18 +10,19 @@ module Lib.Makefile.Types
   , Makefile(..), onMakefilePaths
   ) where
 
-import Control.Applicative (Applicative(..), (<$>))
+
+import Prelude.Compat hiding (FilePath)
+
 import Control.DeepSeq (NFData(..))
 import Control.DeepSeq.Generics (genericRnf)
 import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Map (Map)
-import Data.Traversable (traverse)
+
 import GHC.Generics (Generic)
 import Lib.FilePath (FilePath)
 import Lib.Parsec () -- instance Binary SourcePos
 import Lib.StringPattern (StringPattern)
-import Prelude hiding (FilePath)
 import qualified Text.Parsec.Pos as ParsecPos
 
 data TargetType output input = Target

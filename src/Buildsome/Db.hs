@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Buildsome.Db
   ( Db, with
@@ -11,8 +12,10 @@ module Buildsome.Db
   , MFileContentDesc, MakefileParseCache(..), makefileParseCache
   ) where
 
+import Prelude.Compat hiding (FilePath)
+
 import Buildsome.BuildId (BuildId)
-import Control.Applicative ((<$>))
+
 import Data.Binary (Binary(..))
 import Data.ByteString (ByteString)
 import Data.Default (def)
@@ -33,7 +36,6 @@ import Lib.Makefile (Makefile)
 import Lib.Makefile.Monad (PutStrLn)
 import Lib.StdOutputs (StdOutputs(..))
 import Lib.TimeInstances ()
-import Prelude hiding (FilePath)
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Set as S

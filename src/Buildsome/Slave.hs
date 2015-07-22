@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE RecordWildCards, OverloadedStrings, RankNTypes #-}
 module Buildsome.Slave
     ( Slave, newWithUnmask
@@ -7,10 +8,10 @@ module Buildsome.Slave
     , cancel
     ) where
 
-import           Prelude hiding (show, FilePath)
+import           Prelude.Compat hiding (show, FilePath)
 
 import qualified Buildsome.Color as Color
-import           Control.Applicative ((<$>))
+
 import           Control.Concurrent.Async (Async)
 import qualified Control.Concurrent.Async as Async
 import qualified Control.Exception as E

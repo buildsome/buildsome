@@ -1,11 +1,14 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Set
   ( filterA, partitionA
   ) where
 
-import Control.Applicative (Applicative, (<$>))
-import Data.Monoid (mconcat)
+
+
+import Prelude.Compat
+
 import Data.Set (Set)
-import Data.Traversable (traverse)
+
 import qualified Data.Set as S
 import qualified Lib.List as L
 

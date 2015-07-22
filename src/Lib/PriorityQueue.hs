@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Lib.PriorityQueue
   ( Priority(..)
@@ -6,9 +7,8 @@ module Lib.PriorityQueue
   , extract
   ) where
 
-import Prelude hiding (null)
+import Prelude.Compat hiding (null)
 
-import Control.Applicative ((<$>))
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Lib.Fifo (Fifo)

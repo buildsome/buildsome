@@ -1,8 +1,10 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Makefile.MonadClass (MonadMakefileParser(..)) where
+
+import Prelude.Compat hiding (FilePath)
 
 import Data.ByteString (ByteString)
 import Lib.FilePath (FilePath)
-import Prelude hiding (FilePath)
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified System.IO as IO

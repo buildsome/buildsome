@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Buildsome.BuildMaps
   ( TargetRep(..), computeTargetRep
@@ -9,15 +10,16 @@ module Buildsome.BuildMaps
   , findDirectory
   ) where
 
-import Control.Applicative ((<$>))
+
+import Prelude.Compat hiding (FilePath)
+
 import Control.Monad
 import Data.List (nub)
 import Data.Map.Strict (Map)
 import Data.Maybe (mapMaybe)
-import Data.Monoid
+
 import Lib.FilePath (FilePath, takeDirectory)
 import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
-import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
 import qualified Lib.Makefile as Makefile

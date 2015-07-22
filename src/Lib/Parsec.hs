@@ -1,10 +1,12 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# OPTIONS -fno-warn-orphans #-}
 module Lib.Parsec (showErr, showPos) where
 
-import Control.Applicative ((<$>), (<*>))
+
+import Prelude.Compat hiding (FilePath)
+
 import Control.DeepSeq (NFData(..))
 import Data.Binary (Binary(..))
-import Prelude hiding (FilePath)
 import qualified Text.Parsec.Error as ParseError
 import qualified Text.Parsec.Pos as ParsecPos
 

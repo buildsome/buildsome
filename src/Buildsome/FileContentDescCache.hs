@@ -1,11 +1,13 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.FileContentDescCache
   ( fileContentDescOfStat
   ) where
 
+import Prelude.Compat hiding (FilePath)
+
 import Buildsome.Db (Db)
 import Lib.FileDesc (FileContentDesc)
 import Lib.FilePath (FilePath)
-import Prelude hiding (FilePath)
 import qualified Buildsome.Db as Db
 import qualified Buildsome.Meddling as Meddling
 import qualified Lib.FileDesc as FileDesc

@@ -1,12 +1,13 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.Stats
   ( When(..), TargetStats(..), Stats(..)
   ) where
 
-import Prelude hiding (FilePath)
+import Prelude.Compat hiding (FilePath)
 
 import Buildsome.BuildMaps (TargetRep)
 import Data.Map (Map)
-import Data.Monoid
+
 import Data.Set (Set)
 import Data.Time (DiffTime)
 import Lib.Makefile (Target)

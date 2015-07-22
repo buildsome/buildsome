@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, DeriveGeneric #-}
 module Lib.ColorText
   ( ColorText(..), normalize, simple
@@ -6,6 +7,8 @@ module Lib.ColorText
   , intercalate, lines, putStrLn, singleton
   ) where
 
+import Prelude.Compat hiding (putStrLn, lines)
+
 import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Function (on)
@@ -13,7 +16,6 @@ import Data.Monoid
 import Data.String (IsString(..))
 import GHC.Generics (Generic)
 import Lib.AnsiConsoleUtils ()
-import Prelude hiding (putStrLn, lines)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.List as List
 import qualified System.Console.ANSI as Console

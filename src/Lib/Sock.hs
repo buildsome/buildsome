@@ -1,16 +1,18 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Sock
   ( recvAll, recvFrame, recvLoop_
   , withUnixStreamListener
   ) where
 
-import Control.Applicative ((<$>))
+
+import Prelude.Compat hiding (FilePath)
+
 import Data.Monoid
 import Data.Word (Word32)
 import Lib.Binary (decode)
 import Lib.Exception (bracket, bracket_)
 import Lib.FilePath (FilePath)
 import Network.Socket (Socket)
-import Prelude hiding (FilePath)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Network.Socket as Sock

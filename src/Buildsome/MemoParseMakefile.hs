@@ -1,16 +1,18 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.MemoParseMakefile
   ( IsHit(..), memoParse
   ) where
 
+import Prelude.Compat hiding (FilePath)
+
 import Buildsome.Db (Db)
 import Buildsome.FileContentDescCache (fileContentDescOfStat)
-import Control.Applicative ((<$>))
+
 import Control.DeepSeq (rnf)
 import Data.Map (Map)
 import Lib.FileDesc (FileContentDesc)
 import Lib.FilePath (FilePath)
 import Lib.Makefile (Makefile, Vars)
-import Prelude hiding (FilePath)
 import qualified Buildsome.Db as Db
 import qualified Buildsome.Meddling as Meddling
 import qualified Control.Exception as E

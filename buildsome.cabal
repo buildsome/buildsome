@@ -101,6 +101,7 @@ executable buildsome
                ,     Paths_buildsome
 
   build-depends:     base >=4.6 && <4.9
+               ,     base-compat
                ,     aeson >=0.7 && <0.9
                ,     aeson-pretty >=0.7 && <0.8
                ,     ansi-terminal == 0.6.*

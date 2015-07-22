@@ -1,18 +1,19 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Buildsome.CompatMakefile
   ( Phonies, make
   ) where
 
-import Prelude hiding (FilePath)
+import Prelude.Compat hiding (FilePath)
 
 import Buildsome.BuildMaps (TargetRep)
 import Buildsome.Stats (Stats)
-import Control.Applicative ((<$>))
+
 import Control.Monad (filterM)
 import Control.Monad.Trans.Class (MonadTrans(..))
 import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
-import Data.Monoid (Monoid(..), (<>))
+import Data.Monoid ((<>))
 import Data.Set (Set)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile (TargetType(..), Target)

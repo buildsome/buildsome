@@ -1,12 +1,14 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.ScanFileUpwards (scanFileUpwards) where
 
-import Control.Applicative ((<$>))
-import Control.Monad
+
+import Prelude.Compat hiding (FilePath)
+
+import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Either
 import Lib.FilePath (FilePath, (</>))
-import Prelude hiding (FilePath)
 import qualified Lib.FilePath as FilePath
 import qualified System.Posix.ByteString as Posix
 

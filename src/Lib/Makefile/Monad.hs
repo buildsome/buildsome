@@ -1,21 +1,23 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving, DeriveGeneric #-}
 module Lib.Makefile.Monad
   ( PutStrLn, runPutStrLn
   , M, runM
   ) where
 
-import Control.Applicative (Applicative)
+
+import Prelude.Compat hiding (FilePath)
+
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Trans.State (StateT(..))
 import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Map (Map)
-import Data.Monoid (Monoid(..))
+
 import GHC.Generics (Generic)
 import Lib.Directory (getMFileStatus)
 import Lib.FilePath (FilePath)
 import Lib.Makefile.MonadClass (MonadMakefileParser(..))
-import Prelude hiding (FilePath)
 import qualified Buildsome.Meddling as Meddling
 import qualified Control.Monad.Trans.State as State
 import qualified Data.ByteString.Char8 as BS8

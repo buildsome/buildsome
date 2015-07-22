@@ -1,9 +1,11 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.Clean (Result(..), output) where
 
-import Data.Monoid
+import Prelude.Compat hiding (FilePath)
+
 import Lib.Directory (getMFileStatus, removeFileOrDirectory)
 import Lib.FilePath (FilePath)
-import Prelude hiding (FilePath)
+
 import System.Posix.ByteString (FileOffset, fileSize)
 
 data Result = Result

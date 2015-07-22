@@ -1,11 +1,13 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Buildsome.MagicFiles
   ( inputIgnored, outputIgnored
   , allowedUnspecifiedOutput
   ) where
 
+import Prelude.Compat hiding (FilePath)
+
 import Lib.FilePath (FilePath)
-import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
 specialFile :: FilePath -> Bool

@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE TupleSections #-}
 module Lib.SyncMap
     ( SyncMap
@@ -9,11 +10,13 @@ module Lib.SyncMap
     , new
     ) where
 
+import Prelude.Compat
+
 import           Control.Concurrent.MVar
 import qualified Control.Exception       as E
 import           Control.Monad           (join)
-import           Data.Traversable        (traverse)
-import           Data.Functor            ((<$>))
+
+
 import           Data.IORef
 import qualified Data.Map                as M
 import           Data.Map                (Map)

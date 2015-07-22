@@ -1,7 +1,10 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Buildsome.ClangCommands
   ( make
   ) where
+
+import Prelude.Compat hiding (FilePath)
 
 import Buildsome.BuildMaps (TargetRep)
 import Buildsome.Stats (Stats)
@@ -11,7 +14,6 @@ import Data.Functor.Identity (Identity(..))
 import Data.Maybe (fromMaybe)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile (TargetType(..), Target)
-import Prelude hiding (FilePath)
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Stats as Stats
 import qualified Data.Aeson as Aeson

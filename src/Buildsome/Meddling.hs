@@ -1,13 +1,15 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 module Buildsome.Meddling
   ( ThirdPartyMeddlingError(..), assertFileMTime, assertSameMTime
   ) where
 
+import Prelude.Compat hiding (FilePath)
+
 import Control.Monad
 import Data.Typeable (Typeable)
 import Lib.FileDesc (fileStatDescOfStat)
 import Lib.FilePath (FilePath)
-import Prelude hiding (FilePath)
 import qualified Control.Exception as E
 import qualified Lib.Directory as Dir
 import qualified System.Posix.ByteString as Posix

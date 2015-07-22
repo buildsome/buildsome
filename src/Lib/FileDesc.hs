@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE DeriveGeneric, DeriveDataTypeable, NoMonomorphismRestriction, OverloadedStrings #-}
 module Lib.FileDesc
@@ -11,11 +12,13 @@ module Lib.FileDesc
   , fileStatDescOfStat
   ) where
 
-import Control.Applicative ((<$>))
+
+import Prelude.Compat hiding (FilePath)
+
 import Data.Binary (Binary(..))
 import Data.ByteString (ByteString)
 import Data.Function (on)
-import Data.Monoid (Monoid(..), (<>))
+import Data.Monoid ((<>))
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -24,7 +27,6 @@ import Lib.FilePath (FilePath)
 import Lib.Posix.FileType (FileType, fileTypeOfStat)
 import Lib.Posix.Instances ()
 import Lib.TimeInstances ()
-import Prelude hiding (FilePath)
 import qualified Control.Exception as E
 import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS8

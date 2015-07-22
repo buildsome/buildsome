@@ -1,49 +1,49 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveDataTypeable, OverloadedStrings, RecordWildCards #-}
 module Main (main) where
 
-import Buildsome (Buildsome)
-import Buildsome.Db (Db, Reason)
-import Buildsome.Opts (Opts(..), Opt(..))
-import Control.Applicative (Applicative(..), (<$>))
-import Control.Monad
-import Data.ByteString (ByteString)
-import Data.List (foldl')
-import Data.Maybe (mapMaybe)
-import Data.Monoid
-import Data.String (IsString(..))
-import Data.Typeable (Typeable)
-import GHC.Conc (setNumCapabilities, getNumProcessors)
-import Lib.ByteString (unprefixed)
-import Lib.ColorText (ColorText)
-import Lib.Directory (getMFileStatus)
-import Lib.FilePath (FilePath, (</>))
-import Lib.Makefile (Makefile)
-import Lib.Printer (Printer)
-import Lib.ScanFileUpwards (scanFileUpwards)
-import Lib.Show (show)
-import Lib.TimeIt (timeIt)
-import Prelude hiding (FilePath, show)
-import System.Posix.IO (stdOutput)
-import System.Posix.Terminal (queryTerminal)
+import qualified Prelude.Compat as Prelude
+import           Prelude.Compat hiding (FilePath, show)
+
 import qualified Buildsome
+import           Buildsome (Buildsome)
 import qualified Buildsome.Chart as Chart
 import qualified Buildsome.ClangCommands as ClangCommands
 import qualified Buildsome.Color as Color
 import qualified Buildsome.CompatMakefile as CompatMakefile
+import           Buildsome.Db (Db, Reason)
 import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
+import           Buildsome.Opts (Opts(..), Opt(..))
 import qualified Buildsome.Opts as Opts
 import qualified Control.Exception as E
+import           Control.Monad (unless, forM_)
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.List (foldl')
 import qualified Data.Map as M
+import           Data.Maybe (mapMaybe)
+import           Data.Monoid
+import           Data.String (IsString(..))
+import           Data.Typeable (Typeable)
+import           GHC.Conc (setNumCapabilities, getNumProcessors)
+import           Lib.ByteString (unprefixed)
+import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
+import           Lib.Directory (getMFileStatus)
+import           Lib.FilePath (FilePath, (</>))
 import qualified Lib.FilePath as FilePath
+import           Lib.Makefile (Makefile)
 import qualified Lib.Makefile as Makefile
-
+import           Lib.Printer (Printer)
 import qualified Lib.Printer as Printer
+import           Lib.ScanFileUpwards (scanFileUpwards)
+import           Lib.Show (show)
+import           Lib.TimeIt (timeIt)
 import qualified Lib.Version as Version
-import qualified Prelude
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
+import           System.Posix.IO (stdOutput)
+import           System.Posix.Terminal (queryTerminal)
 
 standardMakeFilename :: FilePath
 standardMakeFilename = "Buildsome.mk"

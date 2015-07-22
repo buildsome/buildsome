@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.PoolAlloc
   ( PoolAlloc, new
   , Priority(..)
@@ -5,12 +6,13 @@ module Lib.PoolAlloc
   , alloc, release
   ) where
 
-import Control.Applicative ((<$>))
-import Control.Concurrent.MVar
-import Control.Monad (join)
-import Data.IORef
-import Lib.Exception (onException)
-import Lib.PriorityQueue (PriorityQueue, Priority)
+import           Prelude.Compat
+
+import           Control.Concurrent.MVar
+import           Control.Monad (join)
+import           Data.IORef
+import           Lib.Exception (onException)
+import           Lib.PriorityQueue (PriorityQueue, Priority)
 import qualified Control.Exception as E
 import qualified Lib.PriorityQueue as PriorityQueue
 

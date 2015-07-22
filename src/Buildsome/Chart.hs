@@ -1,14 +1,16 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE CPP, OverloadedStrings #-}
 module Buildsome.Chart
   ( make
   ) where
+
+import Prelude.Compat hiding (FilePath)
 
 import Buildsome.Stats (Stats(..))
 import Data.ByteString (ByteString)
 import Data.Map (Map)
 import Data.Monoid ((<>))
 import Lib.FilePath (FilePath)
-import Prelude hiding (FilePath)
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Stats as Stats
 import qualified Data.ByteString.Char8 as BS8

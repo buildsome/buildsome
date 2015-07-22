@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings, FlexibleInstances, RecordWildCards, GeneralizedNewtypeDeriving #-}
 module Lib.Printer
   ( Id(..)
@@ -9,9 +10,9 @@ module Lib.Printer
   , rawPrintWrap, rawPrinterWrap
   ) where
 
-import qualified Prelude
-import           Prelude hiding (lines, putStrLn)
-import           Control.Applicative ((<$>))
+import Prelude.Compat hiding (lines, putStrLn)
+import qualified Prelude.Compat as Prelude
+
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef

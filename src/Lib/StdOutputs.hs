@@ -1,15 +1,16 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Lib.StdOutputs
   ( StdOutputs(..)
   , str, null
   ) where
 
+import Prelude.Compat hiding (null)
+
 import Data.Binary (Binary)
 import Data.List (intersperse)
-import Data.Monoid
 import Data.String (IsString)
 import GHC.Generics (Generic)
-import Prelude hiding (null)
 
 data StdOutputs a = StdOutputs
   { stdOut :: a

@@ -1,12 +1,14 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE CPP, FlexibleInstances, StandaloneDeriving, DeriveGeneric #-}
 {-# OPTIONS -fno-warn-orphans #-}
 module Lib.TimeInstances () where
 
-import Control.Applicative ((<$>))
 import Data.Binary (Binary(..))
 import Data.Fixed (Fixed(..))
 import Data.Time.Clock (NominalDiffTime, DiffTime)
 import GHC.Generics (Generic)
+
+import Prelude.Compat
 
 deriving instance Generic (Fixed a)
 instance Binary (Fixed a)

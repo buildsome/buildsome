@@ -1,14 +1,16 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Makefile.InstantiatePattern
   ( instantiatePatternByOutput
   , instantiatePatternByMatch
   ) where
 
-import Control.Applicative ((<$>), Applicative(..))
+
+import Prelude.Compat hiding (FilePath)
+
 import Control.Monad (guard, msum)
 import Lib.FilePath ((</>), FilePath, splitFileName)
 import Lib.Makefile.Parser (interpolateCmds)
 import Lib.Makefile.Types
-import Prelude hiding (FilePath)
 import qualified Lib.StringPattern as StringPattern
 
 plugFilePattern :: StringPattern.Match -> FilePattern -> Maybe FilePath

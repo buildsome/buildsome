@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings, CPP #-}
 module Buildsome.Opts
   ( OverwriteUnregisteredOutputs(..)
@@ -13,13 +14,14 @@ module Buildsome.Opts
   , Verbosity(..)
   ) where
 
+import Prelude.Compat hiding (FilePath)
+
 import Control.Monad (liftM)
 import Data.ByteString (ByteString)
 import Data.List (intercalate)
-import Data.Traversable (traverse)
+
 import Lib.FilePath (FilePath)
 import Options.Applicative
-import Prelude hiding (FilePath)
 import qualified Data.ByteString.Char8 as BS8
 
 data OverwriteUnregisteredOutputs = OverwriteUnregisteredOutputs | DontOverwriteUnregisteredOutputs

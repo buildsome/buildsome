@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Buildsome
   ( Buildsome(bsPhoniesSet), with, withDb
@@ -5,6 +6,9 @@ module Buildsome
   , BuiltTargets(..)
   , want
   ) where
+
+import qualified Prelude.Compat
+import           Prelude.Compat hiding (FilePath, show)
 
 import           Buildsome.BuildId (BuildId)
 import qualified Buildsome.BuildId as BuildId
@@ -24,10 +28,9 @@ import           Buildsome.Slave (Slave)
 import qualified Buildsome.Slave as Slave
 import           Buildsome.Stats (Stats(Stats))
 import qualified Buildsome.Stats as Stats
-import           Control.Applicative ((<$>))
 import           Control.Concurrent (forkIO, threadDelay)
 import qualified Control.Exception as E
-import           Control.Monad
+import           Control.Monad (void, unless, when, filterM, forM, forM_, (<=<))
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
@@ -42,7 +45,6 @@ import qualified Data.Set as S
 import           Data.String (IsString(..))
 import           Data.Time (DiffTime)
 import           Data.Time.Clock.POSIX (POSIXTime)
-import           Data.Traversable (traverse)
 import           Data.Typeable (Typeable)
 import qualified Lib.Cmp as Cmp
 import           Lib.ColorText (ColorText)
@@ -74,8 +76,6 @@ import           Lib.SyncMap (SyncMap)
 import qualified Lib.SyncMap as SyncMap
 import           Lib.TimeIt (timeIt)
 import qualified Lib.Timeout as Timeout
-import qualified Prelude
-import           Prelude hiding (FilePath, show)
 import           System.Exit (ExitCode(..))
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
