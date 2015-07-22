@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.Parallelism
   ( ParId
@@ -8,13 +9,15 @@ module Lib.Parallelism
   , withReleased
   ) where
 
-import Control.Concurrent.MVar
-import Control.Monad
-import Data.IORef
-import Lib.Exception (bracket, bracket_, finally)
-import Lib.IORef (atomicModifyIORef_)
-import Lib.PoolAlloc (PoolAlloc, Priority(..))
+import           Prelude.Compat
+
+import           Control.Concurrent.MVar
 import qualified Control.Exception as E
+import           Control.Monad
+import           Data.IORef
+import           Lib.Exception (bracket, bracket_, finally)
+import           Lib.IORef (atomicModifyIORef_)
+import           Lib.PoolAlloc (PoolAlloc, Priority(..))
 import qualified Lib.PoolAlloc as PoolAlloc
 
 -- NOTE: withReleased may be called multiple times on the same Cell,
