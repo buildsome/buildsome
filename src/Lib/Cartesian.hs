@@ -1,7 +1,10 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Lib.Cartesian (cartesian) where
 
-import Control.Applicative (Applicative(..), (<$>), (<|>))
+import Prelude.Compat
+
+import Control.Applicative ((<|>))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Text.Parsec as P

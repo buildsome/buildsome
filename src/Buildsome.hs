@@ -30,7 +30,7 @@ import           Buildsome.Stats (Stats(Stats))
 import qualified Buildsome.Stats as Stats
 import           Control.Concurrent (forkIO, threadDelay)
 import qualified Control.Exception as E
-import           Control.Monad (void, unless, when, filterM, forM, forM_, (<=<))
+import           Control.Monad (void, unless, when, filterM, forM, forM_)
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
