@@ -1,9 +1,10 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# OPTIONS -fno-warn-orphans #-}
-{-# LANGUAGE DeriveGeneric, DeriveDataTypeable, NoMonomorphismRestriction, OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric, DeriveDataTypeable, NoMonomorphismRestriction, OverloadedStrings, RecordWildCards #-}
 module Lib.FileDesc
   ( FileContentDesc(..)
   , fileContentDescOfStat
+  , fileModeDescOfStatDesc
 
   , FileModeDesc(..)
   , fileModeDescOfStat
@@ -109,6 +110,11 @@ instance Cmp FileStatDesc where
   FileStatOther a `cmp` FileStatOther b = cmp a b
   FileStatOther _ `cmp` FileStatDirectory _ = Cmp.NotEquals ["Non-directory vs. Directory"]
   FileStatDirectory _ `cmp` FileStatOther _ = Cmp.NotEquals ["Directory vs. Non-directory"]
+
+fileModeDescOfStatDesc :: FileStatDesc -> FileModeDesc
+fileModeDescOfStatDesc (FileStatDirectory BasicStatEssence{..}) = FileModeDesc fileMode
+fileModeDescOfStatDesc (FileStatOther FullStatEssence{..}) = FileModeDesc $ fileMode basicStatEssence
+
 
 instance Binary Posix.CMode where
   get = Posix.CMode <$> get

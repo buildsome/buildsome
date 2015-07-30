@@ -535,8 +535,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionSummary =
       syncCatchAndLogSpeculativeErrors btePrinter targetDesc
       (Left . SpeculativeBuildFailure)
       (Right <$>
-       executionLogBuildInputs bte entity targetDesc
-       ((M.map . fmap) snd (Db.esInputsDescs executionSummary)))
+       executionLogBuildInputs bte entity targetDesc (Db.esInputsDescs executionSummary))
     bimapEitherT MismatchedFiles id $
       executionSummaryVerifyFilesState bte targetDesc executionSummary
     return (executionSummary, builtTargets)
@@ -572,16 +571,26 @@ annotateError ann = bimapEitherT (, ann) id
   --   verify str getDesc mPair =
   --     verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
 
-verifyInputsMTime
+verifyInputsSummary
   :: (MonadIO m) =>
      BuildTargetEnv
      -> TargetDesc
-     -> Map FilePath (Db.FileDesc ne (POSIXTime, desc))
+     -> Map FilePath (Db.FileDesc ne Db.InputSummary)
      -> EitherT (ByteString, FilePath) m ()
-verifyInputsMTime BuildTargetEnv{..} TargetDesc{..} esInputsDescs = do
-  forM_ (M.toList esInputsDescs) $ \(filePath, desc) ->
-    verifyFileDesc "input" filePath desc $
-    \_ _ -> left ("mtime changed", filePath)
+verifyInputsSummary BuildTargetEnv{..} TargetDesc{..} esInputsDescs = do
+  forM_ (M.toList esInputsDescs) $ \(filePath, desc) -> do
+    let mismatch reason = left (reason, filePath)
+    mStat <- liftIO $ Dir.getMFileStatus filePath
+    case (mStat, desc) of
+      (Nothing, Db.FileDescNonExisting _) -> return ()
+      (Just _, Db.FileDescNonExisting _) -> mismatch "created"
+      (Nothing, Db.FileDescExisting _) -> mismatch "deleted"
+      (Just stat, Db.FileDescExisting summary) ->
+        case summary of
+        Db.InputMTime mtime ->
+          unless (mtime == Posix.modificationTimeHiRes stat) $ mismatch "mtime changed"
+        Db.InputModeDesc modeDesc ->
+          unless (fileModeDescOfStat stat == modeDesc) $ mismatch "mode changed"
 
 verifyOutputDescs ::
     MonadIO m => Db -> BuildTargetEnv -> TargetDesc ->
@@ -605,7 +614,7 @@ executionSummaryVerifyFilesState ::
   BuildTargetEnv -> TargetDesc -> Db.ExecutionSummary ->
   EitherT (ByteString, FilePath) m ()
 executionSummaryVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionSummary{..} = do
-  verifyInputsMTime bte TargetDesc{..} esInputsDescs
+  verifyInputsSummary bte TargetDesc{..} esInputsDescs
   verifyOutputDescs db bte TargetDesc{..} esOutputsDescs
   liftIO $
     replayExecutionLog bte tdTarget
@@ -616,21 +625,21 @@ executionSummaryVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.Execut
 
 executionLogBuildInputs ::
     BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->
-    Map FilePath (Db.FileDesc () FSHook.AccessType) -> IO BuiltTargets
-executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} elInputsDescs = do
+    Map FilePath (Db.FileDesc () Db.InputSummary) -> IO BuiltTargets
+executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} esInputsDescs = do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
-  speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
+  speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList esInputsDescs)
   waitForSlavesWithParReleased bte entity speculativeSlaves
   where
     mkInputSlaves (inputPath, desc)
       | inputPath `S.member` hinted = return []
       | otherwise =
-        slavesFor mkBte $
-        slaveReqForAccessType (descAccessType desc) inputPath
-    descAccessType (Db.FileDescNonExisting ()) = FSHook.AccessTypeModeOnly
-    descAccessType (Db.FileDescExisting accessType) = accessType
+        slavesFor mkBte $ slaveRequest desc inputPath
+    slaveRequest (Db.FileDescExisting (Db.InputModeDesc _)) = SlaveRequestDirect
+    slaveRequest (Db.FileDescExisting (Db.InputMTime _)) = SlaveRequestFull
+    slaveRequest (Db.FileDescNonExisting ()) = SlaveRequestDirect
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs tdTarget
     mkBte =
