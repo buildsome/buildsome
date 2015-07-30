@@ -610,9 +610,9 @@ executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} Db.Executio
       Db.InputDesc { Db.idContentAccess = Just (depReason, _) } ->
         Just (depReason, FSHook.AccessTypeFull)
       Db.InputDesc { Db.idStatAccess = Just (depReason, _) } ->
-        Just (depReason, FSHook.AccessTypeModeOnly)
-      Db.InputDesc { Db.idModeAccess = Just (depReason, _) } ->
         Just (depReason, FSHook.AccessTypeStat)
+      Db.InputDesc { Db.idModeAccess = Just (depReason, _) } ->
+        Just (depReason, FSHook.AccessTypeModeOnly)
       Db.InputDesc Nothing Nothing Nothing -> Nothing
 
 parentDirs :: [FilePath] -> [FilePath]
