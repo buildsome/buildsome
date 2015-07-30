@@ -107,34 +107,34 @@ delimitMultiline xs
     x = chopTrailingNewline xs
     multilineDelimiter = "\"\"\""
 
-replay :: Show a => Printer -> Target -> StdOutputs ByteString -> Reason -> Verbosity -> a -> IO () -> IO ()
-replay printer target stdOutputs reason verbosity selfTime action = do
+replay :: Show a => Printer -> Target -> ByteString -> Reason -> Verbosity -> a -> IO () -> IO ()
+replay printer target stdErr reason verbosity selfTime action = do
   action `onExceptionWith` \e -> do
     printStrLn printer header
     cmd printer target
-    targetStdOutputs printer target stdOutputs
+    printStdErr
     printStrLn printer $ cError $ "EXCEPTION: " <> show e
   when shouldPrint $ do
     printStrLn printer $ mconcat
-      [ header, " (originally) took ", cTiming (show selfTime <> " seconds")
-      , outputsHeader
-      ]
+      [ header, " (originally) took ", cTiming (show selfTime <> " seconds") ]
     replayCmd (verbosityCommands verbosity) printer target
-    targetStdOutputs printer target stdOutputs
+    printStdErr
   where
+    printStdErr = unless (BS8.null stdErr) $ Printer.rawPrintStrLn printer $ "STDERR:\n" <> stdErr
     header = "REPLAY for target " <> cTarget (show (targetOutputs target)) <> " (" <> show reason <> ")"
+    -- TODO: Restore this using an IO action to read the stdout (which isn't in the
+    -- ExecutionSummary)
     shouldPrint =
       case verbosityOutputs verbosity of
       PrintOutputsAnyway -> True
-      PrintOutputsNonEmpty -> not (StdOutputs.null stdOutputs)
-      PrintOutputsIfStderr -> not (BS8.null (StdOutputs.stdErr stdOutputs))
-    outputsHeader =
-      case (BS8.null (StdOutputs.stdOut stdOutputs),
-            BS8.null (StdOutputs.stdErr stdOutputs)) of
-      (False, False) -> ", STDOUT/STDERR follow"
-      (False, True)  -> ", STDOUT follows"
-      (True, False)  -> ", STDERR follows"
-      (True, True)   -> ""
+      _ -> not (BS8.null stdErr)
+    -- outputsHeader =
+    --   case (BS8.null (StdOutputs.stdOut stdOutputs),
+    --         BS8.null (StdOutputs.stdErr stdOutputs)) of
+    --   (False, False) -> ", STDOUT/STDERR follow"
+    --   (False, True)  -> ", STDOUT follows"
+    --   (True, False)  -> ", STDERR follows"
+    --   (True, True)   -> ""
     Color.Scheme{..} = Color.scheme
 
 buildsomeCreation :: Show a => Printer -> ByteString -> [a] -> [a] -> Verbosity -> IO ()
