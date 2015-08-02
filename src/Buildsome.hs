@@ -569,20 +569,6 @@ annotateError :: Monad m => b -> EitherT e m a -> EitherT (e,b) m a
 
 annotateError ann = bimapEitherT' (, ann) id
 
--- TODO: If summary verify failed:
-  -- readIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) >>= \case
-  -- Nothing -> error "ExecutionLog without summary?!"
-  -- Just ExecutionLog{..} ->
-  --   do
-  --     verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
-  --     verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
-  --     verify "content"
-  --       (fileContentDescOfStat "When applying execution log (input)"
-  --        db filePath stat) mContentAccess
-  -- where
-  --   verify str getDesc mPair =
-  --     verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
-
 verifyInputsSummary
   :: (MonadIO m) =>
      BuildTargetEnv
@@ -621,12 +607,45 @@ verifyOutputDescs db BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
           (fileContentDescOfStat "When applying execution log (output)"
            db filePath stat) oldMContentDesc
 
+
+-- TODO: If summary verify failed:
+executionLogVerifyFilesState ::
+    MonadIO m => Db -> BuildTargetEnv -> TargetDesc -> EitherT (ByteString, FilePath) m ()
+executionLogVerifyFilesState db BuildTargetEnv{..} TargetDesc{..} = do
+  liftIO (readIRef (Db.executionLog tdTarget (bsDb bteBuildsome))) >>= \case
+    Nothing -> error "ExecutionLog doesn't exist?!"
+    Just Db.ExecutionLog{..} ->
+      do
+        forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
+          verifyFileDesc "input" filePath desc $
+          \stat (Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
+            annotateError filePath $ do
+              verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
+              verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
+              verify "content"
+                (fileContentDescOfStat "When applying execution log (input)"
+                 db filePath stat) mContentAccess
+        forM_ (M.toList elOutputsDescs) $ \(filePath, desc) ->
+          verifyFileDesc "input" filePath desc $
+          \stat (Db.OutputDesc oldStatDesc oldMContentDesc) ->
+            annotateError filePath $ do
+              verifyDesc  "output(stat)"    (return (fileStatDescOfStat stat)) oldStatDesc
+              verifyMDesc "output(content)"
+                (fileContentDescOfStat "When applying execution log (output)"
+                 db filePath stat) oldMContentDesc
+  where
+    verify str getDesc mPair =
+      verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
+
+
 executionSummaryVerifyFilesState ::
   MonadIO m =>
   BuildTargetEnv -> TargetDesc -> Db.ExecutionSummary ->
   EitherT (ByteString, FilePath) m ()
 executionSummaryVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionSummary{..} = do
-  verifyInputsSummary bte TargetDesc{..} esInputsDescs
+  runEitherT (verifyInputsSummary bte TargetDesc{..} esInputsDescs) >>= \case
+    Right x -> return x
+    Left _ -> executionLogVerifyFilesState db bte TargetDesc{..}
   verifyOutputDescs db bte TargetDesc{..} esOutputsDescs
   liftIO $
     replayExecutionLog bte tdTarget
