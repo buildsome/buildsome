@@ -75,6 +75,7 @@ executable buildsome
                ,     Lib.Makefile.Types
                ,     Lib.Makefile.VerifyPhonies
                ,     Lib.Map
+               ,     Lib.NonEmptyList
                ,     Lib.Once
                ,     Lib.Parallelism
                ,     Lib.Parsec

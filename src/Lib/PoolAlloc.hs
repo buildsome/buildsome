@@ -18,8 +18,7 @@ import           Lib.Exception (onException)
 import           Lib.IORef (atomicModifyIORef_)
 import           Lib.PriorityQueue (PriorityQueue, Priority)
 import qualified Lib.PriorityQueue as PriorityQueue
-
-type NonEmptyList a = (a, [a])
+import           Lib.NonEmptyList (NonEmptyList(..))
 
 data PoolState a
   = PoolStateWithTokens (NonEmptyList a)
@@ -31,7 +30,7 @@ newtype PoolAlloc a = PoolAlloc
 
 new :: [a] -> IO (PoolAlloc a)
 new []     = PoolAlloc <$> newIORef (PoolStateWithoutTokens PriorityQueue.empty)
-new (x:xs) = PoolAlloc <$> newIORef (PoolStateWithTokens (x, xs))
+new (x:xs) = PoolAlloc <$> newIORef (PoolStateWithTokens $ NonEmptyList x xs)
 
 data Alloc a = Alloc
     { finish :: IO a
@@ -66,10 +65,10 @@ startAlloc priority (PoolAlloc stateRef) = do
           , identity = ident
           }
         )
-      PoolStateWithTokens (token, []) ->
+      PoolStateWithTokens (NonEmptyList token []) ->
           (PoolStateWithoutTokens PriorityQueue.empty, trivialAlloc token)
-      PoolStateWithTokens (token, (x:xs)) ->
-          (PoolStateWithTokens (x, xs), trivialAlloc token)
+      PoolStateWithTokens (NonEmptyList token (x:xs)) ->
+          (PoolStateWithTokens $ NonEmptyList x xs, trivialAlloc token)
   where
     extract PoolStateWithTokens{} _candidate notThere _extracted = notThere
     extract (PoolStateWithoutTokens waiters) candidate notThere extracted =
@@ -105,7 +104,7 @@ release (PoolAlloc stateRef) token =
   where
     f (PoolStateWithoutTokens waiters) =
       case PriorityQueue.dequeue waiters of
-      Nothing -> (PoolStateWithTokens (token, []), return ())
+      Nothing -> (PoolStateWithTokens $ NonEmptyList token [], return ())
       Just (newWaiters, (_priority, waiter)) ->
         (PoolStateWithoutTokens newWaiters, putMVar waiter token)
-    f (PoolStateWithTokens (x, xs)) = (PoolStateWithTokens (token, x:xs), return ())
+    f (PoolStateWithTokens (NonEmptyList x xs)) = (PoolStateWithTokens $ NonEmptyList token (x:xs), return ())
