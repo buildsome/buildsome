@@ -11,6 +11,8 @@ module Lib.FileDesc
 
   , FileStatDesc(..)
   , fileStatDescOfStat
+
+  , FullStatEssence(..)
   ) where
 
 

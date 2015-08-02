@@ -57,7 +57,7 @@ import qualified Lib.Directory as Dir
 import           Lib.Exception (finally, logErrors, handle, catch, handleSync, putLn)
 import           Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
-import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
+import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat, FileContentDesc(..), FileStatDesc(..), FullStatEssence(..))
 import           Lib.FilePath (FilePath, (</>), (<.>))
 import qualified Lib.FilePath as FilePath
 import           Lib.Fresh (Fresh)
@@ -83,6 +83,7 @@ import           System.Exit (ExitCode(..))
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
 import           System.Process (CmdSpec(..))
+import qualified Data.ByteString.Base16 as Base16
 import           Text.Parsec (SourcePos)
 
 type Parents = [(TargetRep, Target, Reason)]
@@ -91,6 +92,7 @@ data Buildsome = Buildsome
   { -- static:
     bsOpts :: Opt
   , bsMakefile :: Makefile
+  , bsBuildsomePath :: FilePath
   , bsPhoniesSet :: Set FilePath
   , bsBuildId :: BuildId
   , bsRootPath :: FilePath
@@ -549,6 +551,32 @@ tryApplyExecutionLog bte entity targetDesc Db.ExecutionSummary{..} = runEitherT 
   foldr (<|>) (applyLog $ NonEmptyList.neHead esFilesSummary) $ map applyLog $ NonEmptyList.neTail esFilesSummary
   where applyLog = tryApplyExecutionLogSingle bte entity targetDesc . snd
 
+mkTargetWithHashPath :: Buildsome -> ByteString -> FilePath
+mkTargetWithHashPath buildsome contentHash = bsBuildsomePath buildsome </> "cached_outputs" </> Base16.encode contentHash-- (outPath <> "." <> Base16.encode contentHash)
+
+refreshFromContentCache ::
+  BuildTargetEnv -> FilePath -> Maybe FileContentDesc -> Maybe FileStatDesc -> IO Bool
+refreshFromContentCache
+  BuildTargetEnv{..} filePath (Just (FileContentDescRegular contentHash)) (Just (FileStatOther fullStat)) = do
+  let cachedPath = mkTargetWithHashPath bteBuildsome contentHash
+  oldExists <- FilePath.exists cachedPath
+  newExists <- FilePath.exists filePath
+  -- TODO set stat fields
+  if oldExists
+  then do
+    printStrLn btePrinter $ bsRender bteBuildsome $ ColorText.simple
+      $ mconcat [ "Copying: " <> cachedPath <> " -> " <> filePath
+                , " - stat: " <> show fullStat ]
+    if newExists
+    then removeFileOrDirectoryOrNothing filePath
+    else return ()
+    Dir.createDirectories $ FilePath.takeDirectory filePath
+    Posix.createLink cachedPath filePath
+    Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
+    return True
+  else return False
+refreshFromContentCache _ _ _ _ = return False
+
 verifyMDesc :: (MonadIO m, Cmp a) => ByteString -> IO a -> Maybe a -> EitherT ByteString m ()
 verifyMDesc str getDesc = maybe (return ()) (verifyDesc str getDesc)
 
@@ -610,19 +638,25 @@ verifyOutputDescs ::
     MonadIO m => Db -> BuildTargetEnv -> TargetDesc ->
     Map FilePath (Db.FileDesc ne (POSIXTime, Db.OutputDesc)) ->
     EitherT (ByteString, FilePath) m ()
-verifyOutputDescs db BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
+verifyOutputDescs db bte@BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
   -- For now, we don't store the output files' content
   -- anywhere besides the actual output files, so just verify
   -- the output content is still correct
   forM_ (M.toList esOutputsDescs) $ \(filePath, outputDesc) ->
     verifyFileDesc "output" filePath outputDesc $
-    \stat (Db.OutputDesc oldStatDesc oldMContentDesc) ->
-      annotateError filePath $ do
-        verifyDesc  "output(stat)"    (return (fileStatDescOfStat stat)) oldStatDesc
-        verifyMDesc "output(content)"
-          (fileContentDescOfStat "When applying execution log (output)"
-           db filePath stat) oldMContentDesc
-
+    \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
+      let restore = liftIO $ refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
+      restored <- verifyDesc "output(stat)" (return (fileStatDescOfStat stat)) oldStatDesc `onFail` restore
+      when (not restored) $ do
+        let verifyContent =
+              verifyMDesc "output(content)"
+                (fileContentDescOfStat "When applying execution log (output)"
+                 db filePath stat) oldMContentDesc
+        _ <- verifyContent `onFail` restore
+        return ()
+  where onFail f g = runEitherT f >>= \case
+          Left _ -> g
+          Right () -> return True
 
 executionSummaryVerifyFilesState ::
   MonadIO m =>
@@ -1016,9 +1050,24 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
           mContentDesc <-
             if Posix.isDirectory stat
             then return Nothing
-            else Just <$>
-                 fileContentDescOfStat "When making execution log (output)"
-                 db outPath stat
+            else do
+              chash <- fileContentDescOfStat "When making execution log (output)"
+                       db outPath stat
+              case chash of
+                FileContentDescRegular contentHash ->
+                  if BS8.null contentHash
+                  then return ()
+                  else do
+                    let targetPath = mkTargetWithHashPath buildsome contentHash
+                    -- putStrLn $ BS8.unpack ("Copying: " <> outPath <> " -> " <> targetPath)
+                    removeFileOrDirectoryOrNothing targetPath
+                    Dir.createDirectories $ FilePath.takeDirectory targetPath
+                    Posix.createLink outPath targetPath
+                _ -> return ()
+              return $ Just chash
+            -- else Just <$>
+            --      fileContentDescOfStat "When making execution log (output)"
+            --      db outPath stat
           let mtime = Posix.modificationTimeHiRes stat
           return $ Db.FileDescExisting
             (mtime, Db.OutputDesc (fileStatDescOfStat stat) mContentDesc)
@@ -1240,6 +1289,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         Buildsome
         { bsOpts = opt
         , bsMakefile = makefile
+        , bsBuildsomePath = buildDbFilename makefilePath
         , bsPhoniesSet = S.fromList . map snd $ makefilePhonies makefile
         , bsBuildId = buildId
         , bsRootPath = rootPath
