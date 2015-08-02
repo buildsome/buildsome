@@ -10,7 +10,7 @@ import Prelude.Compat
 import Data.Binary (Binary)
 import Data.Time.Clock (getCurrentTime)
 
-#if (MIN_VERSION_time(1,5,0))
+#if MIN_VERSION_time(1,5,0)
 import Data.Time.Format (formatTime, defaultTimeLocale)
 #else
 import Data.Time.Format (formatTime)
