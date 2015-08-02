@@ -100,7 +100,7 @@ data OutputDesc = OutputDesc
 instance Binary OutputDesc
 
 data InputSummary
-  = InputMTime POSIXTime
+  = InputMTime POSIXTime InputDesc
   -- For dirs, this is for stat/existence only check
   | InputModeDesc FileModeDesc
   deriving (Generic, Show)
@@ -139,10 +139,10 @@ summarizeExecutionLog ExecutionLog{..} =
           { idModeAccess = Just (_, modeDesc)
           , idStatAccess = Nothing
           , idContentAccess = Nothing } -> InputModeDesc modeDesc
-        InputDesc { idContentAccess = Just _ } -> InputMTime mtime
+        InputDesc { idContentAccess = Just _ } -> InputMTime mtime inputDesc
         InputDesc { idStatAccess = Just (_, s@FileStatDirectory{}) } ->
             InputModeDesc $ fileModeDescOfStatDesc s
-        InputDesc { idStatAccess = Just _ } -> InputMTime mtime
+        InputDesc { idStatAccess = Just _ } -> InputMTime mtime inputDesc
         InputDesc Nothing Nothing Nothing -> error "Input accessed but no access type?!"
 
 registeredOutputsRef :: Db -> IORef (Set FilePath)

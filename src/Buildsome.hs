@@ -569,26 +569,33 @@ annotateError :: Monad m => b -> EitherT e m a -> EitherT (e,b) m a
 
 annotateError ann = bimapEitherT' (, ann) id
 
-verifyInputsSummary
-  :: (MonadIO m) =>
-     BuildTargetEnv
-     -> TargetDesc
-     -> Map FilePath (Db.FileDesc ne Db.InputSummary)
-     -> EitherT (ByteString, FilePath) m ()
-verifyInputsSummary BuildTargetEnv{..} TargetDesc{..} esInputsDescs = do
+verifyInputsSummary ::
+    MonadIO f => Db -> BuildTargetEnv -> TargetDesc
+    -> Map FilePath (Db.FileDesc () Db.InputSummary)
+    -> EitherT (ByteString, FilePath) f ()
+verifyInputsSummary db BuildTargetEnv{..} TargetDesc{..} esInputsDescs = do
   forM_ (M.toList esInputsDescs) $ \(filePath, desc) -> do
-    let mismatch reason = left (reason, filePath)
     mStat <- liftIO $ Dir.getMFileStatus filePath
-    case (mStat, desc) of
-      (Nothing, Db.FileDescNonExisting _) -> return ()
-      (Just _, Db.FileDescNonExisting _) -> mismatch "created"
-      (Nothing, Db.FileDescExisting _) -> mismatch "deleted"
-      (Just stat, Db.FileDescExisting summary) ->
-        case summary of
-        Db.InputMTime mtime ->
-          unless (mtime == Posix.modificationTimeHiRes stat) $ mismatch "mtime changed"
-        Db.InputModeDesc modeDesc ->
-          unless (fileModeDescOfStat stat == modeDesc) $ mismatch "mode changed"
+    annotateError filePath $
+      case (mStat, desc) of
+        (Nothing, Db.FileDescNonExisting ()) -> return ()
+        (Just _, Db.FileDescNonExisting ()) -> left "created"
+        (Nothing, Db.FileDescExisting _) -> left "deleted"
+        (Just stat, Db.FileDescExisting summary) ->
+          case summary of
+          Db.InputMTime mtime Db.InputDesc{..}
+            | mtime == Posix.modificationTimeHiRes stat -> return ()
+            | otherwise -> do
+              verify "mode" (return (fileModeDescOfStat stat)) idModeAccess
+              verify "stat" (return (fileStatDescOfStat stat)) idStatAccess
+              verify "content"
+                (fileContentDescOfStat "When applying execution log (input)"
+                 db filePath stat) idContentAccess
+          Db.InputModeDesc modeDesc ->
+            unless (fileModeDescOfStat stat == modeDesc) $ left "mode changed"
+  where
+    verify str getDesc mPair =
+      verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
 
 verifyOutputDescs ::
     MonadIO m => Db -> BuildTargetEnv -> TargetDesc ->
@@ -608,44 +615,12 @@ verifyOutputDescs db BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
            db filePath stat) oldMContentDesc
 
 
--- TODO: If summary verify failed:
-executionLogVerifyFilesState ::
-    MonadIO m => Db -> BuildTargetEnv -> TargetDesc -> EitherT (ByteString, FilePath) m ()
-executionLogVerifyFilesState db BuildTargetEnv{..} TargetDesc{..} = do
-  liftIO (readIRef (Db.executionLog tdTarget (bsDb bteBuildsome))) >>= \case
-    Nothing -> error "ExecutionLog doesn't exist?!"
-    Just Db.ExecutionLog{..} ->
-      do
-        forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
-          verifyFileDesc "input" filePath desc $
-          \stat (Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
-            annotateError filePath $ do
-              verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
-              verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
-              verify "content"
-                (fileContentDescOfStat "When applying execution log (input)"
-                 db filePath stat) mContentAccess
-        forM_ (M.toList elOutputsDescs) $ \(filePath, desc) ->
-          verifyFileDesc "input" filePath desc $
-          \stat (Db.OutputDesc oldStatDesc oldMContentDesc) ->
-            annotateError filePath $ do
-              verifyDesc  "output(stat)"    (return (fileStatDescOfStat stat)) oldStatDesc
-              verifyMDesc "output(content)"
-                (fileContentDescOfStat "When applying execution log (output)"
-                 db filePath stat) oldMContentDesc
-  where
-    verify str getDesc mPair =
-      verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
-
-
 executionSummaryVerifyFilesState ::
   MonadIO m =>
   BuildTargetEnv -> TargetDesc -> Db.ExecutionSummary ->
   EitherT (ByteString, FilePath) m ()
 executionSummaryVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionSummary{..} = do
-  runEitherT (verifyInputsSummary bte TargetDesc{..} esInputsDescs) >>= \case
-    Right x -> return x
-    Left _ -> executionLogVerifyFilesState db bte TargetDesc{..}
+  verifyInputsSummary db bte TargetDesc{..} esInputsDescs
   verifyOutputDescs db bte TargetDesc{..} esOutputsDescs
   liftIO $
     replayExecutionLog bte tdTarget
@@ -669,7 +644,7 @@ executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} esInputsDes
       | otherwise =
         slavesFor mkBte $ slaveRequest desc inputPath
     slaveRequest (Db.FileDescExisting (Db.InputModeDesc _)) = SlaveRequestDirect
-    slaveRequest (Db.FileDescExisting (Db.InputMTime _)) = SlaveRequestFull
+    slaveRequest (Db.FileDescExisting (Db.InputMTime{})) = SlaveRequestFull
     slaveRequest (Db.FileDescNonExisting ()) = SlaveRequestDirect
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs tdTarget
