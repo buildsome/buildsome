@@ -554,28 +554,29 @@ tryApplyExecutionLog bte entity targetDesc Db.ExecutionSummary{..} = runEitherT 
 mkTargetWithHashPath :: Buildsome -> ByteString -> FilePath
 mkTargetWithHashPath buildsome contentHash = bsBuildsomePath buildsome </> "cached_outputs" </> Base16.encode contentHash-- (outPath <> "." <> Base16.encode contentHash)
 
-refreshFromContentCache ::
-  BuildTargetEnv -> FilePath -> Maybe FileContentDesc -> Maybe FileStatDesc -> IO Bool
+refreshFromContentCache :: (IsString e, MonadIO m) =>
+ BuildTargetEnv -> FilePath -> Maybe FileContentDesc -> Maybe FileStatDesc -> EitherT e m ()
 refreshFromContentCache
   BuildTargetEnv{..} filePath (Just (FileContentDescRegular contentHash)) (Just (FileStatOther fullStat)) = do
   let cachedPath = mkTargetWithHashPath bteBuildsome contentHash
-  oldExists <- FilePath.exists cachedPath
-  newExists <- FilePath.exists filePath
+  oldExists <- liftIO $ FilePath.exists cachedPath
+  newExists <- liftIO $ FilePath.exists filePath
   -- TODO set stat fields
   if oldExists
   then do
-    printStrLn btePrinter $ bsRender bteBuildsome $ ColorText.simple
+    liftIO $ printStrLn btePrinter $ bsRender bteBuildsome $ ColorText.simple
       $ mconcat [ "Copying: " <> cachedPath <> " -> " <> filePath
                 , " - stat: " <> show fullStat ]
     if newExists
-    then removeFileOrDirectoryOrNothing filePath
+    then liftIO $ removeFileOrDirectoryOrNothing filePath
     else return ()
-    Dir.createDirectories $ FilePath.takeDirectory filePath
-    Posix.createLink cachedPath filePath
-    Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
-    return True
-  else return False
-refreshFromContentCache _ _ _ _ = return False
+    liftIO $ do
+      Dir.createDirectories $ FilePath.takeDirectory filePath
+      Posix.createLink cachedPath filePath
+      Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
+    return ()
+  else left "No cached copy"
+refreshFromContentCache _ _ _ _ = left "No cached info"
 
 verifyMDesc :: (MonadIO m, Cmp a) => ByteString -> IO a -> Maybe a -> EitherT ByteString m ()
 verifyMDesc str getDesc = maybe (return ()) (verifyDesc str getDesc)
@@ -645,18 +646,12 @@ verifyOutputDescs db bte@BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
   forM_ (M.toList esOutputsDescs) $ \(filePath, outputDesc) ->
     verifyFileDesc "output" filePath outputDesc $
     \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
-      let restore = liftIO $ refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
-      restored <- verifyDesc "output(stat)" (return (fileStatDescOfStat stat)) oldStatDesc `onFail` restore
-      when (not restored) $ do
-        let verifyContent =
-              verifyMDesc "output(content)"
-                (fileContentDescOfStat "When applying execution log (output)"
-                 db filePath stat) oldMContentDesc
-        _ <- verifyContent `onFail` restore
-        return ()
-  where onFail f g = runEitherT f >>= \case
-          Left _ -> g
-          Right () -> return True
+      let restore = refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
+          verifyStat = verifyDesc "output(stat)" (return (fileStatDescOfStat stat)) oldStatDesc
+          verifyContent = verifyMDesc "output(content)"
+            (fileContentDescOfStat "When applying execution log (output)"
+             db filePath stat) oldMContentDesc
+      annotateError filePath $ (verifyStat >> verifyContent) <|> restore
 
 executionSummaryVerifyFilesState ::
   MonadIO m =>
