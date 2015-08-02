@@ -1151,7 +1151,6 @@ with ::
   Printer -> Db -> FilePath -> Makefile -> Opt -> (Buildsome -> IO a) -> IO a
 with printer db makefilePath makefile opt@Opt{..} body = do
   ldPreloadPath <- FSHook.getLdPreloadPath optFsOverrideLdPreloadPath
-  Print.buildsomeCreation printer optWiths optWithouts optVerbosity
   FSHook.with printer ldPreloadPath $ \fsHook -> do
     slaveMapByTargetRep <- SyncMap.new
     -- Many, many slaves are invoked, but only up to optParallelism

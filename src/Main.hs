@@ -15,6 +15,7 @@ import           Buildsome.Db (Db, Reason)
 import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
 import           Buildsome.Opts (Opts(..), Opt(..))
 import qualified Buildsome.Opts as Opts
+import qualified Buildsome.Print as Print
 import qualified Control.Exception as E
 import           Control.Monad (unless, forM_)
 import           Data.ByteString (ByteString)
@@ -285,6 +286,7 @@ main = do
   render <- getColorRender opts
   printer <- Printer.new render $ Printer.Id 0
   handleOpts printer opts $
-    \db opt requested finalMakefilePath makefile -> do
+    \db opt@Opt{..} requested finalMakefilePath makefile -> do
+      Print.buildsomeCreation printer Version.version optWiths optWithouts optVerbosity
       Buildsome.with printer db finalMakefilePath makefile opt $ \buildsome ->
         handleRequested buildsome printer requested
