@@ -52,7 +52,7 @@ import qualified Lib.NonEmptyList as NonEmptyList
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.21"
+schemaVersion = "schema.ver.22"
 
 data Db = Db
   { dbLevel             :: LevelDB.DB
