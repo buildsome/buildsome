@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE LambdaCase, ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings, TupleSections #-}
+{-# LANGUAGE LambdaCase, ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings, TupleSections, FlexibleInstances, CPP #-}
 module Buildsome
   ( Buildsome(bsPhoniesSet), with, withDb
   , clean
@@ -553,9 +553,21 @@ verifyDesc str getDesc oldDesc = do
       -- fail entire computation
       left $ str <> ": " <> BS8.intercalate ", " reasons
 
--- TODO: Monad -> Functor after GHC >= 7.10
-annotateError :: Monad m => t -> EitherT e m b -> EitherT (e, t) m b
-annotateError ann = bimapEitherT (, ann) id
+#if MIN_VERSION_base(4,8,0)
+bimapEitherT' :: Functor f => (e -> e') -> (a -> a') -> EitherT e f a -> EitherT e' f a'
+bimapEitherT' = bimapEitherT
+
+annotateError :: Functor f => b -> EitherT e f a -> EitherT (e, b) f a
+#else
+bimapEitherT' :: Monad m => (e -> e') -> (a -> a') -> EitherT e m a -> EitherT e' m a'
+bimapEitherT' f g (EitherT m) = EitherT (m >>= (return . h)) where
+  h (Left e)  = Left (f e)
+  h (Right a) = Right (g a)
+
+annotateError :: Monad m => b -> EitherT e m a -> EitherT (e,b) m a
+#endif
+
+annotateError ann = bimapEitherT' (, ann) id
 
 -- TODO: If summary verify failed:
   -- readIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) >>= \case
