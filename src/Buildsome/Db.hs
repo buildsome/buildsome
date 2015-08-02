@@ -76,12 +76,13 @@ data Reason
 instance Binary Reason
 
 
-data InputDesc = InputDesc
-  { idModeAccess    :: Maybe (Reason, FileModeDesc)
-  , idStatAccess    :: Maybe (Reason, FileStatDesc)
-  , idContentAccess :: Maybe (Reason, FileContentDesc)
-  } deriving (Generic, Show)
-instance Binary InputDesc
+data InputDesc a = InputDesc
+  { idModeAccess    :: Maybe (a, FileModeDesc)
+  , idStatAccess    :: Maybe (a, FileStatDesc)
+  , idContentAccess :: Maybe (a, FileContentDesc)
+  } deriving (Generic, Show, Functor)
+
+instance Binary a => Binary (InputDesc a)
 
 data FileDesc ne e
   = FileDescNonExisting !ne
@@ -100,7 +101,7 @@ data OutputDesc = OutputDesc
 instance Binary OutputDesc
 
 data InputSummary
-  = InputMTime POSIXTime InputDesc
+  = InputMTime POSIXTime (InputDesc ())
   -- For dirs, this is for stat/existence only check
   | InputModeDesc FileModeDesc
   deriving (Generic, Show)
@@ -117,7 +118,7 @@ instance Binary ExecutionSummary
 data ExecutionLog = ExecutionLog
   { elBuildId      :: BuildId
   , elCommand      :: ByteString -- Mainly for debugging
-  , elInputsDescs  :: Map FilePath (FileDesc Reason (POSIXTime, InputDesc))
+  , elInputsDescs  :: Map FilePath (FileDesc Reason (POSIXTime, InputDesc Reason))
   , elOutputsDescs :: Map FilePath (FileDesc () (POSIXTime, OutputDesc))
   , elStdoutputs   :: StdOutputs ByteString
   , elSelfTime     :: DiffTime
@@ -133,16 +134,17 @@ summarizeExecutionLog ExecutionLog{..} =
   , esStdErr = stdErr elStdoutputs
   }
   where
+    dropInputDescReason = fmap (const ())
     summarizeInput (mtime, inputDesc) =
       case inputDesc of
         InputDesc
           { idModeAccess = Just (_, modeDesc)
           , idStatAccess = Nothing
-          , idContentAccess = Nothing } -> InputModeDesc modeDesc
-        InputDesc { idContentAccess = Just _ } -> InputMTime mtime inputDesc
+          , idContentAccess = Nothing } -> InputModeDesc  modeDesc
+        InputDesc { idContentAccess = Just _ } -> InputMTime mtime $ dropInputDescReason inputDesc
         InputDesc { idStatAccess = Just (_, s@FileStatDirectory{}) } ->
             InputModeDesc $ fileModeDescOfStatDesc s
-        InputDesc { idStatAccess = Just _ } -> InputMTime mtime inputDesc
+        InputDesc { idStatAccess = Just _ } -> InputMTime mtime $ dropInputDescReason inputDesc
         InputDesc Nothing Nothing Nothing -> error "Input accessed but no access type?!"
 
 registeredOutputsRef :: Db -> IORef (Set FilePath)
