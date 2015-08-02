@@ -28,6 +28,7 @@ import           Buildsome.Slave (Slave)
 import qualified Buildsome.Slave as Slave
 import           Buildsome.Stats (Stats(Stats))
 import qualified Buildsome.Stats as Stats
+import Control.Applicative ((<|>))
 import           Control.Concurrent (forkIO, threadDelay)
 import qualified Control.Exception as E
 import           Control.Monad (void, unless, when, filterM, forM, forM_)
@@ -36,6 +37,7 @@ import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef
+import           Data.List (intersperse)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe, catMaybes, maybeToList)
@@ -44,7 +46,7 @@ import           Data.Set (Set)
 import qualified Data.Set as S
 import           Data.String (IsString(..))
 import           Data.Time (DiffTime)
-import           Data.Time.Clock.POSIX (POSIXTime)
+import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import           Data.Typeable (Typeable)
 import           Lib.Cmp (Cmp)
 import qualified Lib.Cmp as Cmp
@@ -62,6 +64,7 @@ import           Lib.Fresh (Fresh)
 import qualified Lib.Fresh as Fresh
 import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
+import qualified Lib.NonEmptyList as NonEmptyList
 import           Lib.Once (once)
 import qualified Lib.Parallelism as Parallelism
 import           Lib.Printer (Printer, printStrLn)
@@ -525,20 +528,26 @@ data ExecutionLogFailure
   = MismatchedFiles (ByteString, FilePath)
   | SpeculativeBuildFailure E.SomeException
 
+tryApplyExecutionLogSingle ::
+  BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Db.ExecutionFilesSummary
+  -> EitherT [ExecutionLogFailure] IO (Db.ExecutionFilesSummary, BuiltTargets)
+tryApplyExecutionLogSingle bte@BuildTargetEnv{..} entity targetDesc efs@Db.ExecutionFilesSummary{..} = do
+  builtTargets <-
+    EitherT $
+    syncCatchAndLogSpeculativeErrors btePrinter targetDesc
+    (\x -> Left [SpeculativeBuildFailure x])
+    (Right <$>
+     executionLogBuildInputs bte entity targetDesc efsInputsDescs)
+  bimapEitherT (\x -> [MismatchedFiles x]) id $
+    executionSummaryVerifyFilesState bte targetDesc efs
+  return (efs, builtTargets)
+
 tryApplyExecutionLog ::
-  BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Db.ExecutionSummary ->
-  IO (Either ExecutionLogFailure (Db.ExecutionSummary, BuiltTargets))
-tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionSummary = do
-  runEitherT $ do
-    builtTargets <-
-      EitherT $
-      syncCatchAndLogSpeculativeErrors btePrinter targetDesc
-      (Left . SpeculativeBuildFailure)
-      (Right <$>
-       executionLogBuildInputs bte entity targetDesc (Db.esInputsDescs executionSummary))
-    bimapEitherT MismatchedFiles id $
-      executionSummaryVerifyFilesState bte targetDesc executionSummary
-    return (executionSummary, builtTargets)
+  BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Db.ExecutionSummary
+  -> IO (Either [ExecutionLogFailure] (Db.ExecutionFilesSummary, BuiltTargets))
+tryApplyExecutionLog bte entity targetDesc Db.ExecutionSummary{..} = runEitherT $
+  foldr (<|>) (applyLog $ NonEmptyList.neHead esFilesSummary) $ map applyLog $ NonEmptyList.neTail esFilesSummary
+  where applyLog = tryApplyExecutionLogSingle bte entity targetDesc . snd
 
 verifyMDesc :: (MonadIO m, Cmp a) => ByteString -> IO a -> Maybe a -> EitherT ByteString m ()
 verifyMDesc str getDesc = maybe (return ()) (verifyDesc str getDesc)
@@ -617,15 +626,14 @@ verifyOutputDescs db BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
 
 executionSummaryVerifyFilesState ::
   MonadIO m =>
-  BuildTargetEnv -> TargetDesc -> Db.ExecutionSummary ->
+  BuildTargetEnv -> TargetDesc -> Db.ExecutionFilesSummary ->
   EitherT (ByteString, FilePath) m ()
-executionSummaryVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionSummary{..} = do
-  verifyInputsSummary db bte TargetDesc{..} esInputsDescs
-  verifyOutputDescs db bte TargetDesc{..} esOutputsDescs
+executionSummaryVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionFilesSummary{..} = do
+  verifyInputsSummary db bte TargetDesc{..} efsInputsDescs
+  verifyOutputDescs db bte TargetDesc{..} efsOutputsDescs
   liftIO $
-    replayExecutionLog bte tdTarget
-    (M.keysSet esInputsDescs) (M.keysSet esOutputsDescs)
-    esStdErr esSelfTime
+    replayExecutionLog bte tdTarget (M.keysSet efsInputsDescs) (M.keysSet efsOutputsDescs)
+    efsStdErr efsSelfTime
   where
     db = bsDb bteBuildsome
 
@@ -671,24 +679,20 @@ buildManyWithParReleased mkReason bte@BuildTargetEnv{..} entity slaveRequests =
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
 findApplyExecutionLog ::
-    BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->
-    IO (Maybe (Db.ExecutionSummary, BuiltTargets))
-findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} =
-  readIRef (Db.executionSummary tdTarget (bsDb bteBuildsome)) >>= \case
-  Nothing -> -- No previous execution log
-    return Nothing
-  Just executionLog -> do
-    eRes <- tryApplyExecutionLog bte entity TargetDesc{..} executionLog
-    case eRes of
-      Left (SpeculativeBuildFailure exception)
-        | isThreadKilled exception -> return Nothing
-      Left err -> do
-        printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
-          [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
-          , " did not match because ", describeError err
-          ]
-        return Nothing
-      Right res -> return (Just res)
+    BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Db.ExecutionSummary ->
+    IO (Maybe (Db.ExecutionFilesSummary, BuiltTargets))
+findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} executionLog = do
+  eRes <- tryApplyExecutionLog bte entity TargetDesc{..} executionLog
+  case eRes of
+    Left (SpeculativeBuildFailure exception:_)
+      | isThreadKilled exception -> return Nothing
+    Left err -> do
+      printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
+        [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
+        , " did not match because ", mconcat . intersperse "\n" $ map describeError err
+        ]
+      return Nothing
+    Right res -> return (Just res)
   where
     Color.Scheme{..} = Color.scheme
     describeError (MismatchedFiles (str, filePath)) =
@@ -1057,8 +1061,8 @@ buildTargetHints bte@BuildTargetEnv{..} entity target =
     Color.Scheme{..} = Color.scheme
 
 buildTargetReal ::
-  BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Db.ExecutionSummary, BuiltTargets)
-buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
+  BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Maybe Db.ExecutionSummary -> IO (Db.ExecutionFilesSummary, BuiltTargets)
+buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} mOldExecutionSummary =
   Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
     deleteOldTargetOutputs bte tdTarget
 
@@ -1070,12 +1074,19 @@ buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
     executionLog <-
       makeExecutionLog bteBuildsome tdTarget rcrInputs (S.toList outputs)
       rcrStdOutputs rcrSelfTime
+
+    curTime <- getPOSIXTime
     writeIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) executionLog
-    let executionSummary = Db.summarizeExecutionLog executionLog
+    let executionFilesSummary = Db.summarizeExecutionLog executionLog
+        executionSummary =
+          case mOldExecutionSummary of
+            Nothing -> Db.ExecutionSummary { esFilesSummary = NonEmptyList.singleton (curTime, executionFilesSummary) }
+            Just es -> Db.appendSummary curTime executionFilesSummary es
+
     writeIRef (Db.executionSummary tdTarget (bsDb bteBuildsome)) executionSummary
 
     Print.targetTiming btePrinter "now" rcrSelfTime
-    return (executionSummary, rcrBuiltTargets)
+    return (executionFilesSummary, rcrBuiltTargets)
   where
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
@@ -1089,22 +1100,25 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
         -- Failed to build our hints when allowed, just leave with collected stats
         return $ builtStats hintedBuiltTargets
       ExplicitPathsBuilt -> do
-        mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
-        (whenBuilt, (Db.ExecutionSummary{..}, builtTargets)) <-
-          case mSlaveStats of
-          Just res -> return (Stats.FromCache, res)
-          Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..}
+        let buildReal x = (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..} x
+        (whenBuilt, (Db.ExecutionFilesSummary{..}, builtTargets)) <-
+          readIRef (Db.executionSummary tdTarget (bsDb bteBuildsome)) >>= \case
+            Nothing -> buildReal Nothing
+            Just executionSummary -> do
+              findApplyExecutionLog bte entity TargetDesc{..} executionSummary >>= \case
+                Just res -> return (Stats.FromCache, res)
+                Nothing -> buildReal $ Just executionSummary
         let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
         return $ stats <>
           Stats
           { Stats.ofTarget =
                M.singleton tdRep Stats.TargetStats
                { tsWhen = whenBuilt
-               , tsTime = esSelfTime
+               , tsTime = efsSelfTime
                , tsDirectDeps = deps
                }
           , Stats.stdErr =
-            if mempty /= esStdErr
+            if mempty /= efsStdErr
             then S.singleton tdRep
             else S.empty
           }

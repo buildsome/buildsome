@@ -8,11 +8,11 @@
 module Buildsome.Db
   ( Db, with
   , registeredOutputsRef, leakedOutputsRef
-  , InputDesc(..), FileDesc(..), InputSummary(..)
+  , InputDesc(..), FileDesc(..), InputSummary(..), ExecutionFilesSummary(..)
   , OutputDesc(..)
   , ExecutionLog(..), executionLog
   , ExecutionSummary(..), executionSummary
-  , summarizeExecutionLog
+  , summarizeExecutionLog, appendSummary
   , FileContentDescCache(..), fileContentDescCache
   , Reason(..)
   , IRef(..)
@@ -39,6 +39,7 @@ import           Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc(..), 
 import           Lib.FilePath (FilePath, (<.>), (</>))
 import           Lib.Makefile (Makefile)
 import           Lib.Makefile.Monad (PutStrLn)
+import           Lib.NonEmptyList (NonEmptyList(..))
 import           Lib.StdOutputs (StdOutputs(..))
 import           Lib.TimeInstances ()
 import qualified Crypto.Hash.MD5 as MD5
@@ -47,10 +48,11 @@ import qualified Data.Set as S
 import qualified Database.LevelDB.Base as LevelDB
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Makefile as Makefile
+import qualified Lib.NonEmptyList as NonEmptyList
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.20"
+schemaVersion = "schema.ver.21"
 
 data Db = Db
   { dbLevel             :: LevelDB.DB
@@ -107,11 +109,16 @@ data InputSummary
   deriving (Generic, Show)
 instance Binary InputSummary
 
+data ExecutionFilesSummary = ExecutionFilesSummary
+  { efsInputsDescs  :: Map FilePath (FileDesc () InputSummary)
+  , efsOutputsDescs :: Map FilePath (FileDesc () (POSIXTime, OutputDesc))
+  , efsSelfTime     :: DiffTime
+  , efsStdErr       :: ByteString
+  } deriving (Generic, Show)
+instance Binary ExecutionFilesSummary
+
 data ExecutionSummary = ExecutionSummary
-  { esInputsDescs  :: Map FilePath (FileDesc () InputSummary)
-  , esOutputsDescs :: Map FilePath (FileDesc () (POSIXTime, OutputDesc))
-  , esSelfTime     :: DiffTime
-  , esStdErr       :: ByteString
+  { esFilesSummary :: NonEmptyList (POSIXTime, ExecutionFilesSummary)
   } deriving (Generic, Show)
 instance Binary ExecutionSummary
 
@@ -125,13 +132,16 @@ data ExecutionLog = ExecutionLog
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 
-summarizeExecutionLog :: ExecutionLog -> ExecutionSummary
+appendSummary :: POSIXTime -> ExecutionFilesSummary -> ExecutionSummary -> ExecutionSummary
+appendSummary time efs ExecutionSummary{..} = ExecutionSummary { esFilesSummary = NonEmptyList.cons (time, efs) esFilesSummary }
+
+summarizeExecutionLog :: ExecutionLog -> ExecutionFilesSummary
 summarizeExecutionLog ExecutionLog{..} =
-  ExecutionSummary
-  { esInputsDescs = bimapFileDesc (const ()) summarizeInput <$> elInputsDescs
-  , esOutputsDescs = elOutputsDescs
-  , esSelfTime = elSelfTime
-  , esStdErr = stdErr elStdoutputs
+  ExecutionFilesSummary
+  { efsInputsDescs = bimapFileDesc (const ()) summarizeInput <$> elInputsDescs
+  , efsOutputsDescs = elOutputsDescs
+  , efsSelfTime = elSelfTime
+  , efsStdErr = stdErr elStdoutputs
   }
   where
     dropInputDescReason = fmap (const ())
