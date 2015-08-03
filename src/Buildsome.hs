@@ -561,21 +561,16 @@ refreshFromContentCache
   let cachedPath = mkTargetWithHashPath bteBuildsome contentHash
   oldExists <- liftIO $ FilePath.exists cachedPath
   newExists <- liftIO $ FilePath.exists filePath
-  -- TODO set stat fields
-  if oldExists
-  then do
-    liftIO $ printStrLn btePrinter $ bsRender bteBuildsome $ ColorText.simple
-      $ mconcat [ "Copying: " <> cachedPath <> " -> " <> filePath
-                , " - stat: " <> show fullStat ]
-    if newExists
-    then liftIO $ removeFileOrDirectoryOrNothing filePath
-    else return ()
-    liftIO $ do
-      Dir.createDirectories $ FilePath.takeDirectory filePath
-      Posix.createLink cachedPath filePath
-      Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
-    return ()
-  else left "No cached copy"
+  unless oldExists $ left "No cached copy"
+  liftIO $ printStrLn btePrinter $ bsRender bteBuildsome
+    $ mconcat [ "Copying: " <> cPath (show cachedPath) <> " -> " <> cPath (show filePath) ]
+  when newExists $ liftIO $ removeFileOrDirectoryOrNothing filePath
+  liftIO $ do
+    Dir.createDirectories $ FilePath.takeDirectory filePath
+    Posix.createLink cachedPath filePath
+    -- TODO set stat fields
+    Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
+  where Color.Scheme{..} = Color.scheme
 refreshFromContentCache _ _ _ _ = left "No cached info"
 
 verifyMDesc :: (MonadIO m, Cmp a) => ByteString -> IO a -> Maybe a -> EitherT ByteString m ()
