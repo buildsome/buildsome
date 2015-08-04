@@ -23,7 +23,7 @@ extra-source-files:  cbits/*.[ch]
 
 flag Charts
   description: Enable Cairo charts support
-  default: True
+  default: False 
 
 executable buildsome
   hs-source-dirs:    src/
