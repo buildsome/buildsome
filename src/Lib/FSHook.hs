@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveDataTypeable, OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric #-}
 module Lib.FSHook
   ( getLdPreloadPath
   , FSHook
@@ -22,12 +22,13 @@ import Prelude.Compat hiding (FilePath)
 import Control.Concurrent (ThreadId, myThreadId, killThread)
 import Control.Concurrent.MVar
 import Control.Monad (forever, void, unless, (<=<))
+import Data.Binary (Binary(..))
+import GHC.Generics (Generic(..))
 import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Map.Strict (Map)
 import Data.Maybe (maybeToList)
 import Data.Monoid ((<>))
-import Data.String (IsString(..))
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
@@ -61,7 +62,10 @@ import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Posix.ByteString as Posix
 
-type AccessDoc = ColorText
+data AccessDoc =
+    AccessDoc Protocol.Func JobLabel
+    deriving (Show, Generic)
+instance Binary AccessDoc
 
 type JobId = ByteString
 
@@ -241,7 +245,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     handleDelayed   inputs outputs = wrap $ delayedFSAccessHandler handlers actDesc inputs outputs
     handleUndelayed inputs outputs = wrap $ undelayedFSAccessHandler handlers actDesc inputs outputs
     wrap = wrapHandler job conn isDelayed
-    actDesc = fromString (Protocol.showFunc func) <> " done by " <> jobLabel job
+    actDesc = AccessDoc func $ jobLabel job
     handleInput accessType path = handleInputs [Input accessType path]
     handleInputs inputs =
       case isDelayed of
