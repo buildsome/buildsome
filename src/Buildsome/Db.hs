@@ -43,7 +43,7 @@ import qualified System.Posix.ByteString as Posix
 import           Prelude.Compat hiding (FilePath)
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.19"
+schemaVersion = "schema.ver.20"
 
 data Db = Db
   { dbLevel :: LevelDB.DB

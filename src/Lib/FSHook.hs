@@ -61,8 +61,8 @@ import qualified System.Posix.ByteString as Posix
 
 import           Prelude.Compat hiding (FilePath)
 
-data AccessDoc =
-    AccessDoc Protocol.Func JobLabel
+data AccessDoc
+    = AccessDocEmpty -- TODO: AccessDoc Protocol.Func JobLabel
     deriving (Show, Generic)
 instance Binary AccessDoc
 
@@ -248,7 +248,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     handleDelayed   inputs outputs = wrap $ delayedFSAccessHandler handlers actDesc inputs outputs
     handleUndelayed inputs outputs = wrap $ undelayedFSAccessHandler handlers actDesc inputs outputs
     wrap = wrapHandler job conn isDelayed
-    actDesc = AccessDoc func $ jobLabel job
+    actDesc = AccessDocEmpty -- TODO: AccessDoc func $ jobLabel job
     handleInput accessType path = handleInputs [Input accessType path]
     handleInputs inputs =
       case isDelayed of
