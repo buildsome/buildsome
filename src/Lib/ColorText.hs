@@ -47,7 +47,8 @@ simple :: ByteString -> ColorText
 simple x = ColorText [([], x)]
 
 instance IsString ColorText where
-  fromString = simple . fromString
+  {-# INLINE fromString #-}
+  fromString x = simple $ fromString x
 
 putStrLn :: ColorText -> IO ()
 putStrLn = BS8.putStrLn . render

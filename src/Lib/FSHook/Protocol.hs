@@ -36,7 +36,7 @@ showOpenWriteMode WriteMode = ""
 showOpenWriteMode ReadWriteMode = "+"
 {-# INLINE showOpenWriteMode #-}
 
-data CreationMode = NoCreate | Create Word32 -- Unix permissions
+data CreationMode = NoCreate | Create !Word32 -- Unix permissions
   deriving (Show)
 showCreationMode :: CreationMode -> String
 showCreationMode NoCreate = ""
@@ -62,41 +62,43 @@ data OutEffect
   deriving (Eq, Ord, Show, Enum)
 
 data OutFilePath = OutFilePath
-  { outPath :: FilePath
-  , outEffect :: OutEffect
+  { outPath :: !FilePath
+  , outEffect :: !OutEffect
   } deriving (Eq, Ord, Show)
 
 data Func
-  = OpenR InFilePath
-  | OpenW OutFilePath OpenWriteMode CreationMode OpenTruncateMode
-  | Stat InFilePath
-  | LStat InFilePath
-  | Creat OutFilePath Word32
-  | Rename OutFilePath OutFilePath
-  | Unlink OutFilePath
-  | Access InFilePath Word32{- TODO: replace Int with AccessMode -}
-  | OpenDir InFilePath
-  | Truncate OutFilePath Word64{- length -}
-  | Chmod OutFilePath Word32{-mode-}
-  | ReadLink InFilePath
-  | MkNod OutFilePath Word32{-mode-} Word64{-dev-}
-  | MkDir OutFilePath Word32{-mode-}
-  | RmDir OutFilePath
-  | SymLink InFilePath OutFilePath
-  | Link OutFilePath OutFilePath
-  | Chown OutFilePath Word32 Word32
-  | Exec InFilePath
-  | ExecP (Maybe FilePath) [FilePath]{-prior searched paths (that did not exist)-}
-  | RealPath InFilePath
+  = OpenR !InFilePath
+  | OpenW !OutFilePath !OpenWriteMode !CreationMode !OpenTruncateMode
+  | Stat !InFilePath
+  | LStat !InFilePath
+  | Creat !OutFilePath !Word32
+  | Rename !OutFilePath !OutFilePath
+  | Unlink !OutFilePath
+  | Access !InFilePath !Word32{- TODO: replace Int with AccessMode -}
+  | OpenDir !InFilePath
+  | Truncate !OutFilePath !Word64{- length -}
+  | Chmod !OutFilePath !Word32{-mode-}
+  | ReadLink !InFilePath
+  | MkNod !OutFilePath !Word32{-mode-} !Word64{-dev-}
+  | MkDir !OutFilePath !Word32{-mode-}
+  | RmDir !OutFilePath
+  | SymLink !InFilePath !OutFilePath
+  | Link !OutFilePath !OutFilePath
+  | Chown !OutFilePath !Word32 !Word32
+  | Exec !InFilePath
+  | ExecP !(Maybe FilePath) ![FilePath]{-prior searched paths (that did not exist)-}
+  | RealPath !InFilePath
   deriving (Show)
 
 -- Hook is delayed waiting for handler to complete
 data IsDelayed = Delayed | NotDelayed
+  deriving (Show)
 
 data Msg = Msg
-  { msgIsDelayed :: IsDelayed
-  , msgFunc :: Func
+  { msgIsDelayed :: !IsDelayed
+  , msgFunc :: !Func
   }
+  deriving (Show)
 
 {-# INLINE showFunc #-}
 showFunc :: Func -> String

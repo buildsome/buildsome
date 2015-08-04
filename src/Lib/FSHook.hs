@@ -79,32 +79,32 @@ data DelayedOutput = DelayedOutput
 type UndelayedOutput = Protocol.OutFilePath
 
 data FSAccessHandlers = FSAccessHandlers
-  { delayedFSAccessHandler   :: AccessDoc -> [Input] -> [DelayedOutput] -> IO ()
-  , undelayedFSAccessHandler :: AccessDoc -> [Input] -> [UndelayedOutput] -> IO ()
+  { delayedFSAccessHandler   :: !(AccessDoc -> [Input] -> [DelayedOutput] -> IO ())
+  , undelayedFSAccessHandler :: !(AccessDoc -> [Input] -> [UndelayedOutput] -> IO ())
   }
 
 type JobLabel = ColorText
 
 data RunningJob = RunningJob
-  { jobLabel :: JobLabel
-  , jobActiveConnections :: IORef (Map Int (ThreadId, IO ()))
-  , jobFreshConnIds :: Fresh Int
-  , jobThreadId :: ThreadId
-  , jobFSAccessHandlers :: FSAccessHandlers
-  , jobRootFilter :: FilePath
+  { jobLabel :: !JobLabel
+  , jobActiveConnections :: !(IORef (Map Int (ThreadId, IO ())))
+  , jobFreshConnIds :: !(Fresh Int)
+  , jobThreadId :: !ThreadId
+  , jobFSAccessHandlers :: !FSAccessHandlers
+  , jobRootFilter :: !FilePath
   }
 
 data Job = KillingJob JobLabel | CompletedJob JobLabel | LiveJob RunningJob
 
 data FSHook = FSHook
-  { fsHookRunningJobs :: IORef (Map JobId Job)
-  , fsHookFreshJobIds :: Fresh Int
-  , fsHookLdPreloadPath :: FilePath
-  , fsHookServerAddress :: FilePath
-  , fsHookPrinter :: Printer
+  { fsHookRunningJobs :: !(IORef (Map JobId Job))
+  , fsHookFreshJobIds :: !(Fresh Int)
+  , fsHookLdPreloadPath :: !FilePath
+  , fsHookServerAddress :: !FilePath
+  , fsHookPrinter :: !Printer
   }
 
-data ProtocolError = ProtocolError String deriving (Typeable)
+data ProtocolError = ProtocolError !String deriving (Typeable)
 instance E.Exception ProtocolError
 instance Show ProtocolError where
   show (ProtocolError msg) = "ProtocolError: " ++ msg
