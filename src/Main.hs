@@ -12,6 +12,7 @@ import qualified Buildsome.ClangCommands as ClangCommands
 import qualified Buildsome.Color as Color
 import qualified Buildsome.CompatMakefile as CompatMakefile
 import           Buildsome.Db (Db, Reason)
+import qualified Buildsome.Db as Db
 import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
 import           Buildsome.Opts (Opts(..), Opt(..))
 import qualified Buildsome.Opts as Opts
@@ -115,8 +116,8 @@ getRequestedTargets printer extraOutputs ts
       }
   where
     (requestPaths, reason) = case ts of
-      [] -> (["default"], "implicit 'default' target" :: ColorText)
-      _ -> (ts, "explicit request from cmdline")
+      [] -> (["default"], Db.BecauseRequested "implicit 'default' target")
+      _ -> (ts, Db.BecauseRequested "explicit request from cmdline")
 
 setBuffering :: IO ()
 setBuffering = do

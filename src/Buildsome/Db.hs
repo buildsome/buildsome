@@ -7,7 +7,7 @@ module Buildsome.Db
   , OutputDesc(..)
   , ExecutionLog(..), executionLog
   , FileContentDescCache(..), fileContentDescCache
-  , Reason
+  , Reason(..)
   , IRef(..)
   , MFileContentDesc, MakefileParseCache(..), makefileParseCache
   ) where
@@ -27,11 +27,11 @@ import Data.Time.Clock (DiffTime)
 import Data.Time.Clock.POSIX (POSIXTime)
 import GHC.Generics (Generic)
 import Lib.Binary (encode, decode)
-import Lib.ColorText (ColorText)
 import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
 import Lib.Exception (bracket)
 import Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
 import Lib.FilePath (FilePath, (</>), (<.>))
+import qualified Lib.FSHook as FSHook
 import Lib.Makefile (Makefile)
 import Lib.Makefile.Monad (PutStrLn)
 import Lib.StdOutputs (StdOutputs(..))
@@ -44,7 +44,7 @@ import qualified Lib.Makefile as Makefile
 import qualified System.Posix.ByteString as Posix
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.17"
+schemaVersion = "schema.ver.19"
 
 data Db = Db
   { dbLevel :: LevelDB.DB
@@ -58,7 +58,17 @@ data FileContentDescCache = FileContentDescCache
   } deriving (Generic, Show)
 instance Binary FileContentDescCache
 
-type Reason = ColorText
+data Reason
+  = BecauseSpeculative Reason
+  | BecauseHintFrom [FilePath]
+  | BecauseHooked FSHook.AccessDoc
+  | BecauseContainerDirectoryOfInput Reason FilePath
+  | BecauseContainerDirectoryOfOutput FilePath
+  | BecauseInput Reason FilePath
+  | BecauseRequested ByteString
+  deriving (Generic, Show)
+instance Binary Reason
+
 
 data InputDesc = InputDesc
   { idModeAccess :: Maybe (Reason, FileModeDesc)

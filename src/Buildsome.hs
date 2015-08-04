@@ -261,7 +261,7 @@ showParents = mconcat . map showParent
   where
     showParent (targetRep, target, reason) = mconcat
       [ "\n", Print.posText (targetPos target), " "
-      , cTarget (show targetRep), " (", reason, ")"
+      , cTarget (show targetRep), " (", show reason, ")"
       ]
     Color.Scheme{..} = Color.scheme
 
@@ -290,7 +290,7 @@ slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [(Parallelism.Entity, Sl
 slavesForChildrenOf bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | not (null childPatterns) =
-    fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome bteReason) ++ ")"
+    fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome $ show bteReason) ++ ")"
   | otherwise =
     -- Non-pattern targets here, so they're explicitly demanded
     traverse (getSlaveForTarget bte { bteExplicitlyDemanded = True }) $
@@ -312,7 +312,8 @@ slavesFor bte (SlaveRequestDirect path) =
     maybeToList <$> slaveForDirectPath bte path
 slavesFor bte@BuildTargetEnv{..} (SlaveRequestFull path) = do
   mSlave <- slaveForDirectPath bte path
-  children <- slavesForChildrenOf bte { bteReason = bteReason <> " (Container directory)" } path
+  children <- slavesForChildrenOf bte path
+              -- TODO: { bteReason = bteReason <> " (Container directory)" }
   return $ maybeToList mSlave ++ children
 
 slaveReqForAccessType :: FSHook.AccessType -> FilePath -> SlaveRequest
@@ -591,9 +592,8 @@ executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} Db.Executio
         Nothing -> return []
         Just (depReason, accessType) ->
           slavesFor bteImplicit
-          { bteReason =
-            "Remembered from previous build (speculative): " <> depReason
-          } $ slaveReqForAccessType accessType inputPath
+          { bteReason = Db.BecauseSpeculative depReason }
+          $ slaveReqForAccessType accessType inputPath
     mkInputSlaves (inputPath, desc)
       | inputPath `S.member` hinted = return []
       | otherwise = mkInputSlavesFor desc inputPath
@@ -619,13 +619,13 @@ parentDirs :: [FilePath] -> [FilePath]
 parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
 
 buildManyWithParReleased ::
-  (ColorText -> Reason) -> BuildTargetEnv -> Parallelism.Entity -> [SlaveRequest] -> IO BuiltTargets
+  (FilePath -> Reason) -> BuildTargetEnv -> Parallelism.Entity -> [SlaveRequest] -> IO BuiltTargets
 buildManyWithParReleased mkReason bte@BuildTargetEnv{..} entity slaveRequests =
   do
     waitForSlavesWithParReleased bte entity =<< fmap concat (mapM mkSlave slaveRequests)
   where
     mkSlave req =
-      slavesFor bte { bteReason = mkReason (cTarget (show (inputFilePath req))) } req
+      slavesFor bte { bteReason = mkReason (inputFilePath req) } req
     Color.Scheme{..} = Color.scheme
 
 -- TODO: Remember the order of input files' access so can iterate here
@@ -820,11 +820,11 @@ makeImplicitInputs ::
 makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} entity accessDoc inputs outputs =
   do
     targetParentsBuilt <-
-      buildManyWithParReleased (("Container directory of: " <>) . (<> (" " <> accessDoc)))
+      buildManyWithParReleased (Db.BecauseContainerDirectoryOfInput accessDoc)
       bteImplicit entity $ map SlaveRequestDirect $ parentDirs allPaths
 
     inputsBuilt <-
-      buildManyWithParReleased (<> (": " <> accessDoc))
+      buildManyWithParReleased (Db.BecauseInput accessDoc)
       bteImplicit entity $ map slaveReqForHookInput inputs
 
     atomicModifyIORef_ builtTargetsRef (<> (targetParentsBuilt <> inputsBuilt))
@@ -855,7 +855,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
     fsDelayedAccessHandler accessDoc rawInputs rawOutputs =
       commonAccessHandler accessDoc rawInputs rawOutputs
       FSHook.outputPath delayedOutputEffect $
-      makeImplicitInputs builtTargetsRef bte entity accessDoc
+      makeImplicitInputs builtTargetsRef bte entity $ Db.BecauseHooked accessDoc
 
     targetOutputsSet = S.fromList $ targetOutputs target
 
@@ -872,6 +872,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
             ignoredInput = inputIgnored recordedOutputs
             inputs = filter (not . ignoredInput) rawInputs
             outputs = filter (not . ignoredOutput) rawOutputs
+            reason = Db.BecauseHooked accessDoc
         () <- handler inputs outputs
         let addMEffect output = do
               hasEffect <- getOutEffect output
@@ -879,9 +880,9 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
                 then Just $ getOutPath output
                 else Nothing
         filteredOutputs <- fmap (S.fromList . catMaybes) $ mapM addMEffect outputs
-        recordOutputs bteBuildsome outputsRef accessDoc
+        recordOutputs bteBuildsome outputsRef reason
           targetOutputsSet filteredOutputs
-        mapM_ (recordInput inputsRef accessDoc) $
+        mapM_ (recordInput inputsRef reason) $
           filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
 
 runCmd :: BuildTargetEnv -> Parallelism.Entity -> Target -> IO RunCmdResults
@@ -995,7 +996,7 @@ buildTargetHints bte@BuildTargetEnv{..} entity target =
   do
     let parentPaths = parentDirs $ targetOutputs target
     targetParentsBuilt <-
-      buildManyWithParReleased ("Container directory of output: " <>) bte
+      buildManyWithParReleased Db.BecauseContainerDirectoryOfOutput bte
       entity $ map SlaveRequestDirect parentPaths
     explicitParentsBuilt <- assertExplicitInputsExist bte parentPaths
     case explicitParentsBuilt of
@@ -1003,7 +1004,7 @@ buildTargetHints bte@BuildTargetEnv{..} entity target =
       ExplicitPathsBuilt -> do
         (explicitPathsBuilt, inputsBuilt) <-
           buildExplicitWithParReleased
-            bte { bteReason = "Hint from " <> cTarget (show (targetOutputs target)) }
+            bte { bteReason = Db.BecauseHintFrom $ targetOutputs target }
             entity $ map SlaveRequestDirect $ targetAllInputs target
         return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
   where

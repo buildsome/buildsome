@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, DeriveGeneric #-}
 module Lib.FSHook.Protocol
   ( parseMsg, helloPrefix
   , OpenWriteMode(..), showOpenWriteMode
@@ -16,6 +16,8 @@ import Prelude.Compat hiding (FilePath)
 
 import Control.Monad
 import Data.Binary.Get
+import Data.Binary (Binary(..))
+import GHC.Generics (Generic(..))
 import Data.Bits
 import Data.ByteString (ByteString)
 import Data.IntMap (IntMap, (!))
@@ -30,21 +32,24 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntMap as M
 
 data OpenWriteMode = WriteMode | ReadWriteMode
-  deriving (Show)
+  deriving (Show, Generic)
+instance Binary OpenWriteMode
 showOpenWriteMode :: OpenWriteMode -> String
 showOpenWriteMode WriteMode = ""
 showOpenWriteMode ReadWriteMode = "+"
 {-# INLINE showOpenWriteMode #-}
 
 data CreationMode = NoCreate | Create !Word32 -- Unix permissions
-  deriving (Show)
+  deriving (Show, Generic)
+instance Binary CreationMode
 showCreationMode :: CreationMode -> String
 showCreationMode NoCreate = ""
 showCreationMode (Create x) = " (CREATE:" ++ showOct x "" ++ ")"
 {-# INLINE showCreationMode #-}
 
 data OpenTruncateMode = OpenNoTruncate | OpenTruncate
-  deriving (Show)
+  deriving (Show, Generic)
+instance Binary OpenTruncateMode
 showOpenTruncateMode :: OpenTruncateMode -> String
 showOpenTruncateMode OpenNoTruncate = ""
 showOpenTruncateMode OpenTruncate = " (TRUNCATE)"
@@ -59,12 +64,14 @@ data OutEffect
   | OutEffectDeleted
   | OutEffectChanged
   | OutEffectUnknown
-  deriving (Eq, Ord, Show, Enum)
+  deriving (Eq, Ord, Show, Enum, Generic)
+instance Binary OutEffect
 
 data OutFilePath = OutFilePath
   { outPath :: !FilePath
   , outEffect :: !OutEffect
-  } deriving (Eq, Ord, Show)
+  } deriving (Eq, Ord, Show, Generic)
+instance Binary OutFilePath
 
 data Func
   = OpenR !InFilePath
@@ -88,7 +95,9 @@ data Func
   | Exec !InFilePath
   | ExecP !(Maybe FilePath) ![FilePath]{-prior searched paths (that did not exist)-}
   | RealPath !InFilePath
-  deriving (Show)
+  deriving (Show, Generic)
+
+instance Binary Func
 
 -- Hook is delayed waiting for handler to complete
 data IsDelayed = Delayed | NotDelayed
