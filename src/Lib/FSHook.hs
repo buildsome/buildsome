@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric #-}
+{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric, RecordWildCards #-}
 module Lib.FSHook
   ( getLdPreloadPath
   , FSHook
@@ -86,10 +86,11 @@ data FSAccessHandlers = FSAccessHandlers
   , undelayedFSAccessHandler :: AccessDoc -> [Input] -> [UndelayedOutput] -> IO ()
   }
 
-type JobLabel = ColorText
+type JobLabel = [FilePath]
 
 data RunningJob = RunningJob
   { jobLabel :: JobLabel
+  , jobLabelColorText :: ColorText
   , jobActiveConnections :: IORef (Map Int (ThreadId, IO ()))
   , jobFreshConnIds :: Fresh Int
   , jobThreadId :: ThreadId
@@ -97,7 +98,10 @@ data RunningJob = RunningJob
   , jobRootFilter :: FilePath
   }
 
-data Job = KillingJob JobLabel | CompletedJob JobLabel | LiveJob RunningJob
+data Job
+  = KillingJob JobLabel ColorText
+  | CompletedJob JobLabel ColorText
+  | LiveJob RunningJob
 
 data FSHook = FSHook
   { fsHookRunningJobs :: IORef (Map JobId Job)
@@ -135,17 +139,17 @@ serve printer fsHook conn = do
             Nothing -> do
               let jobIds = M.keys runningJobs
               E.throwIO $ ProtocolError $ concat ["Bad slave id: ", show jobId, " mismatches all: ", show jobIds]
-            Just (KillingJob _label) ->
+            Just (KillingJob _label _labelColorText) ->
               -- New connection created in the process of killing connections, ignore it
               return ()
             Just (LiveJob job) ->
               (handleJobConnection fullTidStr conn job $ fromNeedStr needStr)
-            Just (CompletedJob label) ->
+            Just (CompletedJob _label labelStr) -> do
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
               -- which connected again!
-              [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer label)
-              , ") received new connections after formal completion!"]
+                [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer labelStr)
+                , ") received new connections after formal completion!"]
           where
             fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
             [pidStr, tidStr, jobId, needStr] = BS8.split ':' pidJobId
@@ -308,9 +312,9 @@ mkEnvVars fsHook rootFilter jobId =
   ]
 
 timedRunCommand ::
-  FSHook -> FilePath -> (Process.Env -> IO r) -> ColorText ->
+  FSHook -> FilePath -> (Process.Env -> IO r) -> JobLabel -> ColorText ->
   FSAccessHandlers -> IO (NominalDiffTime, r)
-timedRunCommand fsHook rootFilter cmd label fsAccessHandlers = do
+timedRunCommand fsHook rootFilter cmd label labelColorText fsAccessHandlers = do
   pauseTimeRef <- newIORef 0
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTimeRef (+delta)
@@ -328,7 +332,7 @@ timedRunCommand fsHook rootFilter cmd label fsAccessHandlers = do
         (wrappedFsAccessHandler Delayed delayed)
         (wrappedFsAccessHandler NotDelayed undelayed)
   (time, res) <-
-    runCommand fsHook rootFilter (timeIt . cmd) label wrappedFsAccessHandlers
+    runCommand fsHook rootFilter (timeIt . cmd) label labelColorText wrappedFsAccessHandlers
   subtractedTime <- (time-) <$> readIORef pauseTimeRef
   return (subtractedTime, res)
   where
@@ -337,16 +341,16 @@ timedRunCommand fsHook rootFilter cmd label fsAccessHandlers = do
 withRunningJob :: FSHook -> JobId -> RunningJob -> IO r -> IO r
 withRunningJob fsHook jobId job body = do
   setJob (LiveJob job)
-  (body <* setJob (CompletedJob (jobLabel job)))
-    `onException` setJob (KillingJob (jobLabel job))
+  (body <* setJob (CompletedJob (jobLabel job) (jobLabelColorText job)))
+    `onException` setJob (KillingJob (jobLabel job) (jobLabelColorText job))
   where
     registry = fsHookRunningJobs fsHook
     setJob = atomicModifyIORef_ registry . M.insert jobId
 
 runCommand ::
-  FSHook -> FilePath -> (Process.Env -> IO r) -> ColorText ->
+  FSHook -> FilePath -> (Process.Env -> IO r) -> JobLabel -> ColorText ->
   FSAccessHandlers -> IO r
-runCommand fsHook rootFilter cmd label fsAccessHandlers = do
+runCommand fsHook rootFilter cmd label labelColorText fsAccessHandlers = do
   activeConnections <- newIORef M.empty
   freshConnIds <- Fresh.new 0
   jobIdNum <- Fresh.next $ fsHookFreshJobIds fsHook
@@ -355,6 +359,7 @@ runCommand fsHook rootFilter cmd label fsAccessHandlers = do
   let jobId = BS8.pack ("cmd" ++ show jobIdNum)
       job = RunningJob
             { jobLabel = label
+            , jobLabelColorText = labelColorText
             , jobActiveConnections = activeConnections
             , jobFreshConnIds = freshConnIds
             , jobThreadId = tid
@@ -369,7 +374,7 @@ runCommand fsHook rootFilter cmd label fsAccessHandlers = do
         withRunningJob fsHook jobId job $ cmd $ mkEnvVars fsHook rootFilter jobId
       let timeoutMsg =
             Printer.render (fsHookPrinter fsHook)
-            (label <> ": Process completed, but still has likely-leaked " <>
+            (labelColorText <> ": Process completed, but still has likely-leaked " <>
              "children connected to FS hooks")
       Timeout.warning (Timeout.seconds 5) timeoutMsg $
         onActiveConnections awaitConnection
