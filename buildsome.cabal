@@ -28,7 +28,7 @@ flag Charts
 executable buildsome
   hs-source-dirs:    src/
   main-is:           Main.hs
-  ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000
+  ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts
   ghc-prof-options:  -threaded -auto-all -caf-all -O2 -rtsopts
   other-modules:     Buildsome
                ,     Buildsome.BuildId
