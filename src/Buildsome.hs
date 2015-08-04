@@ -894,7 +894,7 @@ runCmd bte@BuildTargetEnv{..} entity target = do
           fsAccessHandlers outputsRef inputsRef builtTargetsRef bte entity target
   Parallelism.upgradePriority btePrinter entity
   (time, stdOutputs) <-
-    FSHook.timedRunCommand hook rootPath shellCmd renderedTargetOutputs accessHandlers
+    FSHook.timedRunCommand hook rootPath shellCmd (targetOutputs target) accessHandlers
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
   builtTargets <- readIORef builtTargetsRef
@@ -912,7 +912,6 @@ runCmd bte@BuildTargetEnv{..} entity target = do
   where
     rootPath = bsRootPath bteBuildsome
     hook = bsFsHook bteBuildsome
-    renderedTargetOutputs = cTarget $ show $ targetOutputs target
     shellCmd = shellCmdVerify bte target ["HOME", "PATH"]
     Color.Scheme{..} = Color.scheme
 

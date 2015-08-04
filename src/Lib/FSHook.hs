@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric #-}
+{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric, RecordWildCards #-}
 module Lib.FSHook
   ( getLdPreloadPath
   , FSHook
@@ -29,11 +29,11 @@ import Data.IORef
 import Data.Map.Strict (Map)
 import Data.Maybe (maybeToList)
 import Data.Monoid ((<>))
+import Data.String (IsString(..))
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import Lib.Argv0 (getArgv0)
 import Lib.ByteString (unprefixed)
-import Lib.ColorText (ColorText)
 import Lib.Exception (finally, bracket_, onException, handleSync)
 import Lib.FSHook.AccessType (AccessType(..))
 import Lib.FSHook.OutputBehavior (OutputEffect(..), OutputBehavior(..))
@@ -47,6 +47,7 @@ import Lib.TimeIt (timeIt)
 import Network.Socket (Socket)
 import Paths_buildsome (getDataFileName)
 import System.IO (hPutStrLn, stderr)
+import qualified Buildsome.Color as Color
 import qualified Control.Exception as E
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map.Strict as M
@@ -87,7 +88,7 @@ data FSAccessHandlers = FSAccessHandlers
   , undelayedFSAccessHandler :: !(AccessDoc -> [Input] -> [UndelayedOutput] -> IO ())
   }
 
-type JobLabel = ColorText
+type JobLabel = [FilePath]
 
 data RunningJob = RunningJob
   { jobLabel :: !JobLabel
@@ -143,12 +144,14 @@ serve printer fsHook conn = do
               return ()
             Just (LiveJob job) ->
               (handleJobConnection fullTidStr conn job $ fromNeedStr needStr)
-            Just (CompletedJob label) ->
+            Just (CompletedJob label) -> do
+              let Color.Scheme{..} = Color.scheme
+                  label' = cTarget (fromString $ show label)
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
               -- which connected again!
-              [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer label)
-              , ") received new connections after formal completion!"]
+                [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer label')
+                , ") received new connections after formal completion!"]
           where
             fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
             [pidStr, tidStr, jobId, needStr] = BS8.split ':' pidJobId
@@ -311,7 +314,7 @@ mkEnvVars fsHook rootFilter jobId =
   ]
 
 timedRunCommand ::
-  FSHook -> FilePath -> (Process.Env -> IO r) -> ColorText ->
+  FSHook -> FilePath -> (Process.Env -> IO r) -> JobLabel ->
   FSAccessHandlers -> IO (NominalDiffTime, r)
 timedRunCommand fsHook rootFilter cmd label fsAccessHandlers = do
   pauseTimeRef <- newIORef 0
@@ -347,7 +350,7 @@ withRunningJob fsHook jobId job body = do
     setJob = atomicModifyIORef_ registry . M.insert jobId
 
 runCommand ::
-  FSHook -> FilePath -> (Process.Env -> IO r) -> ColorText ->
+  FSHook -> FilePath -> (Process.Env -> IO r) -> JobLabel ->
   FSAccessHandlers -> IO r
 runCommand fsHook rootFilter cmd label fsAccessHandlers = do
   activeConnections <- newIORef M.empty
@@ -372,7 +375,7 @@ runCommand fsHook rootFilter cmd label fsAccessHandlers = do
         withRunningJob fsHook jobId job $ cmd $ mkEnvVars fsHook rootFilter jobId
       let timeoutMsg =
             Printer.render (fsHookPrinter fsHook)
-            (label <> ": Process completed, but still has likely-leaked " <>
+            (cTarget (fromString $ show label) <> ": Process completed, but still has likely-leaked " <>
              "children connected to FS hooks")
       Timeout.warning (Timeout.seconds 5) timeoutMsg $
         onActiveConnections awaitConnection
@@ -380,6 +383,7 @@ runCommand fsHook rootFilter cmd label fsAccessHandlers = do
   where
     killConnection (tid, awaitConn) = killThread tid >> awaitConn
     awaitConnection (_tid, awaitConn) = awaitConn
+    Color.Scheme{..} = Color.scheme
 
 data CannotFindOverrideSharedObject = CannotFindOverrideSharedObject deriving (Show, Typeable)
 instance E.Exception CannotFindOverrideSharedObject
