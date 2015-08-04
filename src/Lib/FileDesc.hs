@@ -37,9 +37,9 @@ import qualified System.Posix.ByteString as Posix
 type ContentHash = ByteString
 
 data FileContentDesc
-  = FileContentDescRegular ContentHash
-  | FileContentDescSymlink FilePath
-  | FileContentDescDir ContentHash -- Of the getDirectoryContents
+  = FileContentDescRegular !ContentHash
+  | FileContentDescSymlink !FilePath
+  | FileContentDescDir !ContentHash -- Of the getDirectoryContents
   deriving (Generic, Eq, Show)
 instance Binary FileContentDesc
 instance Cmp FileContentDesc where
@@ -50,7 +50,7 @@ instance Cmp FileContentDesc where
   FileContentDescSymlink _ `cmp` _ = Cmp.NotEquals ["symlink vs. non-symlink"]
   FileContentDescDir _ `cmp` _ = Cmp.NotEquals ["dir vs. non-dir"]
 
-data FileModeDesc = FileModeDesc Posix.FileMode
+data FileModeDesc = FileModeDesc !Posix.FileMode
   deriving (Generic, Eq, Show)
 instance Binary FileModeDesc
 instance Cmp FileModeDesc where
@@ -60,12 +60,12 @@ instance Cmp FileModeDesc where
 -- they may change as files are created by various process in the
 -- directory (see KNOWN_ISSUES).
 data BasicStatEssence = BasicStatEssence
-  { deviceID        :: Posix.DeviceID
-  , fileGroup       :: Posix.GroupID
-  , fileID          :: Posix.FileID
-  , fileMode        :: Posix.FileMode
-  , fileOwner       :: Posix.UserID
-  , specialDeviceID :: Posix.DeviceID
+  { deviceID        :: !Posix.DeviceID
+  , fileGroup       :: !Posix.GroupID
+  , fileID          :: !Posix.FileID
+  , fileMode        :: !Posix.FileMode
+  , fileOwner       :: !Posix.UserID
+  , specialDeviceID :: !Posix.DeviceID
   } deriving (Generic, Eq, Show)
 instance Binary BasicStatEssence
 instance Cmp BasicStatEssence where
@@ -81,12 +81,12 @@ instance Cmp BasicStatEssence where
       cShow = cmpGetterBy Cmp.eqShow
 
 data FullStatEssence = FullStatEssence
-  { basicStatEssence      :: BasicStatEssence
-  , fileSize              :: Posix.FileOffset
-  , fileType              :: FileType
+  { basicStatEssence      :: !BasicStatEssence
+  , fileSize              :: !Posix.FileOffset
+  , fileType              :: !FileType
   -- Tracking access time is meaningless
-  , modificationTimeHiRes :: POSIXTime
-  , statusChangeTimeHiRes :: POSIXTime
+  , modificationTimeHiRes :: !POSIXTime
+  , statusChangeTimeHiRes :: !POSIXTime
   } deriving (Generic, Eq, Show)
 instance Binary FullStatEssence
 instance Cmp FullStatEssence where
@@ -100,8 +100,8 @@ instance Cmp FullStatEssence where
       cShow = cmpGetterBy Cmp.eqShow
 
 data FileStatDesc
-  = FileStatDirectory BasicStatEssence
-  | FileStatOther FullStatEssence
+  = FileStatDirectory !BasicStatEssence
+  | FileStatOther !FullStatEssence
   deriving (Generic, Eq, Show)
 instance Binary FileStatDesc
 instance Cmp FileStatDesc where
@@ -114,7 +114,7 @@ instance Binary Posix.CMode where
   get = Posix.CMode <$> get
   put (Posix.CMode x) = put x
 
-data UnsupportedFileTypeError = UnsupportedFileTypeError FilePath deriving (Show, Typeable)
+data UnsupportedFileTypeError = UnsupportedFileTypeError !FilePath deriving (Show, Typeable)
 instance E.Exception UnsupportedFileTypeError
 
 -- Basic stat essence compares only things that do not change in a
