@@ -453,18 +453,20 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdErr selfTime 
 
 verifyFileDesc ::
   (IsString str, Monoid str, MonadIO m) =>
-  str -> FilePath -> Db.FileDesc ne (POSIXTime, desc) ->
-  (Posix.FileStatus -> desc -> EitherT (str, FilePath) m ()) ->
-  EitherT (str, FilePath) m ()
-verifyFileDesc str filePath fileDesc existingVerify = do
+  FilePath -> Db.FileDesc ne (POSIXTime, desc) ->
+  (desc -> EitherT str m ()) ->
+  (FilePath -> EitherT str m ()) ->
+  (Posix.FileStatus -> desc -> EitherT str m ()) ->
+  EitherT str m ()
+verifyFileDesc filePath fileDesc restore remove existingVerify = do
   mStat <- liftIO $ Dir.getMFileStatus filePath
   case (mStat, fileDesc) of
     (Nothing, Db.FileDescNonExisting _) -> return ()
     (Just stat, Db.FileDescExisting (mtime, desc))
-      | Posix.modificationTimeHiRes stat /= mtime -> existingVerify stat desc
+      | Posix.modificationTimeHiRes stat /= mtime -> existingVerify stat desc <|> restore desc
       | otherwise -> return ()
-    (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
-    (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
+    (Just _, Db.FileDescNonExisting _)  -> remove filePath
+    (Nothing, Db.FileDescExisting (_, desc)) -> restore desc
 
 data TargetDesc = TargetDesc
   { tdRep :: TargetRep
@@ -638,15 +640,16 @@ verifyOutputDescs db bte@BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
   -- For now, we don't store the output files' content
   -- anywhere besides the actual output files, so just verify
   -- the output content is still correct
-  forM_ (M.toList esOutputsDescs) $ \(filePath, outputDesc) ->
-    verifyFileDesc "output" filePath outputDesc $
-    \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
-      let restore = refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
-          verifyStat = verifyDesc "output(stat)" (return (fileStatDescOfStat stat)) oldStatDesc
-          verifyContent = verifyMDesc "output(content)"
-            (fileContentDescOfStat "When applying execution log (output)"
-             db filePath stat) oldMContentDesc
-      annotateError filePath $ (verifyStat >> verifyContent) <|> restore
+  forM_ (M.toList esOutputsDescs) $ \(filePath, outputDesc) -> do
+      let restore (Db.OutputDesc oldStatDesc oldMContentDesc) =
+            refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
+      annotateError filePath $
+        verifyFileDesc filePath outputDesc restore (liftIO . removeFileOrDirectoryOrNothing) $
+        \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
+              verifyDesc "output(stat)" (return (fileStatDescOfStat stat)) oldStatDesc
+              verifyMDesc "output(content)"
+                (fileContentDescOfStat "When applying execution log (output)"
+                 db filePath stat) oldMContentDesc
 
 executionSummaryVerifyFilesState ::
   MonadIO m =>
