@@ -570,8 +570,11 @@ refreshFromContentCache
   liftIO $ do
     Dir.createDirectories $ FilePath.takeDirectory filePath
     Posix.createLink cachedPath filePath
-    -- TODO set stat fields
+    -- TODO set other stat fields
     Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
+    -- Update cached file's times, to make it easier to keep track of which cached files are being used
+    currentTime <- getPOSIXTime
+    Posix.setFileTimesHiRes cachedPath currentTime currentTime
   where Color.Scheme{..} = Color.scheme
 refreshFromContentCache _ _ _ _ = left "No cached info"
 
