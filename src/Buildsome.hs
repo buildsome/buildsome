@@ -57,7 +57,7 @@ import qualified Lib.Directory as Dir
 import           Lib.Exception (finally, logErrors, handle, catch, handleSync, putLn)
 import           Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
-import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat, FileContentDesc(..), FileStatDesc(..), FullStatEssence(..))
+import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat, FileContentDesc(..), FileStatDesc(..), BasicStatEssence(..), FullStatEssence(..))
 import           Lib.FilePath (FilePath, (</>), (<.>))
 import qualified Lib.FilePath as FilePath
 import           Lib.Fresh (Fresh)
@@ -621,6 +621,8 @@ refreshFromContentCache
     Posix.createLink cachedPath filePath
     -- TODO set other stat fields
     Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
+    Posix.setFileMode filePath (fileMode $ basicStatEssence fullStat)
+    Posix.setOwnerAndGroup filePath (fileOwner $ basicStatEssence fullStat) (fileGroup $ basicStatEssence fullStat)
     -- Update cached file's times, to make it easier to keep track of which cached files are being used
     currentTime <- getPOSIXTime
     Posix.setFileTimesHiRes cachedPath currentTime currentTime
