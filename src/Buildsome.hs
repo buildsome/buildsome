@@ -618,14 +618,15 @@ refreshFromContentCache
     FilePath.exists filePath >>= \newExists ->
        when newExists $ removeFileOrDirectoryOrNothing filePath
     Dir.createDirectories $ FilePath.takeDirectory filePath
+    -- Set the stat attributes before creating the link, so the target file is created with correct
+    -- attrs from the start
+    -- TODO set other stat fields?
+    Posix.setFileMode cachedPath (fileMode $ basicStatEssence fullStat)
+    Posix.setOwnerAndGroup cachedPath (fileOwner $ basicStatEssence fullStat) (fileGroup $ basicStatEssence fullStat)
+    -- Setting file times must be the last thing we do
+    Posix.setFileTimesHiRes cachedPath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
+    -- Create the hard link
     Posix.createLink cachedPath filePath
-    -- TODO set other stat fields
-    Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
-    Posix.setFileMode filePath (fileMode $ basicStatEssence fullStat)
-    Posix.setOwnerAndGroup filePath (fileOwner $ basicStatEssence fullStat) (fileGroup $ basicStatEssence fullStat)
-    -- Update cached file's times, to make it easier to keep track of which cached files are being used
-    currentTime <- getPOSIXTime
-    Posix.setFileTimesHiRes cachedPath currentTime currentTime
   where Color.Scheme{..} = Color.scheme
         cachedPath = mkTargetWithHashPath bteBuildsome contentHash
 refreshFromContentCache _ _ _ _ = left "No cached info"
