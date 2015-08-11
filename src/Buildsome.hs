@@ -456,22 +456,43 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdErr selfTime 
   -- execution log, so all outputs keep no old content
   void $ verifyTargetSpec bte inputs outputs target
 
-verifyFileDesc ::
-  (IsString str, Monoid str, MonadIO m) =>
-  FilePath -> Db.FileDesc ne (POSIXTime, desc) ->
-  (desc -> EitherT str m ()) ->
-  (FilePath -> EitherT str m ()) ->
-  (Posix.FileStatus -> desc -> EitherT str m ()) ->
-  EitherT str m ()
-verifyFileDesc filePath fileDesc restore remove existingVerify = do
+verifyFileDesc :: (IsString str, MonadIO m)
+  => BuildTargetEnv
+  -> FilePath
+  -> Db.FileDesc ne (POSIXTime, Db.OutputDesc)
+  -> (Posix.FileStatus -> Db.OutputDesc -> (EitherT ByteString IO ()))
+  -> EitherT str m ()
+verifyFileDesc bte@BuildTargetEnv{..} filePath fileDesc existingVerify = do
+  let restore (Db.OutputDesc oldStatDesc oldMContentDesc) =
+        refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
+      remove = liftIO . removeFileOrDirectoryOrNothing
   mStat <- liftIO $ Dir.getMFileStatus filePath
   case (mStat, fileDesc) of
     (Nothing, Db.FileDescNonExisting _) -> return ()
     (Just stat, Db.FileDescExisting (mtime, desc))
-      | Posix.modificationTimeHiRes stat /= mtime -> existingVerify stat desc <|> restore desc
+      | Posix.modificationTimeHiRes stat /= mtime -> do
+          res <- liftIO $ runEitherT $ existingVerify stat desc
+          case res of
+            Left reason -> do
+              restore desc
+              explain $ mconcat
+                [ "File exists but is wrong ("
+                , ColorText.simple reason
+                , "): restored from cache "
+                ]
+            Right x -> return x
       | otherwise -> return ()
-    (Just _, Db.FileDescNonExisting _)  -> remove filePath
-    (Nothing, Db.FileDescExisting (_, desc)) -> restore desc
+    (Just _, Db.FileDescNonExisting _)  -> do
+      remove filePath
+      explain "File exists, but shouldn't: removed "
+    (Nothing, Db.FileDescExisting (_, desc)) -> do
+      restore desc
+      explain "File doesn't exist, but should: restored from cache "
+  where
+    explain msg = liftIO $ printStrLn btePrinter
+      $ bsRender bteBuildsome $ mconcat
+      $ [ msg, cPath (show filePath) ]
+    Color.Scheme{..} = Color.scheme
 
 data TargetDesc = TargetDesc
   { tdRep :: TargetRep
@@ -586,17 +607,16 @@ mkTargetWithHashPath :: Buildsome -> ByteString -> FilePath
 mkTargetWithHashPath buildsome contentHash = contentCacheDir buildsome </> Base16.encode contentHash-- (outPath <> "." <> Base16.encode contentHash)
 
 refreshFromContentCache :: (IsString e, MonadIO m) =>
- BuildTargetEnv -> FilePath -> Maybe FileContentDesc -> Maybe FileStatDesc -> EitherT e m ()
+  BuildTargetEnv -> FilePath -> Maybe FileContentDesc -> Maybe FileStatDesc -> EitherT e m ()
 refreshFromContentCache
   BuildTargetEnv{..} filePath (Just (FileContentDescRegular contentHash)) (Just (FileStatOther fullStat)) = do
-  let cachedPath = mkTargetWithHashPath bteBuildsome contentHash
-  oldExists <- liftIO $ FilePath.exists cachedPath
-  newExists <- liftIO $ FilePath.exists filePath
-  unless oldExists $ left "No cached copy"
-  liftIO $ printStrLn btePrinter $ bsRender bteBuildsome
-    $ mconcat [ "Copying: " <> cPath (show cachedPath) <> " -> " <> cPath (show filePath) ]
-  when newExists $ liftIO $ removeFileOrDirectoryOrNothing filePath
+  liftIO (FilePath.exists cachedPath) >>= \oldExists ->
+    unless oldExists $ left "No cached copy"
   liftIO $ do
+    printStrLn btePrinter $ bsRender bteBuildsome
+      $ mconcat [ "Copying: " <> cPath (show cachedPath) <> " -> " <> cPath (show filePath) ]
+    FilePath.exists filePath >>= \newExists ->
+       when newExists $ removeFileOrDirectoryOrNothing filePath
     Dir.createDirectories $ FilePath.takeDirectory filePath
     Posix.createLink cachedPath filePath
     -- TODO set other stat fields
@@ -605,6 +625,7 @@ refreshFromContentCache
     currentTime <- getPOSIXTime
     Posix.setFileTimesHiRes cachedPath currentTime currentTime
   where Color.Scheme{..} = Color.scheme
+        cachedPath = mkTargetWithHashPath bteBuildsome contentHash
 refreshFromContentCache _ _ _ _ = left "No cached info"
 
 verifyMDesc :: (MonadIO m, Cmp a) => ByteString -> IO a -> Maybe a -> EitherT ByteString m ()
@@ -673,10 +694,8 @@ verifyOutputDescs db bte@BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
   -- anywhere besides the actual output files, so just verify
   -- the output content is still correct
   forM_ (M.toList esOutputsDescs) $ \(filePath, outputDesc) -> do
-      let restore (Db.OutputDesc oldStatDesc oldMContentDesc) =
-            refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
       annotateError filePath $
-        verifyFileDesc filePath outputDesc restore (liftIO . removeFileOrDirectoryOrNothing) $
+        verifyFileDesc bte filePath outputDesc $
         \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
               verifyDesc "output(stat)" (return (fileStatDescOfStat stat)) oldStatDesc
               verifyMDesc "output(content)"
