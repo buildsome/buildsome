@@ -46,7 +46,7 @@ import           Data.Set (Set)
 import qualified Data.Set as S
 import           Data.String (IsString(..))
 import           Data.Time (DiffTime)
-import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
+import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime, posixDayLength)
 import           Data.Typeable (Typeable)
 import           Lib.Cmp (Cmp)
 import qualified Lib.Cmp as Cmp
@@ -85,6 +85,11 @@ import qualified System.Posix.ByteString as Posix
 import           System.Process (CmdSpec(..))
 import qualified Data.ByteString.Base16 as Base16
 import           Text.Parsec (SourcePos)
+
+const_CACHED_OUTPUTS_DIR :: FilePath
+const_CACHED_OUTPUTS_DIR = "cached_outputs"
+const_MAX_CACHE_FILE_AGE :: POSIXTime
+const_MAX_CACHE_FILE_AGE = posixDayLength * 5
 
 type Parents = [(TargetRep, Target, Reason)]
 
@@ -553,8 +558,32 @@ tryApplyExecutionLog bte entity targetDesc Db.ExecutionSummary{..} = runEitherT 
   foldr (<|>) (applyLog $ NonEmptyList.neHead esFilesSummary) $ map applyLog $ NonEmptyList.neTail esFilesSummary
   where applyLog = tryApplyExecutionLogSingle bte entity targetDesc . snd
 
+contentCacheDir :: Buildsome -> FilePath
+contentCacheDir buildsome = bsBuildsomePath buildsome </> const_CACHED_OUTPUTS_DIR
+
+cleanContentCacheDir :: Buildsome -> IO ()
+cleanContentCacheDir buildsome = do
+  currentTime <- getPOSIXTime
+  files <- Dir.getDirectoryContents $ contentCacheDir buildsome
+  removed <- forM files $ \fileName -> do
+    mFileStatus <- getMFileStatus fileName
+    case mFileStatus of
+      Nothing -> return Nothing
+      Just fileStatus -> do
+        if (Posix.modificationTimeHiRes fileStatus - currentTime > const_MAX_CACHE_FILE_AGE)
+        then do
+          removeFileOrDirectoryOrNothing fileName
+          return $ Just fileName
+        else
+          return Nothing
+  let numRemoved = length $ catMaybes removed
+  putStrLn $ concat
+    [ "Cache contains ", show (length removed)
+    , ", removed ", show numRemoved, " old cache files" ]
+
+
 mkTargetWithHashPath :: Buildsome -> ByteString -> FilePath
-mkTargetWithHashPath buildsome contentHash = bsBuildsomePath buildsome </> "cached_outputs" </> Base16.encode contentHash-- (outPath <> "." <> Base16.encode contentHash)
+mkTargetWithHashPath buildsome contentHash = contentCacheDir buildsome </> Base16.encode contentHash-- (outPath <> "." <> Base16.encode contentHash)
 
 refreshFromContentCache :: (IsString e, MonadIO m) =>
  BuildTargetEnv -> FilePath -> Maybe FileContentDesc -> Maybe FileStatDesc -> EitherT e m ()
@@ -1303,7 +1332,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     withInstalledSigintHandler
       (killOnce "\nBuild interrupted by Ctrl-C, shutting down."
        (E.SomeException E.UserInterrupt)) $
-      body buildsome
+      (cleanContentCacheDir buildsome >> body buildsome)
         -- We must not leak running slaves as we're not allowed to
         -- access fsHook, db, etc after leaving here:
         `finally` onAllSlaves Wait buildsome
