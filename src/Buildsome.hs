@@ -614,24 +614,27 @@ refreshFromContentCache
   liftIO $ do
     printStrLn btePrinter $ bsRender bteBuildsome
       $ mconcat [ "Copying: " <> cPath (show cachedPath) <> " -> " <> cPath (show filePath) ]
-    FilePath.exists filePath >>= \newExists ->
-       when newExists $ removeFileOrDirectoryOrNothing filePath
+    removeIfExists filePath
+    removeIfExists tempFile
     Dir.createDirectories $ FilePath.takeDirectory filePath
-    -- Set the stat attributes before creating the file, so the target file is created with correct
+    -- Set stat attributes before creating the file, so the target file is created with correct
     -- attrs from the start
     -- TODO use proper tempfile naming
-    let tempFile = filePath <> "._buildsome_temp"
     Dir.copyFile cachedPath  tempFile
     -- TODO set other stat fields?
-    -- TODO these may cause failure later (over permissions) if the user running now is not the one recorded in the log!
+    -- TODO these may cause failure later (over permissions) if the user running now is not the one
+    -- recorded in the log!
     Posix.setFileMode tempFile (fileMode $ basicStatEssence fullStat)
     Posix.setOwnerAndGroup tempFile (fileOwner $ basicStatEssence fullStat) (fileGroup $ basicStatEssence fullStat)
     Dir.renameFile tempFile filePath
-    -- Setting file times must be the last thing we do
-    Posix.setFileTimesHiRes tempFile (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
+    Posix.setFileTimesHiRes filePath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
 
   where Color.Scheme{..} = Color.scheme
         cachedPath = mkTargetWithHashPath bteBuildsome contentHash
+        tempFile = filePath <> "._buildsome_temp"
+        removeIfExists f =
+          FilePath.exists f >>= \exists -> when exists $ removeFileOrDirectoryOrNothing f
+
 refreshFromContentCache _ _ _ _ = left "No cached info"
 
 verifyMDesc :: (MonadIO m, Cmp a) => ByteString -> IO a -> Maybe a -> EitherT ByteString m ()
