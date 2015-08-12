@@ -128,7 +128,7 @@ executable buildsome
                ,     system-argv0 >=0.1 && <0.2
                ,     system-filepath >=0.4 && <0.5
                ,     template-haskell >= 2.8 && < 2.11
-               ,     time >=1.4 && <1.6
+               ,     time >=1.5 && <1.6
                ,     transformers >=0.3 && <=0.5
                ,     unix >=2.6 && <2.8
 
