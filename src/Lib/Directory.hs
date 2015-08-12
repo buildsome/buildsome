@@ -7,6 +7,8 @@ module Lib.Directory
   , createDirectories
   , getDirectoryContents
   , makeAbsolutePath
+  , copyFile
+  , renameFile
   ) where
 
 
@@ -78,3 +80,9 @@ getDirectoryContents path =
 
 makeAbsolutePath :: FilePath -> IO FilePath
 makeAbsolutePath path = (</> path) <$> Posix.getWorkingDirectory
+
+copyFile :: FilePath -> FilePath -> IO ()
+copyFile src dst = Dir.copyFile (BS8.unpack src) (BS8.unpack dst)
+
+renameFile :: FilePath -> FilePath -> IO ()
+renameFile src dst = Dir.copyFile (BS8.unpack src) (BS8.unpack dst)

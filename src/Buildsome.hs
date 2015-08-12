@@ -618,15 +618,19 @@ refreshFromContentCache
     FilePath.exists filePath >>= \newExists ->
        when newExists $ removeFileOrDirectoryOrNothing filePath
     Dir.createDirectories $ FilePath.takeDirectory filePath
-    -- Set the stat attributes before creating the link, so the target file is created with correct
+    -- Set the stat attributes before creating the file, so the target file is created with correct
     -- attrs from the start
+    -- TODO use proper tempfile naming
+    let tempFile = filePath <> "._buildsome_temp"
+    Dir.copyFile cachedPath  tempFile
     -- TODO set other stat fields?
-    Posix.setFileMode cachedPath (fileMode $ basicStatEssence fullStat)
-    Posix.setOwnerAndGroup cachedPath (fileOwner $ basicStatEssence fullStat) (fileGroup $ basicStatEssence fullStat)
+    -- TODO these may cause failure later (over permissions) if the user running now is not the one recorded in the log!
+    Posix.setFileMode tempFile (fileMode $ basicStatEssence fullStat)
+    Posix.setOwnerAndGroup tempFile (fileOwner $ basicStatEssence fullStat) (fileGroup $ basicStatEssence fullStat)
+    Dir.renameFile tempFile filePath
     -- Setting file times must be the last thing we do
-    Posix.setFileTimesHiRes cachedPath (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
-    -- Create the hard link
-    Posix.createLink cachedPath filePath
+    Posix.setFileTimesHiRes tempFile (statusChangeTimeHiRes fullStat) (modificationTimeHiRes fullStat)
+
   where Color.Scheme{..} = Color.scheme
         cachedPath = mkTargetWithHashPath bteBuildsome contentHash
 refreshFromContentCache _ _ _ _ = left "No cached info"
@@ -1107,9 +1111,11 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
                   else do
                     let targetPath = mkTargetWithHashPath buildsome contentHash
                     -- putStrLn $ BS8.unpack ("Copying: " <> outPath <> " -> " <> targetPath)
-                    removeFileOrDirectoryOrNothing targetPath
-                    Dir.createDirectories $ FilePath.takeDirectory targetPath
-                    Posix.createLink outPath targetPath
+                    alreadyExists <- FilePath.exists targetPath
+                    unless alreadyExists $ do
+                      removeFileOrDirectoryOrNothing targetPath
+                      Dir.createDirectories $ FilePath.takeDirectory targetPath
+                      Dir.copyFile outPath targetPath
                 _ -> return ()
               return $ Just chash
             -- else Just <$>
