@@ -37,7 +37,6 @@ import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef
-import           Data.List (intersperse)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe, catMaybes, maybeToList)
@@ -773,8 +772,9 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} executionLog 
       | isThreadKilled exception -> return Nothing
     Left err -> do
       printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
-        [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
-        , " did not match because ", mconcat . intersperse "\n" $ map describeError err
+        [ show $ length err
+        , " execution log(s) of ", cTarget (show (targetOutputs tdTarget))
+        , " did not match; for example because ", head $ map describeError err
         ]
       return Nothing
     Right res -> return (Just res)
