@@ -20,4 +20,4 @@ outputIgnored :: FilePath -> Bool
 outputIgnored = specialFile
 
 allowedUnspecifiedOutput :: FilePath -> Bool
-allowedUnspecifiedOutput = (".pyc" `BS8.isSuffixOf`)
+allowedUnspecifiedOutput fp = any (`BS8.isSuffixOf` fp) [".pyc", ".gcda"]
