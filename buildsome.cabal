@@ -108,6 +108,7 @@ executable buildsome
                ,     async >=2.0 && <2.1
                ,     binary >=0.7 && <0.8
                ,     bytestring >=0.10 && <0.11
+               ,     cassava >=0.4.2 && <0.5
                ,     containers >=0.5 && <0.6
                ,     cryptohash >=0.11 && <0.12
                ,     data-default ==0.5.*
