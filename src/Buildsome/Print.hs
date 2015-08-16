@@ -32,7 +32,6 @@ import qualified Lib.Printer as Printer
 import           Lib.Show (show)
 import           Lib.StdOutputs (StdOutputs(..))
 import qualified Lib.StdOutputs as StdOutputs
-import qualified Lib.Version as Version
 import           Text.Parsec (SourcePos)
 
 fromBytestring8 :: IsString str => ByteString -> str
@@ -138,8 +137,8 @@ replay printer target stdOutputs reason verbosity selfTime action = do
       (True, True)   -> ""
     Color.Scheme{..} = Color.scheme
 
-buildsomeCreation :: Show a => Printer -> [a] -> [a] -> Verbosity -> IO ()
-buildsomeCreation printer withs withouts verbosity
+buildsomeCreation :: Show a => Printer -> ByteString -> [a] -> [a] -> Verbosity -> IO ()
+buildsomeCreation printer version withs withouts verbosity
   | verbosityGeneral verbosity =
     printStrLn printer $ mconcat
     [ header
@@ -155,5 +154,5 @@ buildsomeCreation printer withs withouts verbosity
     ]
   where
     header =
-      "Buildsome " <> cTiming (ColorText.simple Version.version) <> " invoked"
+      "Buildsome " <> cTiming (ColorText.simple version) <> " invoked"
     Color.Scheme{..} = Color.scheme
