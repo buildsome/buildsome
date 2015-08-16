@@ -1,6 +1,8 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.List (filterA, unprefixed, unsuffixed) where
 
-import Control.Applicative (Applicative(..), (<$>))
+import Prelude.Compat
+
 import Data.List (isPrefixOf, isSuffixOf)
 
 filterA :: Applicative f => (a -> f Bool) -> [a] -> f [a]
