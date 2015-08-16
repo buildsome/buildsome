@@ -6,4 +6,5 @@
 /TAGS
 *.hi
 *.o
-
+*.i_hi
+*.i_o
