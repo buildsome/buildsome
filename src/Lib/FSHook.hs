@@ -69,14 +69,14 @@ instance Binary AccessDoc
 type JobId = ByteString
 
 data Input = Input
-  { inputAccessType :: AccessType
-  , inputPath :: FilePath
+  { inputAccessType :: !AccessType
+  , inputPath :: !FilePath
   } deriving (Eq, Ord, Show)
 
 data DelayedOutput = DelayedOutput
 -- TODO: Rename to delayedOutput...
-  { outputBehavior :: OutputBehavior
-  , outputPath :: FilePath
+  { outputBehavior :: !OutputBehavior
+  , outputPath :: !FilePath
   } deriving (Eq, Ord, Show)
 
 type UndelayedOutput = Protocol.OutFilePath
@@ -99,9 +99,9 @@ data RunningJob = RunningJob
   }
 
 data Job
-  = KillingJob JobLabel ColorText
-  | CompletedJob JobLabel ColorText
-  | LiveJob RunningJob
+  = KillingJob !JobLabel ColorText -- ColorText is intentionally lazy (only computed if printed)
+  | CompletedJob !JobLabel ColorText -- ditto
+  | LiveJob !RunningJob
 
 data FSHook = FSHook
   { fsHookRunningJobs :: IORef (Map JobId Job)
