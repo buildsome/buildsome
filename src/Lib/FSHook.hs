@@ -16,51 +16,50 @@ module Lib.FSHook
   , runCommand, timedRunCommand
   ) where
 
-
-import Prelude.Compat hiding (FilePath)
-
-import Control.Concurrent (ThreadId, myThreadId, killThread)
-import Control.Concurrent.MVar
-import Control.Monad (forever, void, unless, (<=<))
-import Data.Binary (Binary(..))
-import GHC.Generics (Generic(..))
-import Data.ByteString (ByteString)
-import Data.IORef
-import Data.Map.Strict (Map)
-import Data.Maybe (maybeToList)
-import Data.Monoid ((<>))
-import Data.Time (NominalDiffTime)
-import Data.Typeable (Typeable)
-import Lib.Argv0 (getArgv0)
-import Lib.ByteString (unprefixed)
-import Lib.ColorText (ColorText)
-import Lib.Exception (finally, bracket_, onException, handleSync)
-import Lib.FSHook.AccessType (AccessType(..))
-import Lib.FSHook.OutputBehavior (OutputEffect(..), OutputBehavior(..))
-import Lib.FSHook.Protocol (IsDelayed(..))
-import Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
-import Lib.Fresh (Fresh)
-import Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
-import Lib.Printer (Printer)
-import Lib.Sock (recvFrame, recvLoop_, withUnixStreamListener)
-import Lib.TimeIt (timeIt)
-import Network.Socket (Socket)
-import Paths_buildsome (getDataFileName)
-import System.IO (hPutStrLn, stderr)
+import           Control.Concurrent (ThreadId, myThreadId, killThread)
+import           Control.Concurrent.MVar
 import qualified Control.Exception as E
+import           Control.Monad (forever, void, unless, (<=<))
+import           Data.Binary (Binary(..))
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.IORef
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
+import           Data.Maybe (maybeToList)
+import           Data.Monoid ((<>))
+import           Data.Time (NominalDiffTime)
+import           Data.Typeable (Typeable)
+import           GHC.Generics (Generic(..))
+import           Lib.Argv0 (getArgv0)
 import qualified Lib.AsyncContext as AsyncContext
+import           Lib.ByteString (unprefixed)
+import           Lib.ColorText (ColorText)
+import           Lib.Exception (finally, bracket_, onException, handleSync)
+import           Lib.FSHook.AccessType (AccessType(..))
+import           Lib.FSHook.OutputBehavior (OutputEffect(..), OutputBehavior(..))
 import qualified Lib.FSHook.OutputBehavior as OutputBehavior
+import           Lib.FSHook.Protocol (IsDelayed(..))
 import qualified Lib.FSHook.Protocol as Protocol
+import           Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
 import qualified Lib.FilePath as FilePath
+import           Lib.Fresh (Fresh)
 import qualified Lib.Fresh as Fresh
+import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
+import           Lib.Printer (Printer)
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
+import           Lib.Sock (recvFrame, recvLoop_, withUnixStreamListener)
+import           Lib.TimeIt (timeIt)
 import qualified Lib.Timeout as Timeout
+import           Network.Socket (Socket)
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
+import           Paths_buildsome (getDataFileName)
+import           System.IO (hPutStrLn, stderr)
 import qualified System.Posix.ByteString as Posix
+
+import           Prelude.Compat hiding (FilePath)
 
 data AccessDoc =
     AccessDoc Protocol.Func JobLabel

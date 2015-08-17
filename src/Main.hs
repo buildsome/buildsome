@@ -2,9 +2,6 @@
 {-# LANGUAGE DeriveDataTypeable, OverloadedStrings, RecordWildCards #-}
 module Main (main) where
 
-import qualified Prelude.Compat as Prelude
-import           Prelude.Compat hiding (FilePath, show)
-
 import qualified Buildsome
 import           Buildsome (Buildsome)
 import qualified Buildsome.Chart as Chart
@@ -46,6 +43,9 @@ import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
 import           System.Posix.IO (stdOutput)
 import           System.Posix.Terminal (queryTerminal)
+
+import qualified Prelude.Compat as Prelude
+import           Prelude.Compat hiding (FilePath, show)
 
 standardMakeFilename :: FilePath
 standardMakeFilename = "Buildsome.mk"

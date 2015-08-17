@@ -12,36 +12,35 @@ module Buildsome.Db
   , MFileContentDesc, MakefileParseCache(..), makefileParseCache
   ) where
 
-import Prelude.Compat hiding (FilePath)
-
-import Buildsome.BuildId (BuildId)
-
-import Data.Binary (Binary(..))
-import Data.ByteString (ByteString)
-import Data.Default (def)
-import Data.IORef
-import Data.Map (Map)
-import Data.Monoid ((<>))
-import Data.Set (Set)
-import Data.Time.Clock (DiffTime)
-import Data.Time.Clock.POSIX (POSIXTime)
-import GHC.Generics (Generic)
-import Lib.Binary (encode, decode)
-import Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
-import Lib.Exception (bracket)
-import Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
-import Lib.FilePath (FilePath, (</>), (<.>))
-import qualified Lib.FSHook as FSHook
-import Lib.Makefile (Makefile)
-import Lib.Makefile.Monad (PutStrLn)
-import Lib.StdOutputs (StdOutputs(..))
-import Lib.TimeInstances ()
+import           Buildsome.BuildId (BuildId)
 import qualified Crypto.Hash.MD5 as MD5
+import           Data.Binary (Binary(..))
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Default (def)
+import           Data.IORef
+import           Data.Map (Map)
+import           Data.Monoid ((<>))
+import           Data.Set (Set)
 import qualified Data.Set as S
+import           Data.Time.Clock (DiffTime)
+import           Data.Time.Clock.POSIX (POSIXTime)
 import qualified Database.LevelDB.Base as LevelDB
+import           GHC.Generics (Generic)
+import           Lib.Binary (encode, decode)
+import           Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
+import           Lib.Exception (bracket)
+import qualified Lib.FSHook as FSHook
+import           Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
+import           Lib.FilePath (FilePath, (</>), (<.>))
+import           Lib.Makefile (Makefile)
 import qualified Lib.Makefile as Makefile
+import           Lib.Makefile.Monad (PutStrLn)
+import           Lib.StdOutputs (StdOutputs(..))
+import           Lib.TimeInstances ()
 import qualified System.Posix.ByteString as Posix
+
+import           Prelude.Compat hiding (FilePath)
 
 schemaVersion :: ByteString
 schemaVersion = "schema.ver.18"
