@@ -15,7 +15,7 @@ import           Buildsome.Opts (Opts(..), Opt(..))
 import qualified Buildsome.Opts as Opts
 import qualified Buildsome.Print as Print
 import qualified Control.Exception as E
-import           Control.Monad (unless, forM_)
+import           Control.Monad (forM_)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.List (foldl')
@@ -124,24 +124,26 @@ setBuffering = do
   IO.hSetBuffering IO.stdout IO.LineBuffering
   IO.hSetBuffering IO.stderr IO.LineBuffering
 
-switchDirectory :: FilePath -> IO (FilePath, FilePath)
+switchDirectory :: FilePath -> IO (FilePath, FilePath, FilePath)
 switchDirectory makefilePath = do
   origCwd <- Posix.getWorkingDirectory
-  unless (BS8.null cwd) $ do
-    Posix.changeWorkingDirectory cwd
-    fullCwd <- FilePath.canonicalizePath $ origCwd </> cwd
-    BS8.putStrLn $ "make: Entering directory `" <> fullCwd <> "'"
-  return (origCwd, file)
+  newCwd <-
+    if BS8.null cwd then return origCwd
+    else do
+      Posix.changeWorkingDirectory cwd
+      fullCwd <- FilePath.canonicalizePath $ origCwd </> cwd
+      BS8.putStrLn $ "make: Entering directory `" <> fullCwd <> "'"
+      return fullCwd
+  return (origCwd, file, newCwd)
   where
     (cwd, file) = FilePath.splitFileName makefilePath
 
-parseMakefile :: Printer -> Db -> FilePath -> FilePath -> Makefile.Vars -> IO Makefile
-parseMakefile printer db origMakefilePath finalMakefilePath vars = do
-  cwd <- Posix.getWorkingDirectory
+parseMakefile :: Printer -> Db -> FilePath -> FilePath -> Makefile.Vars -> FilePath -> IO Makefile
+parseMakefile printer db origMakefilePath finalMakefilePath vars cwd = do
   let absFinalMakefilePath = cwd </> finalMakefilePath
   (parseTime, (isHit, makefile)) <- timeIt $ do
     (isHit, rawMakefile) <- MemoParseMakefile.memoParse db absFinalMakefilePath vars
-    makefile <- Makefile.onMakefilePaths FilePath.canonicalizePathAsRelative rawMakefile
+    makefile <- Makefile.onMakefilePaths (pure . FilePath.canonicalizePathAsRelativeCwd cwd) rawMakefile
     Makefile.verifyPhonies makefile
     return (isHit, makefile)
   let msg =
@@ -231,11 +233,11 @@ handleOpts printer (Opts opt) body = do
       maybe (E.throwIO (MakefileScanFailed (Printer.render printer))) return =<<
       scanFileUpwards standardMakeFilename
     Just path -> specifiedMakefile printer path
-  (origCwd, finalMakefilePath) <- switchDirectory origMakefilePath
-  let inOrigCwd =
-        FilePath.canonicalizePathAsRelative . (origCwd </>)
-      targetInOrigCwd =
-        FilePath.canonicalizePathAsRelative .
+  (origCwd, finalMakefilePath, cwd) <- switchDirectory origMakefilePath
+  let canonCwd =
+        FilePath.canonicalizePathAsRelativeCwd cwd
+      inOrigCwd = canonCwd . (origCwd </>)
+      targetInOrigCwd = canonCwd .
         case optMakefilePath opt of
         -- If we found the makefile by scanning upwards, prepend
         -- original cwd to avoid losing it:
@@ -247,13 +249,13 @@ handleOpts printer (Opts opt) body = do
   requested <-
     traverseRequested
     (ntraverseTargetsRequest
-     (mapM targetInOrigCwd) -- <- on target paths
+     (pure . map targetInOrigCwd) -- <- on target paths
      pure                   -- <- on reason
-     (Opts.extraOutputsAtFilePaths inOrigCwd) -- <- onExtraOutputs
+     (Opts.extraOutputsAtFilePaths (pure . inOrigCwd)) -- <- onExtraOutputs
     ) rawRequested
   Buildsome.withDb finalMakefilePath $ \db -> do
     makefile <-
-      parseMakefile printer db origMakefilePath finalMakefilePath (optVars opt)
+      parseMakefile printer db origMakefilePath finalMakefilePath (optVars opt) cwd
     let flags = flagsOfVars (Makefile.makefileWeakVars makefile)
     if optHelpFlags opt
       then showHelpFlags flags

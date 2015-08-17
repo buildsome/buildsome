@@ -5,11 +5,13 @@ module Lib.FilePath
   , isAbsolute
   , splitFileName
   , canonicalizePath
+  , canonicalizePathCwd
   , canonicalizePathAsRelative
   , dropTrailingPathSeparator, addTrailingPathSeparator
   , (</>), (<.>)
   , takeDirectory, takeFileName
   , makeRelative, makeRelativeToCurrentDirectory
+  , canonicalizePathAsRelativeCwd
   , exists
   ) where
 
@@ -113,10 +115,15 @@ makeRelative prefix full =
 makeRelativeToCurrentDirectory :: FilePath -> IO FilePath
 makeRelativeToCurrentDirectory path = (`makeRelative` path) <$> Posix.getWorkingDirectory
 
+canonicalizePathCwd :: FilePath -> FilePath -> FilePath
+canonicalizePathCwd cwd path =
+  dropTrailingPathSeparator $ removeRedundantComponents $ cwd </> path
+
 canonicalizePath :: FilePath -> IO FilePath
-canonicalizePath path = do
-  curDir <- Posix.getWorkingDirectory
-  return $ dropTrailingPathSeparator $ removeRedundantComponents $ curDir </> path
+canonicalizePath path = (`canonicalizePathCwd` path) <$> Posix.getWorkingDirectory
 
 canonicalizePathAsRelative :: FilePath -> IO FilePath
 canonicalizePathAsRelative path = makeRelativeToCurrentDirectory =<< canonicalizePath path
+
+canonicalizePathAsRelativeCwd :: FilePath -> FilePath -> FilePath
+canonicalizePathAsRelativeCwd cwd = makeRelative cwd . canonicalizePathCwd cwd
