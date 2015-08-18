@@ -13,6 +13,7 @@ import Control.Monad.Trans.Class (MonadTrans(..))
 import Data.ByteString (ByteString)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
+import Data.List (partition, nub)
 import Data.Set (Set)
 import Lib.FilePath (FilePath, (</>))
 import Lib.Makefile (TargetType(..), Target)
@@ -21,6 +22,7 @@ import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Stats as Stats
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
+import qualified Data.Char as Char
 import qualified Data.Set as Set
 import qualified Lib.Directory as Directory
 import qualified Lib.Revisit as Revisit
@@ -56,11 +58,21 @@ escape xs = "'" <> BS8.concatMap f xs <> "'"
     f '\'' = "'\"'\"'"
     f x    = BS8.singleton x
 
+
+prepend :: Monoid a => a -> [a] -> [a]
+prepend prefix = map (prefix <>)
+
+trimLeadingSpaces :: ByteString -> ByteString
+trimLeadingSpaces = BS8.dropWhile Char.isSpace
+
 targetCmdLines :: MakefileTarget -> Target -> [ByteString]
-targetCmdLines tgt target =
-  ["rm -rf " <> dir | dir <- makefileTargetDirs tgt] ++
-  (BS8.lines . targetCmds) target ++
-  (if isDirectory tgt then map ("touch " <>) (makefileTargetPath tgt) else [])
+targetCmdLines tgt target = concat
+  [ prepend "rm -rf " $ makefileTargetDirs tgt
+  , map trimLeadingSpaces . BS8.lines $ targetCmds target
+  , if isDirectory tgt
+    then prepend "touch " $ makefileTargetPath tgt
+    else []
+  ]
 
 type Phonies = Set FilePath
 
@@ -71,20 +83,19 @@ onOneTarget phoniesSet cwd stats target =
     depsLines <- depBuildCommands
     tgt <- lift $ makefileTarget target
     let
+      (phonies, nonPhonies) = partition (`Set.member` phoniesSet) $ makefileTargetPath tgt
       targetDecl = mconcat
-        [ "T := ", spaceUnwords (makefileTargetPath tgt)
-        , "\n$(T):", spaceUnwords $ Set.toList $ Set.fromList inputs
+        [ "T := ", spaceUnwords $ makefileTargetPath tgt
+        , "\n$(T):", spaceUnwords . nub $ inputs
         ]
-      myLines =
-        [ "#" <> BS8.pack (showPos (targetPos target)) ] ++
-        [ ".PHONY: " <> t
-        | t <- makefileTargetPath tgt, t `Set.member` phoniesSet
-        ] ++
-        [ targetDecl ] ++
-        map ("\t" <>)
-          (["rm -f " <> escape t | t <- makefileTargetPath tgt, not $ t `Set.member` phoniesSet]
-           ++ targetCmdLines tgt target) ++
-        [ "" ]
+      myLines = concat
+        [ [ "#" <> BS8.pack (showPos $ targetPos target) ]
+        , prepend ".PHONY: " phonies
+        , [ targetDecl ]
+        , map (\t -> "\trm -f " <> escape t) nonPhonies
+        , prepend "\t" $ targetCmdLines tgt target
+        , [ "" ]
+        ]
     return $ myLines ++ depsLines
   where
     spaceUnwords = BS8.concat . map (" " <>)
