@@ -51,10 +51,12 @@ makefileTarget target = do
   where
     repPath = BuildMaps.targetRepPath $ BuildMaps.computeTargetRep target
 
+-- TODO use Builder API for more efficient escaping, see
+-- https://hackage.haskell.org/package/bytestring-0.10.6.0/docs/Data-ByteString-Builder-Prim.html
 escape :: ByteString -> ByteString
 escape xs = "'" <> BS8.concatMap f xs <> "'"
   where
-    f '\0' = ""
+    f '\0' = error $ "Unsupported character NUL in '" ++ show xs ++ "'"
     f '\'' = "'\"'\"'"
     f x    = BS8.singleton x
 
@@ -84,14 +86,15 @@ onOneTarget phoniesSet cwd stats target =
     tgt <- lift $ makefileTarget target
     let
       (phonies, nonPhonies) = partition (`Set.member` phoniesSet) $ makefileTargetPath tgt
-      targetDecl = mconcat
-        [ "T := ", spaceUnwords $ makefileTargetPath tgt
-        , "\n$(T):", spaceUnwords . nub $ inputs
+      targetDecl =
+        [ "T := " <> spaceUnwords (makefileTargetPath tgt)
+        , "D := " <> (spaceUnwords . nub $ inputs)
+        , "$(T): $(D)"
         ]
       myLines = concat
         [ [ "#" <> BS8.pack (showPos $ targetPos target) ]
         , prepend ".PHONY: " phonies
-        , [ targetDecl ]
+        , targetDecl
         , map (\t -> "\trm -f " <> escape t) nonPhonies
         , prepend "\t" $ targetCmdLines tgt target
         , [ "" ]
