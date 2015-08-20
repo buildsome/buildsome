@@ -50,14 +50,17 @@ import           Lib.Printer (Printer)
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
 import           Lib.Sock (recvFrame, recvLoop_, withUnixStreamListener)
+import           Lib.StdOutputs (StdOutputs(..))
 import           Lib.TimeIt (timeIt)
 import qualified Lib.Timeout as Timeout
 import           Network.Socket (Socket)
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import           Paths_buildsome (getDataFileName)
+import           System.Exit (ExitCode)
 import           System.IO (hPutStrLn, stderr)
 import qualified System.Posix.ByteString as Posix
+import           System.Process (CmdSpec)
 
 import           Prelude.Compat hiding (FilePath)
 
@@ -312,9 +315,9 @@ mkEnvVars fsHook rootFilter jobId =
   ]
 
 timedRunCommand ::
-  FSHook -> FilePath -> (Process.Env -> IO r) -> JobLabel -> ColorText ->
-  FSAccessHandlers -> IO (NominalDiffTime, r)
-timedRunCommand fsHook rootFilter cmd label labelColorText fsAccessHandlers = do
+  FSHook -> FilePath -> [String] -> CmdSpec -> JobLabel -> ColorText ->
+  FSAccessHandlers -> IO (NominalDiffTime, (ExitCode, StdOutputs ByteString))
+timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHandlers = do
   pauseTimeRef <- newIORef 0
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTimeRef (+delta)
@@ -332,7 +335,9 @@ timedRunCommand fsHook rootFilter cmd label labelColorText fsAccessHandlers = do
         (wrappedFsAccessHandler Delayed delayed)
         (wrappedFsAccessHandler NotDelayed undelayed)
   (time, res) <-
-    runCommand fsHook rootFilter (timeIt . cmd) label labelColorText wrappedFsAccessHandlers
+    timeIt $
+    runCommand fsHook rootFilter inheritEnvs cmdSpec
+    label labelColorText wrappedFsAccessHandlers
   subtractedTime <- (time-) <$> readIORef pauseTimeRef
   return (subtractedTime, res)
   where
@@ -348,38 +353,40 @@ withRunningJob fsHook jobId job body = do
     setJob = atomicModifyIORef_ registry . M.insert jobId
 
 runCommand ::
-  FSHook -> FilePath -> (Process.Env -> IO r) -> JobLabel -> ColorText ->
-  FSAccessHandlers -> IO r
-runCommand fsHook rootFilter cmd label labelColorText fsAccessHandlers = do
-  activeConnections <- newIORef M.empty
-  freshConnIds <- Fresh.new 0
-  jobIdNum <- Fresh.next $ fsHookFreshJobIds fsHook
-  tid <- myThreadId
+  FSHook -> FilePath -> [String] -> CmdSpec -> JobLabel -> ColorText ->
+  FSAccessHandlers -> IO (ExitCode, StdOutputs ByteString)
+runCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHandlers =
+  do
+    activeConnections <- newIORef M.empty
+    freshConnIds <- Fresh.new 0
+    jobIdNum <- Fresh.next $ fsHookFreshJobIds fsHook
+    tid <- myThreadId
 
-  let jobId = BS8.pack ("cmd" ++ show jobIdNum)
-      job = RunningJob
-            { jobLabel = label
-            , jobLabelColorText = labelColorText
-            , jobActiveConnections = activeConnections
-            , jobFreshConnIds = freshConnIds
-            , jobThreadId = tid
-            , jobRootFilter = rootFilter
-            , jobFSAccessHandlers = fsAccessHandlers
-            }
-  -- Don't leak connections still running our handlers once we leave!
-  let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
-  (`onException` onActiveConnections killConnection) $
-    do
-      res <-
-        withRunningJob fsHook jobId job $ cmd $ mkEnvVars fsHook rootFilter jobId
-      let timeoutMsg =
-            Printer.render (fsHookPrinter fsHook)
-            (labelColorText <> ": Process completed, but still has likely-leaked " <>
-             "children connected to FS hooks")
-      Timeout.warning (Timeout.seconds 5) timeoutMsg $
-        onActiveConnections awaitConnection
-      return res
+    let jobId = BS8.pack ("cmd" ++ show jobIdNum)
+        job = RunningJob
+              { jobLabel = label
+              , jobLabelColorText = labelColorText
+              , jobActiveConnections = activeConnections
+              , jobFreshConnIds = freshConnIds
+              , jobThreadId = tid
+              , jobRootFilter = rootFilter
+              , jobFSAccessHandlers = fsAccessHandlers
+              }
+    -- Don't leak connections still running our handlers once we leave!
+    let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
+    (`onException` onActiveConnections killConnection) $
+      do
+        (exitCode, stdOut, stdErr) <-
+          withRunningJob fsHook jobId job $ runCmd $ mkEnvVars fsHook rootFilter jobId
+        let timeoutMsg =
+              Printer.render (fsHookPrinter fsHook)
+              (labelColorText <> ": Process completed, but still has likely-leaked " <>
+               "children connected to FS hooks")
+        Timeout.warning (Timeout.seconds 5) timeoutMsg $
+          onActiveConnections awaitConnection
+        return (exitCode, StdOutputs stdOut stdErr)
   where
+    runCmd = Process.getOutputs cmdSpec inheritEnvs
     killConnection (tid, awaitConn) = killThread tid >> awaitConn
     awaitConnection (_tid, awaitConn) = awaitConn
 

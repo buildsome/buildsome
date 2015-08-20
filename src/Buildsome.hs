@@ -7,9 +7,6 @@ module Buildsome
   , want
   ) where
 
-import qualified Prelude.Compat
-import           Prelude.Compat hiding (FilePath, show)
-
 import           Buildsome.BuildId (BuildId)
 import qualified Buildsome.BuildId as BuildId
 import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
@@ -65,7 +62,6 @@ import           Lib.Once (once)
 import qualified Lib.Parallelism as Parallelism
 import           Lib.Printer (Printer, printStrLn)
 import qualified Lib.Printer as Printer
-import qualified Lib.Process as Process
 import qualified Lib.Set as LibSet
 import           Lib.Show (show)
 import           Lib.ShowBytes (showBytes)
@@ -80,6 +76,9 @@ import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
 import           System.Process (CmdSpec(..))
 import           Text.Parsec (SourcePos)
+
+import qualified Prelude.Compat
+import           Prelude.Compat hiding (FilePath, show)
 
 type Parents = [(TargetRep, Target, Reason)]
 
@@ -894,9 +893,15 @@ runCmd bte@BuildTargetEnv{..} entity target = do
   let accessHandlers =
           fsAccessHandlers outputsRef inputsRef builtTargetsRef bte entity target
   Parallelism.upgradePriority btePrinter entity
-  (time, stdOutputs) <-
-    FSHook.timedRunCommand hook rootPath shellCmd (targetOutputs target)
+  (time, (exitCode, stdOutputs)) <-
+    FSHook.timedRunCommand hook rootPath ["HOME", "PATH"] shellCmd
+    (targetOutputs target)
     (cTarget (show (targetOutputs target))) accessHandlers
+  case exitCode of
+    ExitFailure {} ->
+      E.throwIO $ TargetCommandFailed (bsRender bteBuildsome) target exitCode stdOutputs
+    _ -> return ()
+  Print.targetStdOutputs btePrinter target stdOutputs
   inputs <- readIORef inputsRef
   outputs <- readIORef outputsRef
   builtTargets <- readIORef builtTargetsRef
@@ -914,7 +919,7 @@ runCmd bte@BuildTargetEnv{..} entity target = do
   where
     rootPath = bsRootPath bteBuildsome
     hook = bsFsHook bteBuildsome
-    shellCmd = shellCmdVerify bte target ["HOME", "PATH"]
+    shellCmd = ShellCommand (BS8.unpack (targetCmds target))
     Color.Scheme{..} = Color.scheme
 
 makeExecutionLog ::
@@ -1129,19 +1134,6 @@ instance Show TargetCommandFailed where
     where
       Color.Scheme{..} = Color.scheme
       cmd = targetCmds target
-
-shellCmdVerify ::
-  BuildTargetEnv -> Target -> [String] -> Process.Env -> IO (StdOutputs ByteString)
-shellCmdVerify BuildTargetEnv{..} target inheritEnvs newEnvs = do
-  (exitCode, stdout, stderr) <-
-    Process.getOutputs (ShellCommand (BS8.unpack (targetCmds target))) inheritEnvs newEnvs
-  let stdOutputs = StdOutputs stdout stderr
-  case exitCode of
-    ExitFailure {} ->
-      E.throwIO $ TargetCommandFailed (bsRender bteBuildsome) target exitCode stdOutputs
-    _ -> return ()
-  Print.targetStdOutputs btePrinter target stdOutputs
-  return stdOutputs
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")
