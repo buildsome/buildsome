@@ -74,10 +74,10 @@ fromString pattern =
   [a, afterA] ->
     Just $
     case BS8.split '*' afterA of
-      [] -> noAsterisk a afterA
-      [_] -> noAsterisk a afterA
+      [] -> noAsterisk
+      [_] -> noAsterisk
       [b, c] -> StringPattern a b $ Just c
       _ -> error $ "Too many * in pattern: " ++ show pattern
+      where
+        noAsterisk = StringPattern a afterA Nothing
   _ -> error $ "Too many % in pattern: " ++ show pattern
-  where
-    noAsterisk a b = StringPattern a b Nothing
