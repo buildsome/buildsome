@@ -111,7 +111,7 @@ whenCondTrue act = do
 
 RELEASE_INLINE(horizSpace)
 horizSpace :: Monad m => ParserG u m Char
-horizSpace = P.satisfy (`BS8.elem` " ")
+horizSpace = P.char ' '
 
 RELEASE_INLINE(horizSpaces)
 horizSpaces :: Monad m => ParserG u m ()
