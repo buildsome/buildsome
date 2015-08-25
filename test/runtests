@@ -16,8 +16,8 @@ ${buildsome} -f implicitpat
 ${buildsome} -f implicitpat
 git clean -fdx -- implicitpat
 
-${buildsome} -f par -j4 || echo Failure expected
-${buildsome} -f par -j4 || echo Failure expected
+${buildsome} -f par -j4 && (echo Failure expected ; exit 1)
+${buildsome} -f par -j4 && (echo Failure expected ; exit 1)
 git clean -fdx -- par
 
 remove_pattern_target/test ${buildsome}
