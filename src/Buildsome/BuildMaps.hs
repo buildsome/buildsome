@@ -10,20 +10,20 @@ module Buildsome.BuildMaps
   , findDirectory
   ) where
 
-
-import Prelude.Compat hiding (FilePath)
-
-import Control.Monad
-import Data.List (nub)
-import Data.Map.Strict (Map)
-import Data.Maybe (mapMaybe)
-
-import Lib.FilePath (FilePath, takeDirectory)
-import Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
+import qualified Buildsome.Print as Print
+import           Control.Monad
 import qualified Data.ByteString.Char8 as BS8
+import           Data.List (nub)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
+import           Data.Maybe (mapMaybe)
+import           Data.Monoid ((<>))
+import           Lib.FilePath (FilePath, takeDirectory)
+import           Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
 import qualified Lib.Makefile as Makefile
 import qualified Lib.StringPattern as StringPattern
+
+import           Prelude.Compat hiding (FilePath)
 
 -- | Unique identifier of the target.
 newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimum output path as the
@@ -69,13 +69,14 @@ find (BuildMaps buildMap childrenMap) path =
         error $ BS8.unpack $ mconcat
         [ "Multiple matching patterns for: ", BS8.pack (show path), "\n"
         , BS8.unlines $
-          map
-          ( BS8.unwords .
-            map (StringPattern.toString . Makefile.filePatternFile) .
-            targetOutputs . fst
-          )
-          targets
+          map (showPattern . fst) targets
         ]
+    showPattern pattern =
+      Print.posText (targetPos pattern) <> showPatternOutputs pattern
+    showPatternOutputs pattern =
+      BS8.unwords $
+      map (StringPattern.toString . Makefile.filePatternFile) $
+      targetOutputs pattern
 
 findDirectory :: BuildMaps -> FilePath -> DirectoryBuildMap
 findDirectory (BuildMaps _ childrenMap) path =

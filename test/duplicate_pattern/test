@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+buildsome=${1:-buildsome}
+
+cd $(dirname $0)
+
+${buildsome} 2> output && (echo Failure expected ; exit 1)
+grep 'Buildsome.mk:4' output || (echo Missing error reference to line 4 ; exit 1)
+grep 'Buildsome.mk:5' output || (echo Missing error reference to line 5 ; exit 1)

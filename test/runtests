@@ -26,6 +26,9 @@ git clean -fdx -- remove_pattern_target
 scratch/run_tests ${buildsome}
 git clean -fdx -- scratch
 
+duplicate_pattern/test ${buildsome}
+git clean -fdx -- duplicate_pattern
+
 ${buildsome} -f stat
 ${buildsome} -f stat
 git clean -fdx -- stat
