@@ -9,7 +9,7 @@ ${buildsome} -f dlopen
 ${buildsome} -f dlopen
 git clean -fdx -- dlopen
 
-ifs/test
+ifs/test ${buildsome}
 git clean -fdx -- ifs
 
 ${buildsome} -f implicitpat

@@ -1,14 +1,17 @@
 #!/bin/bash
-cd $(dirname $0)
-BUILDSOME=""
 set -e
+
+cd $(dirname $0)
+
+buildsome=${1:-buildsome}
+
 bs () {
-  buildsome $args | grep -e ECHO > out.$filename
+  ${buildsome} $args | grep -e ECHO > out.$filename
   diff -u out.$filename.expected out.$filename
 }
 
 # run bs twice to see cached behavior is correct
-buildsome --help-flags |grep -v "took.*sec" > out.help_flags
+${buildsome} --help-flags |grep -v "took.*sec" > out.help_flags
 diff -u out.help_flags.expected out.help_flags
 args="" ; filename="default" ; bs ; bs
 args="--with=x" ; filename="with_x" ; bs ; bs
