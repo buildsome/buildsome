@@ -266,9 +266,9 @@ interpolateString escapeParser stopChars dollarHandler =
     doubleQuoted begin chars end = BS8.singleton begin <> chars <> BS8.singleton end
     RELEASE_INLINE(interpolatedChar)
     interpolatedChar stopChars' = P.choice
-      [ P.char '$' *> dollarHandler
+      [ BS8.singleton <$> P.noneOf ('\t' : '\\' : '$' :stopChars')
+      , P.char '$' *> dollarHandler
       , escapeParser
-      , BS8.singleton <$> P.noneOf ('\t' : stopChars')
       ]
     RELEASE_INLINE(literalString)
     literalString delimiter = do
