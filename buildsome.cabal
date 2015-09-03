@@ -15,7 +15,7 @@ maintainer:          eyal.lotem@gmail.com
 copyright:           Elastifile (2014)
 category:            Development
 build-type:          Custom
-extra-source-files:  README
+extra-source-files:  README.md
 cabal-version:       >=1.10
 
 data-files:          cbits/fs_override.so
