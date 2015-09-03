@@ -49,6 +49,13 @@ makefileTarget target = do
   where
     repPath = BuildMaps.targetRepPath $ BuildMaps.computeTargetRep target
 
+escape :: ByteString -> ByteString
+escape xs = "'" <> BS8.concatMap f xs <> "'"
+  where
+    f '\0' = ""
+    f '\'' = "'\"'\"'"
+    f x    = BS8.singleton x
+
 targetCmdLines :: MakefileTarget -> Target -> [ByteString]
 targetCmdLines tgt target =
   ["rm -rf " <> dir | dir <- makefileTargetDirs tgt] ++
@@ -75,7 +82,7 @@ onOneTarget phoniesSet cwd stats target =
         ] ++
         [ targetDecl ] ++
         map ("\t" <>)
-          (["rm -f " <> t | t <- makefileTargetPath tgt, not $ t `Set.member` phoniesSet]
+          (["rm -f " <> escape t | t <- makefileTargetPath tgt, not $ t `Set.member` phoniesSet]
            ++ targetCmdLines tgt target) ++
         [ "" ]
     return $ myLines ++ depsLines
@@ -106,3 +113,4 @@ make phoniesSet cwd stats rootTargets filePath = do
     , "# ON THE FILE SYSTEM (even outside your project). USE CAREFULLY."
     , "# make -f compat-makefile"
     ] ++ makefileLines
+
