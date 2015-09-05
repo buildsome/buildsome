@@ -2,11 +2,27 @@
 buildsome=${1:-buildsome}
 
 cd $(dirname $0)
-$buildsome -M
-strip_comments='grep -v ^#.*'
-$strip_comments expected > expected.stripped
-$strip_comments compat-makefile > compat-makefile.stripped
-diff expected.stripped compat-makefile.stripped || (echo "ERROR: compat-makefile differs from expected!" ; exit 1)
+touch should_be_deleted_by_make_dependency
+$buildsome -M --overwrite
 $buildsome clean
+
+for f in foo.o moshe.a moshe.a.b escape_input should_be_deleted_by_make
+do
+    test ! -e $f || (echo "ERROR: file: $f was not deleted by buildsome clean?!" && exit 1)
+done
+
+echo "not # bla" > should_be_deleted_by_make
+# without the sleep here, at least on my machine the two files have exactly the same mtime. not sure why!
+# 18:33:56.602501780 +0300 should_be_deleted_by_make
+# 18:33:56.602501780 +0300 should_be_deleted_by_make_dependency
+sleep 0.1
+touch should_be_deleted_by_make_dependency
+
 make -f compat-makefile
 
+for f in foo.o moshe.a moshe.a.b escape_input should_be_deleted_by_make
+do
+    test -e $f || (echo "ERROR: file: $f was not created during make/build?!" && exit 1)
+done
+
+diff -u ./should_be_deleted_by_make <(echo "# bla") || (echo 'ERROR: should_be_deleted_by_make was not deleted before build?!' && exit 1)
