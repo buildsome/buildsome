@@ -11,6 +11,7 @@ import Data.Map (Map)
 import Data.Set (Set)
 import Data.Time (DiffTime)
 import Lib.Makefile (Target)
+import Lib.FilePath (FilePath)
 
 data When = FromCache | BuiltNow deriving Show
 
@@ -19,6 +20,7 @@ data TargetStats = TargetStats
     -- | How long it took to run
   , tsTime :: !DiffTime
   , tsDirectDeps :: [Target]
+  , tsExistingInputs :: Maybe [FilePath]
   } deriving (Show)
 
 data Stats = Stats

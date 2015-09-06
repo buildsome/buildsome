@@ -43,5 +43,8 @@ git clean -fdx -- overpar
 speculative_error/test ${buildsome}
 git clean -fdx -- speculative_error
 
+compat_makefile/test ${buildsome}
+git clean -fdx -- compat_makefile
+
 echo PASSED ALL TESTS
 ${buildsome} --version

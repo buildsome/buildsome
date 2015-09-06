@@ -1060,6 +1060,13 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
                { tsWhen = whenBuilt
                , tsTime = elSelfTime
                , tsDirectDeps = deps
+               , tsExistingInputs = Just $ concat
+                   [ targetAllInputs tdTarget
+                   , map fst
+                     . filter (\(_,v) -> case v of (Db.FileDescNonExisting _) -> False; _ -> True)
+                     . M.toList
+                     $ elInputsDescs
+                   ]
                }
           , Stats.stdErr =
             if mempty /= stdErr elStdoutputs
