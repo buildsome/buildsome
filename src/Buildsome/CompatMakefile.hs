@@ -12,7 +12,7 @@ import           Control.Monad.Trans.Class (MonadTrans(..))
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Char as Char
-import           Data.List (partition, nub)
+import           Data.List (partition)
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Monoid ((<>))
@@ -57,26 +57,29 @@ escape :: ByteString -> ByteString
 escape xs = "'" <> BS8.concatMap f xs <> "'"
   where
     f '\0' = error $ "Unsupported character NUL in '" ++ show xs ++ "'"
-    f '\'' = "'\"'\"'"
+    -- In bash, to escape ' while in a '-quoted string, we must close
+    -- the ' then write an escaped \' and then re-open the '
+    f '\'' = "'\\''"
     f x    = BS8.singleton x
 
 
-prepend :: Monoid a => a -> [a] -> [a]
-prepend prefix = map (prefix <>)
+prependAll :: Monoid a => a -> [a] -> [a]
+prependAll prefix = map (prefix <>)
 
 trimLeadingSpaces :: ByteString -> ByteString
 trimLeadingSpaces = BS8.dropWhile Char.isSpace
 
 targetCmdLines :: MakefileTarget -> Target -> [ByteString]
 targetCmdLines tgt target = concat
-  [ prepend "rm -rf " $ makefileTargetDirs tgt
+  [ prependAll "rm -rf " $ makefileTargetDirs tgt
   , map trimLeadingSpaces . BS8.lines $ targetCmds target
-  , if isDirectory tgt
-    then prepend "touch " $ makefileTargetPaths tgt
-    else []
+  , [ "touch " <> path | isDirectory tgt, path <- makefileTargetPaths tgt ]
   ]
 
 type Phonies = Set FilePath
+
+sortNub :: [ByteString] -> [ByteString]
+sortNub = Set.toList . Set.fromList
 
 onOneTarget :: Phonies -> FilePath -> Stats -> Target -> M [ByteString]
 onOneTarget phoniesSet cwd stats target =
@@ -87,21 +90,20 @@ onOneTarget phoniesSet cwd stats target =
     let
       (phonies, nonPhonies) = partition (`Set.member` phoniesSet) $ makefileTargetPaths tgt
       targetDecl =
-        [ "T := " <> spaceUnwords (makefileTargetPaths tgt)
-        , "D := " <> (spaceUnwords . nub $ inputs)
+        [ "T := " <> BS8.unwords (makefileTargetPaths tgt)
+        , "D := " <> (BS8.unwords . sortNub $ inputs)
         , "$(T): $(D)"
         ]
       myLines = concat
-        [ [ "#" <> BS8.pack (showPos $ targetPos target) ]
-        , prepend ".PHONY: " phonies
+        [ [ "#" <> (BS8.pack . showPos . targetPos) target ]
+        , prependAll ".PHONY: " phonies
         , targetDecl
-        , map (\t -> "\trm -f " <> escape t) nonPhonies
-        , prepend "\t" $ targetCmdLines tgt target
+        , prependAll "\t" $ map (("rm -f " <>) . escape) nonPhonies
+        , prependAll "\t" $ targetCmdLines tgt target
         , [ "" ]
         ]
     return $ myLines ++ depsLines
   where
-    spaceUnwords = BS8.concat . map (" " <>)
     inputs =
       fromMaybe
       (error "compat makefile requested without tsExistingInputs being calculated?!")
