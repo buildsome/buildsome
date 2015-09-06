@@ -74,7 +74,9 @@ onOneTarget phoniesSet cwd stats target =
         | t <- makefileTargetPaths tgt, t `Set.member` phoniesSet
         ] ++
         [ targetDecl ] ++
-        map ("\t" <>) (targetCmdLines tgt target) ++
+        map ("\t" <>)
+          (["rm -f " <> t | t <- makefileTargetPath tgt, not $ t `Set.member` phoniesSet]
+           ++ targetCmdLines tgt target) ++
         [ "" ]
     return $ myLines ++ depsLines
   where

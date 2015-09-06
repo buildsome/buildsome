@@ -4,9 +4,12 @@ $(T): foo.o moshe.a moshe.a.b
 
 T :=  foo.o
 $(T): /lib /lib/x86_64-linux-gnu /tmp /usr/bin/as /usr/bin/gcc /usr/include /usr/include/stdc-predef.h /usr/include/x86_64-linux-gnu /usr/lib /usr/lib/gcc/x86_64-linux-gnu /usr/lib/gcc/x86_64-linux-gnu/4.8 /usr/lib/gcc/x86_64-linux-gnu/4.8/cc1 /usr/lib/gcc/x86_64-linux-gnu/4.8/include /usr/lib/gcc/x86_64-linux-gnu/4.8/include-fixed /usr/lib/x86_64-linux-gnu /usr/local/include foo.c
+	rm -f foo.o
 	gcc -c -o foo.o foo.c
 
 T :=  moshe.a moshe.a.b
 $(T): /bin/cat foo.c
+	rm -f moshe.a
+	rm -f moshe.a.b
 	cat foo.c > moshe.a ; cat foo.c >"moshe.a.b"
 
