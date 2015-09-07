@@ -7,9 +7,9 @@ module Buildsome
   , PutInputsInStats(..), want
   ) where
 
-import           Buildsome.BuildId (BuildId)
+
 import qualified Buildsome.BuildId as BuildId
-import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep, TargetDesc(..))
+import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetDesc(..))
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
 import qualified Buildsome.Color as Color
@@ -25,6 +25,7 @@ import           Buildsome.Slave (Slave)
 import qualified Buildsome.Slave as Slave
 import           Buildsome.Stats (Stats(Stats))
 import qualified Buildsome.Stats as Stats
+import           Buildsome.Types (Buildsome(..), Parents, WaitOrCancel(..), BuildTargetEnv(..), BuiltTargets(..), PutInputsInStats(..))
 import           Control.Concurrent (forkIO, threadDelay)
 import qualified Control.Exception as E
 import           Control.Monad (void, unless, when, filterM, forM, forM_)
@@ -49,12 +50,11 @@ import qualified Lib.ColorText as ColorText
 import           Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import qualified Lib.Directory as Dir
 import           Lib.Exception (finally, logErrors, handle, catch, handleSync, putLn)
-import           Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
+import           Lib.FSHook (OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
 import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import           Lib.FilePath (FilePath, (</>), (<.>))
 import qualified Lib.FilePath as FilePath
-import           Lib.Fresh (Fresh)
 import qualified Lib.Fresh as Fresh
 import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
@@ -67,7 +67,6 @@ import           Lib.Show (show)
 import           Lib.ShowBytes (showBytes)
 import           Lib.Sigint (withInstalledSigintHandler)
 import           Lib.StdOutputs (StdOutputs(..))
-import           Lib.SyncMap (SyncMap)
 import qualified Lib.SyncMap as SyncMap
 import           Lib.TimeIt (timeIt)
 import qualified Lib.Timeout as Timeout
@@ -80,28 +79,6 @@ import           Text.Parsec (SourcePos)
 import qualified Prelude.Compat
 import           Prelude.Compat hiding (FilePath, show)
 
-type Parents = [(TargetRep, Target, Reason)]
-
-data Buildsome = Buildsome
-  { -- static:
-    bsOpts :: Opt
-  , bsMakefile :: Makefile
-  , bsPhoniesSet :: Set FilePath
-  , bsBuildId :: BuildId
-  , bsRootPath :: FilePath
-  , bsBuildMaps :: BuildMaps
-    -- dynamic:
-  , bsDb :: Db
-  , bsFsHook :: FSHook
-  , bsSlaveByTargetRep :: SyncMap TargetRep (Parallelism.Entity, Slave Stats)
-  , bsFreshPrinterIds :: Fresh Printer.Id
-  , bsFastKillBuild :: E.SomeException -> IO ()
-  , bsRender :: ColorText -> ByteString
-  , bsParPool :: Parallelism.Pool
-  }
-
-data WaitOrCancel = Wait | CancelAndWait
-  deriving Eq
 
 onAllSlaves :: WaitOrCancel -> Buildsome -> IO ()
 onAllSlaves shouldCancel bs =
@@ -175,29 +152,6 @@ updateGitIgnore buildsome makefilePath = do
     header = ["# AUTO GENERATED FILE - DO NOT EDIT",
               BS8.concat
              ["# If you need to ignore files not managed by buildsome, add to ", gitignoreBaseName]]
-
-data PutInputsInStats = PutInputsInStats | Don'tPutInputsInStats
-    deriving (Eq, Ord, Show)
-
-data BuildTargetEnv = BuildTargetEnv
-  { bteBuildsome :: Buildsome
-  , btePrinter :: Printer
-  , bteReason :: Reason
-  , bteParents :: Parents
-  , bteExplicitlyDemanded :: Bool
-  , bteSpeculative :: Bool
-  , -- used by compat makefile, undesirable memory consumption otherwise
-    btePutInputsInStats :: PutInputsInStats
-  }
-
-data BuiltTargets = BuiltTargets
-  { builtTargets :: [Target]
-  , builtStats :: Stats
-  }
-instance Monoid BuiltTargets where
-  mempty = BuiltTargets mempty mempty
-  mappend (BuiltTargets a1 b1) (BuiltTargets a2 b2) =
-    BuiltTargets (mappend a1 a2) (mappend b1 b2)
 
 data ExplicitPathsBuilt = ExplicitPathsBuilt | ExplicitPathsNotBuilt
 
