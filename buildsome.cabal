@@ -38,6 +38,7 @@ executable buildsome
                ,     Buildsome.Color
                ,     Buildsome.CompatMakefile
                ,     Buildsome.Db
+               ,     Buildsome.ExecutionLogTree
                ,     Buildsome.FileContentDescCache
                ,     Buildsome.MagicFiles
                ,     Buildsome.Meddling
@@ -77,6 +78,7 @@ executable buildsome
                ,     Lib.Makefile.VerifyPhonies
                ,     Lib.Map
                ,     Lib.NonEmptyList
+               ,     Lib.NonEmptyMap
                ,     Lib.Once
                ,     Lib.Parallelism
                ,     Lib.Parsec

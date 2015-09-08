@@ -10,6 +10,10 @@ module Lib.FileDesc
 
   , FileStatDesc(..)
   , fileStatDescOfStat
+
+  , BasicStatEssence(..)
+  , FullStatEssence(..)
+  , fullStatEssenceOfStat
   ) where
 
 
@@ -40,7 +44,7 @@ data FileContentDesc
   = FileContentDescRegular ContentHash
   | FileContentDescSymlink FilePath
   | FileContentDescDir ContentHash -- Of the getDirectoryContents
-  deriving (Generic, Eq, Show)
+  deriving (Generic, Eq, Show, Ord)
 instance Binary FileContentDesc
 instance Cmp FileContentDesc where
   FileContentDescRegular x `cmp` FileContentDescRegular y = Cmp.eq ["change"] x y
@@ -51,7 +55,7 @@ instance Cmp FileContentDesc where
   FileContentDescDir _ `cmp` _ = Cmp.NotEquals ["dir vs. non-dir"]
 
 data FileModeDesc = FileModeDesc Posix.FileMode
-  deriving (Generic, Eq, Show)
+  deriving (Generic, Eq, Show, Ord)
 instance Binary FileModeDesc
 instance Cmp FileModeDesc where
   FileModeDesc x `cmp` FileModeDesc y = Cmp.eqShow x y
@@ -66,7 +70,7 @@ data BasicStatEssence = BasicStatEssence
   , fileMode        :: Posix.FileMode
   , fileOwner       :: Posix.UserID
   , specialDeviceID :: Posix.DeviceID
-  } deriving (Generic, Eq, Show)
+  } deriving (Generic, Eq, Show, Ord)
 instance Binary BasicStatEssence
 instance Cmp BasicStatEssence where
   cmp =
@@ -87,7 +91,7 @@ data FullStatEssence = FullStatEssence
   -- Tracking access time is meaningless
   , modificationTimeHiRes :: POSIXTime
   , statusChangeTimeHiRes :: POSIXTime
-  } deriving (Generic, Eq, Show)
+  } deriving (Generic, Eq, Show, Ord)
 instance Binary FullStatEssence
 instance Cmp FullStatEssence where
   cmp =
@@ -102,7 +106,7 @@ instance Cmp FullStatEssence where
 data FileStatDesc
   = FileStatDirectory BasicStatEssence
   | FileStatOther FullStatEssence
-  deriving (Generic, Eq, Show)
+  deriving (Generic, Eq, Show, Ord)
 instance Binary FileStatDesc
 instance Cmp FileStatDesc where
   FileStatDirectory a `cmp` FileStatDirectory b = cmp a b

@@ -1,11 +1,15 @@
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Buildsome.Db
   ( Db, with
   , registeredOutputsRef, leakedOutputsRef
-  , InputDesc(..), FileDesc(..)
+  , InputDesc(..), FileDesc(..), bimapFileDesc
   , OutputDesc(..)
-  , ExecutionLog(..), executionLog
+  , ExecutionLog(..), executionLogTree
+  , InputLog(..), InputLogStat(..), ExecutionLogTree(..), ExecutionLogTreeInput(..)
   , FileContentDescCache(..), fileContentDescCache
   , Reason(..)
   , IRef(..)
@@ -31,11 +35,14 @@ import           Lib.Binary (encode, decode)
 import           Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
 import           Lib.Exception (bracket)
 import qualified Lib.FSHook as FSHook
-import           Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
+import           Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc, BasicStatEssence)
 import           Lib.FilePath (FilePath, (</>), (<.>))
+import           Lib.Posix.FileType (FileType)
 import           Lib.Makefile (Makefile)
 import qualified Lib.Makefile as Makefile
 import           Lib.Makefile.Monad (PutStrLn)
+import           Lib.NonEmptyMap (NonEmptyMap)
+
 import           Lib.StdOutputs (StdOutputs(..))
 import           Lib.TimeInstances ()
 import qualified System.Posix.ByteString as Posix
@@ -43,7 +50,7 @@ import qualified System.Posix.ByteString as Posix
 import           Prelude.Compat hiding (FilePath)
 
 schemaVersion :: ByteString
-schemaVersion = "schema.ver.20"
+schemaVersion = "schema.ver.21"
 
 data Db = Db
   { dbLevel :: LevelDB.DB
@@ -80,13 +87,17 @@ instance Binary InputDesc
 data FileDesc ne e
   = FileDescNonExisting ne
   | FileDescExisting e
-  deriving (Generic, Eq, Ord, Show)
+  deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 instance (Binary ne, Binary e) => Binary (FileDesc ne e)
+
+bimapFileDesc :: (ne -> ne') -> (e -> e') -> FileDesc ne e -> FileDesc ne' e'
+bimapFileDesc f _ (FileDescNonExisting x) = FileDescNonExisting (f x)
+bimapFileDesc _ g (FileDescExisting x) = FileDescExisting (g x)
 
 data OutputDesc = OutputDesc
   { odStatDesc :: FileStatDesc
   , odContentDesc :: Maybe FileContentDesc -- Nothing if directory
-  } deriving (Generic, Show)
+  } deriving (Generic, Show, Eq)
 instance Binary OutputDesc
 
 data ExecutionLog = ExecutionLog
@@ -98,6 +109,31 @@ data ExecutionLog = ExecutionLog
   , elSelfTime :: DiffTime
   } deriving (Generic, Show)
 instance Binary ExecutionLog
+
+data InputLogStat = InputLogStat
+  { ilsBasicStatEssence      :: BasicStatEssence
+  , ilsFileSize              :: Maybe Posix.FileOffset
+  , ilsFileType              :: Maybe FileType
+  } deriving (Generic, Show, Eq, Ord)
+instance Binary InputLogStat
+
+data InputLog = InputLog
+  { ilModeAccess :: Maybe FileModeDesc
+  , ilStatAccess :: Maybe InputLogStat
+  , ilContentAccess :: Maybe FileContentDesc
+  } deriving (Generic, Show, Eq, Ord)
+instance Binary InputLog
+
+data ExecutionLogTreeInput = ExecutionLogTreeInput
+  { eltiBranches :: NonEmptyMap (FileDesc () InputLog) ExecutionLogTree
+  } deriving (Generic, Show)
+instance Binary ExecutionLogTreeInput
+
+data ExecutionLogTree
+  = ExecutionLogBranch (NonEmptyMap FilePath ExecutionLogTreeInput)
+  | ExecutionLogLeaf ExecutionLog
+  deriving (Generic, Show)
+instance Binary ExecutionLogTree
 
 registeredOutputsRef :: Db -> IORef (Set FilePath)
 registeredOutputsRef = dbRegisteredOutputs
@@ -157,8 +193,8 @@ mkIRefKey key db = IRef
   , delIRef = deleteKey db key
   }
 
-executionLog :: Makefile.Target -> Db -> IRef ExecutionLog
-executionLog target = mkIRefKey targetKey
+executionLogTree :: Makefile.Target -> Db -> IRef ExecutionLogTree
+executionLogTree target = mkIRefKey targetKey
   where
     targetKey = MD5.hash $ Makefile.targetCmds target -- TODO: Canonicalize commands (whitespace/etc)
 

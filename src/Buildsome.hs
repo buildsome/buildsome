@@ -15,6 +15,7 @@ import qualified Buildsome.Clean as Clean
 import qualified Buildsome.Color as Color
 import           Buildsome.Db (Db, IRef(..), Reason)
 import qualified Buildsome.Db as Db
+import qualified Buildsome.ExecutionLogTree as ExecutionLogTree
 import           Buildsome.FileContentDescCache (fileContentDescOfStat)
 import qualified Buildsome.MagicFiles as MagicFiles
 import qualified Buildsome.Meddling as Meddling
@@ -34,6 +35,7 @@ import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef
+
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe, catMaybes, maybeToList)
@@ -587,15 +589,33 @@ buildManyWithParReleased mkReason bte@BuildTargetEnv{..} entity slaveRequests =
       slavesFor bte { bteReason = mkReason (inputFilePath req) } req
     Color.Scheme{..} = Color.scheme
 
+liftMaybe :: (a -> IO (Either [e] b)) -> Maybe a -> IO (Either [e] b)
+liftMaybe _ Nothing = return $ Left []
+liftMaybe f (Just a) = f a
+
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
 findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
 findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
-  mExecutionLog <- readIRef $ Db.executionLog tdTarget $ bsDb bteBuildsome
+  mExecutionLogTree <- readIRef $ Db.executionLogTree tdTarget $ bsDb bteBuildsome
+  mExecutionLog <- liftMaybe ExecutionLogTree.lookup mExecutionLogTree
   case mExecutionLog of
-    Nothing -> -- No previous execution log
+    Left [] -> do -- No previous execution log
+      verbosePrint . mconcat $
+          [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
+          , " not found."
+          ]
       return Nothing
-    Just executionLog -> do
+    Left reasons -> do -- Execution log found but didn't match
+      let reasonsStr = (map show reasons) :: [ColorText]
+      verbosePrint . mconcat $
+          [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
+          , " didn't match. Reasons:\n\t"
+          , ColorText.intercalate "\n\t" reasonsStr
+          ]
+
+      return Nothing
+    Right executionLog -> do
       eRes <- tryApplyExecutionLog bte entity TargetDesc{..} executionLog
       case eRes of
         Left (SpeculativeBuildFailure exception)
@@ -613,6 +633,8 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
       fromBytestring8 str <> ": " <> cPath (show filePath)
     describeError (SpeculativeBuildFailure exception) =
       cWarning (showFirstLine exception)
+    verbosePrint = whenVerbose bteBuildsome . printStrLn btePrinter . bsRender bteBuildsome
+
 
 data TargetDependencyLoop = TargetDependencyLoop (ColorText -> ByteString) Parents
   deriving (Typeable)
@@ -990,7 +1012,14 @@ buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
     executionLog <-
       makeExecutionLog bteBuildsome tdTarget rcrInputs (S.toList outputs)
       rcrStdOutputs rcrSelfTime
-    writeIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) executionLog
+
+    mExecutionLogTree <- readIRef $ Db.executionLogTree tdTarget $ bsDb bteBuildsome
+    let executionLogTree =
+          maybe
+          (ExecutionLogTree.fromExecutionLog executionLog)
+          (ExecutionLogTree.append executionLog)
+          mExecutionLogTree
+    writeIRef (Db.executionLogTree tdTarget (bsDb bteBuildsome)) executionLogTree
 
     Print.targetTiming btePrinter "now" rcrSelfTime
     return (executionLog, rcrBuiltTargets)
