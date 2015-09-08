@@ -207,7 +207,7 @@ sendGo conn = void $ SockBS.send conn (BS8.pack "GO")
 
 {-# INLINE handleJobMsg #-}
 handleJobMsg :: String -> Socket -> RunningJob -> Protocol.Msg -> IO ()
-handleJobMsg _tidStr conn job (Protocol.Msg !isDelayed !func) =
+handleJobMsg _tidStr conn job (Protocol.Msg !isDelayed !func) = {-# SCC "handleJobMsg" #-}
   case func of
     -- TODO: If any of these outputs are NOT also mode-only inputs on
     -- their file paths, don't use handleOutputs so that we don't
@@ -256,11 +256,11 @@ handleJobMsg _tidStr conn job (Protocol.Msg !isDelayed !func) =
     Protocol.Trace severity msg    -> traceHandler handlers severity msg
   where
     handlers = jobFSAccessHandlers job
-    handleDelayed   inputs outputs = wrap $ delayedFSAccessHandler handlers actDesc inputs outputs
-    handleUndelayed inputs outputs = wrap $ undelayedFSAccessHandler handlers actDesc inputs outputs
+    handleDelayed   inputs outputs = {-# SCC "handleDelayed" #-} wrap $ delayedFSAccessHandler handlers actDesc inputs outputs
+    handleUndelayed inputs outputs = {-# SCC "handleUndelayed" #-} wrap $ undelayedFSAccessHandler handlers actDesc inputs outputs
     wrap = wrapHandler job conn isDelayed
     actDesc = AccessDocEmpty -- TODO: AccessDoc func $ jobLabel job
-    handleInput accessType path = handleInputs [Input accessType path]
+    handleInput accessType path = {-# SCC "handleInput" #-} handleInputs [Input accessType path]
     handleInputs inputs =
       case isDelayed of
       NotDelayed -> handleUndelayed inputs []
@@ -269,7 +269,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg !isDelayed !func) =
       Input AccessTypeModeOnly path
     mkDelayedOutput ( behavior, Protocol.OutFilePath path _effect) =
       DelayedOutput behavior path
-    handleOutputs = handle []
+    handleOutputs = {-# SCC "handleOutputs" #-} handle []
     handle inputs outputPairs =
       case isDelayed of
       NotDelayed -> handleUndelayed allInputs $ map snd outputPairs
@@ -278,16 +278,16 @@ handleJobMsg _tidStr conn job (Protocol.Msg !isDelayed !func) =
         allInputs = inputs ++ map inputOfOutputPair outputPairs
 
 wrapHandler :: RunningJob -> Socket -> IsDelayed -> IO () -> IO ()
-wrapHandler job conn isDelayed handler =
+wrapHandler job conn isDelayed !handler = {-# SCC "wrapHandler" #-}
   forwardExceptions $ do
-    handler
+    ( {-# SCC "wrapHandler.handler" #-} handler)
     -- Intentionally avoid sendGo if jobFSAccessHandler failed. It
     -- means we disallow the effect.
     case isDelayed of
       Delayed -> sendGo conn
       NotDelayed -> return ()
   where
-    forwardExceptions =
+    forwardExceptions = {-# SCC "forwardExceptions" #-}
       handleSync $ \e@E.SomeException {} ->
       E.throwTo (jobThreadId job) e
 
@@ -299,7 +299,7 @@ withRegistered registry key val =
     unregister = atomicModifyIORef_ registry $ M.delete key
 
 handleJobConnection :: SharedMemory -> String -> Socket -> RunningJob -> Need -> IO ()
-handleJobConnection shmem tidStr conn job _need = do
+handleJobConnection shmem tidStr conn job _need = {-# SCC "handleJobConnection" #-} do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   connId <- Fresh.next $ jobFreshConnIds job
@@ -334,7 +334,7 @@ mkEnvVars fsHook rootFilter jobId =
 timedRunCommand ::
   FSHook -> FilePath -> [String] -> CmdSpec -> JobLabel -> ColorText ->
   FSAccessHandlers -> IO (NominalDiffTime, (ExitCode, StdOutputs ByteString))
-timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHandlers = do
+timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHandlers = {-# SCC "timedRunCommand" #-} do
   pauseTimeRef <- newIORef 0
   let
     addPauseTime delta = atomicModifyIORef'_ pauseTimeRef (+delta)
@@ -373,7 +373,7 @@ withRunningJob fsHook jobId job body = do
 runCommand ::
   FSHook -> FilePath -> [String] -> CmdSpec -> JobLabel -> ColorText ->
   FSAccessHandlers -> IO (ExitCode, StdOutputs ByteString)
-runCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHandlers =
+runCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHandlers = {-# SCC "runCommand" #-}
   do
     activeConnections <- newIORef M.empty
     freshConnIds <- Fresh.new 0

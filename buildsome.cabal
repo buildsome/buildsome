@@ -44,7 +44,7 @@ library
     ghc-options:       -threaded -Wall -O0
   } else {
     ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
-    ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields -auto-all -caf-all
+    ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
   }
   exposed-modules:   Buildsome
                ,     Buildsome.BuildId
@@ -54,6 +54,7 @@ library
                ,     Buildsome.Clean
                ,     Buildsome.Color
                ,     Buildsome.CompatMakefile
+               ,     Buildsome.ContentCache
                ,     Buildsome.Db
                ,     Buildsome.FileContentDescCache
                ,     Buildsome.MagicFiles
@@ -131,7 +132,8 @@ library
                    , aeson-pretty >=0.7 && <0.8
                    , ansi-terminal == 0.6.*
                    , array >= 0.5.1
-                   , async >=2.0
+                   , async >=2.0 && <2.2
+                   , base16-bytestring >= 0.1.1.6
                    , base >=4.6 && <4.9
                    , base-compat
                    , binary >=0.7 && <0.8
@@ -157,7 +159,7 @@ library
                    , template-haskell >= 2.8 && < 2.11
                    , time >=1.4 && <1.6
                    , transformers >=0.3 && <=0.5
-                   , unix >=2.6 && <2.8
+                   , unix >=2.7 && <2.8
                    , pretty-hex == 1.0
                    , inline-c >= 0.5.5.2
                    , happy

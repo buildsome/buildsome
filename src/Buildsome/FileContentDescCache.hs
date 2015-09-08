@@ -14,13 +14,13 @@ import qualified Lib.FileDesc as FileDesc
 import qualified System.Posix.ByteString as Posix
 
 fileContentDescOfStat :: String -> Db -> FilePath -> Posix.FileStatus -> IO FileContentDesc
-fileContentDescOfStat msgPrefix db path stat = do
+fileContentDescOfStat msgPrefix db path stat = {-# SCC "FileContentDescCache.fileContentDescOfStat" #-} do
   mDescCache <- Db.readIRef cacheIRef
   case mDescCache of
     Just oldCache
       | Posix.modificationTimeHiRes stat ==
         Db.fcdcModificationTime oldCache ->
-        return $ Db.fcdcFileContentDesc oldCache
+        return $! Db.fcdcFileContentDesc oldCache
     _ -> do
       newFileContentDesc <- FileDesc.fileContentDescOfStat path stat
 
@@ -32,6 +32,6 @@ fileContentDescOfStat msgPrefix db path stat = do
         { Db.fcdcModificationTime = Posix.modificationTimeHiRes stat
         , Db.fcdcFileContentDesc = newFileContentDesc
         }
-      return newFileContentDesc
+      return $! newFileContentDesc
   where
     cacheIRef = Db.fileContentDescCache path db

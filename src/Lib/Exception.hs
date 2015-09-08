@@ -94,8 +94,8 @@ isAsynchronous e =
 
 -- | Like 'catch', but catch any synchronous exceptions; let asynchronous ones pass through
 catchSync :: IO a -> (E.SomeException -> IO a) -> IO a
-catchSync a h =
-  E.catch a $ \e ->
+catchSync a h = {-# SCC "catchSync" #-}
+  E.catch a $ {-# SCC "catchSync.handle_exception" #-} \e ->
     if isAsynchronous e
       then E.throwIO e
       else h e

@@ -1,5 +1,6 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
+{-# LANGUAGE CPP, ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Buildsome
   ( Buildsome(bsPhoniesSet), with, withDb
   , clean
@@ -12,6 +13,7 @@ import qualified Buildsome.BuildId as BuildId
 import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetDesc(..))
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
+import qualified Buildsome.ContentCache as ContentCache
 import qualified Buildsome.Color as Color
 import           Buildsome.Db (Db, IRef(..), Reason)
 import qualified Buildsome.Db as Db
@@ -34,6 +36,7 @@ import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef
+
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe, catMaybes, maybeToList)
@@ -45,6 +48,7 @@ import           Data.Time (DiffTime)
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Typeable (Typeable)
 import qualified Lib.Cmp as Cmp
+import           Lib.Cmp (Cmp)
 import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
 import           Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
@@ -52,10 +56,11 @@ import qualified Lib.Directory as Dir
 import           Lib.Exception (finally, logErrors, handle, catch, handleSync, putLn)
 import           Lib.FSHook (OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
-import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
+import qualified Lib.Fresh as Fresh
+import           Lib.FileDesc (FileDesc(..), fileModeDescOfStat, fileStatDescOfStat, FileContentDesc(..))
 import           Lib.FilePath (FilePath, (</>), (<.>))
 import qualified Lib.FilePath as FilePath
-import qualified Lib.Fresh as Fresh
+import qualified Lib.Hash as Hash
 import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs,
                                targetInterpolatedCmds)
@@ -403,25 +408,48 @@ replayExecutionLog ::
   BuildTargetEnv -> Target ->
   Set FilePath -> Set FilePath ->
   StdOutputs ByteString -> DiffTime -> IO ()
-replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfTime =
+replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfTime = {-# SCC "replayExecutionLog" #-}
   Print.replay btePrinter target stdOutputs bteReason
   (optVerbosity (bsOpts bteBuildsome)) selfTime $
   -- We only register legal outputs that were CREATED properly in the
   -- execution log, so all outputs keep no old content
   void $ verifyTargetSpec bte inputs outputs target
 
-verifyFileDesc ::
-  (IsString str, Monoid str, MonadIO m) =>
-  str -> FilePath -> Db.FileDesc ne desc ->
-  (Posix.FileStatus -> desc -> EitherT (str, FilePath) m ()) ->
-  EitherT (str, FilePath) m ()
-verifyFileDesc str filePath fileDesc existingVerify = do
+verifyOutputDesc :: (IsString str, MonadIO m) =>
+  BuildTargetEnv -> FilePath -> FileDesc ne (POSIXTime, Db.OutputDesc) ->
+  (Posix.FileStatus -> Db.OutputDesc -> (EitherT ByteString IO ())) ->
+  EitherT str m ()
+verifyOutputDesc bte@BuildTargetEnv{..} filePath fileDesc existingVerify = do
+  let restore (Db.OutputDesc oldStatDesc oldMContentDesc) =
+        ContentCache.refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
+      remove = liftIO . removeFileOrDirectoryOrNothing
   mStat <- liftIO $ Dir.getMFileStatus filePath
   case (mStat, fileDesc) of
-    (Nothing, Db.FileDescNonExisting _) -> return ()
-    (Just stat, Db.FileDescExisting desc) -> existingVerify stat desc
-    (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
-    (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
+    (Nothing, FileDescNonExisting _) -> return ()
+    (Just stat, FileDescExisting (mtime, desc))
+      | Posix.modificationTimeHiRes stat /= mtime -> do
+          res <- liftIO $ runEitherT $ existingVerify stat desc
+          case res of
+            Left reason -> do
+              restore desc
+              explain $ mconcat
+                [ "File exists but is wrong ("
+                , ColorText.simple reason
+                , "): restored from cache "
+                ]
+            Right x -> return x
+      | otherwise -> return ()
+    (Just _, FileDescNonExisting _)  -> do
+      remove filePath
+      explain "File exists, but shouldn't: removed "
+    (Nothing, FileDescExisting (_, desc)) -> do
+      restore desc
+      explain "File doesn't exist, but should: restored from cache "
+  where
+    explain msg = liftIO $ printStrLn btePrinter
+      $ bsRender bteBuildsome $ mconcat
+      $ [ msg, cPath (show filePath) ]
+    Color.Scheme{..} = Color.scheme
 
 data WrapException = WrapException (ColorText -> ByteString) Parents E.SomeException
   deriving (Typeable)
@@ -482,70 +510,143 @@ data ExecutionLogFailure
   = MismatchedFiles (ByteString, FilePath)
   | SpeculativeBuildFailure E.SomeException
 
+executionLogBuildInputsSpeculative ::
+  BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> [(FilePath, Db.FileDescInput)] ->
+  EitherT ExecutionLogFailure IO BuiltTargets
+executionLogBuildInputsSpeculative bte@BuildTargetEnv{..} entity targetDesc inputDescs =
+  EitherT $
+    syncCatchAndLogSpeculativeErrors btePrinter targetDesc
+    (Left . SpeculativeBuildFailure)
+    (Right <$> executionLogBuildInputs bte entity targetDesc inputDescs)
+
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Db.ExecutionLog ->
   IO (Either ExecutionLogFailure (Db.ExecutionLog, BuiltTargets))
-tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog =
+tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog = {-# SCC "tryApplyExecutionLog" #-}
   runEitherT $ do
-    builtTargets <-
-      EitherT $
-      syncCatchAndLogSpeculativeErrors btePrinter targetDesc
-      (Left . SpeculativeBuildFailure)
-      (Right <$> executionLogBuildInputs bte entity targetDesc executionLog)
+    builtTargets <- executionLogBuildInputsSpeculative bte entity targetDesc (Db.elInputsDescs executionLog)
     bimapEitherT MismatchedFiles id $
       executionLogVerifyFilesState bte targetDesc executionLog
     return (executionLog, builtTargets)
+
+
+#if MIN_VERSION_base(4,8,0)
+bimapEitherT' :: Functor f => (e -> e') -> (a -> a') -> EitherT e f a -> EitherT e' f a'
+bimapEitherT' = bimapEitherT
+
+annotateError :: Functor f => b -> EitherT e f a -> EitherT (e, b) f a
+#else
+bimapEitherT' :: Monad m => (e -> e') -> (a -> a') -> EitherT e m a -> EitherT e' m a'
+bimapEitherT' f g (EitherT m) = EitherT (m >>= (return . h)) where
+  h (Left e)  = Left (f e)
+  h (Right a) = Right (g a)
+
+annotateError :: Monad m => b -> EitherT e m a -> EitherT (e,b) m a
+#endif
+
+annotateError ann = bimapEitherT' (, ann) id
+
+
+verifyMDesc :: (MonadIO m, Cmp a) => ByteString -> IO a -> Maybe a -> EitherT ByteString m ()
+verifyMDesc str getDesc = maybe (return ()) (verifyDesc str getDesc)
+
+verifyDesc ::
+  (MonadIO m, Cmp a) => ByteString -> IO a -> a -> EitherT ByteString m ()
+verifyDesc str getDesc oldDesc = do
+  newDesc <- liftIO getDesc
+  case Cmp.cmp oldDesc newDesc of
+    Cmp.Equals -> return ()
+    Cmp.NotEquals reasons ->
+      -- fail entire computation
+      left $ str <> ": " <> BS8.intercalate ", " reasons
+
+
+verifyOutputDescs ::
+    MonadIO m => Db -> BuildTargetEnv -> TargetDesc ->
+    [(FilePath, (FileDesc ne (POSIXTime, Db.OutputDesc)))] ->
+    EitherT (ByteString, FilePath) m ()
+verifyOutputDescs db bte@BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = {-# SCC "verifyOutputDescs" #-} do
+  -- For now, we don't store the output files' content
+  -- anywhere besides the actual output files, so just verify
+  -- the output content is still correct
+  forM_ esOutputsDescs $ \(filePath, outputDesc) -> do
+      annotateError filePath $
+        verifyOutputDesc bte filePath outputDesc $
+        \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
+              verifyDesc "output(stat)" (return (fileStatDescOfStat stat)) oldStatDesc
+              verifyMDesc "output(content)"
+                (fileContentDescOfStat "When applying execution log (output)"
+                 db filePath stat) oldMContentDesc
+
+verifyFileDesc ::
+  (IsString str, Monoid str, MonadIO m) =>
+  str -> FilePath -> FileDesc ne desc ->
+  (Posix.FileStatus -> desc -> EitherT str m ()) ->
+  EitherT str m ()
+verifyFileDesc str filePath fileDesc existingVerify = do
+  mStat <- liftIO $ Dir.getMFileStatus filePath
+  case (mStat, fileDesc) of
+    (Nothing, FileDescNonExisting _) -> return ()
+    (Just stat, FileDescExisting desc) -> existingVerify stat desc
+    (Just _, FileDescNonExisting _)  -> left (str <> " file did not exist, now exists")
+    (Nothing, FileDescExisting {}) -> left (str <> " file was deleted")
+
+
+getFileDescInput :: MonadIO m => Db.Db -> Reason -> FilePath -> m Db.InputDesc
+getFileDescInput db reason filePath = {-# SCC "getFileDescInput" #-} do
+  mStat <- liftIO $ Dir.getMFileStatus filePath
+  case mStat of
+      Nothing -> return $ Db.InputDescOfNonExisting reason
+      Just stat -> do
+          contentDesc <- liftIO $ fileContentDescOfStat "wat" db filePath stat
+          let time = Posix.modificationTimeHiRes stat
+          return
+              $ Db.InputDescOfExisting . (time,) $ Db.ExistingInputDescOf
+              { idModeAccess = Just (reason, fileModeDescOfStat stat)
+              , idStatAccess = Just (reason, fileStatDescOfStat stat)
+              , idContentAccess = Just (reason, contentDesc)
+              }
+
+verifyInputDescs ::
+  MonadIO f =>
+  Db -> BuildTargetEnv -> TargetDesc ->
+  [(FilePath, (FileDesc ne (POSIXTime, Db.ExistingInputDesc)))] ->
+  EitherT (ByteString, FilePath) f ()
+verifyInputDescs db BuildTargetEnv{..} TargetDesc{..} elInputsDescs = {-# SCC "verifyInputDescs" #-} do
+  forM_ elInputsDescs $ \(filePath, desc) ->
+    annotateError filePath $
+      verifyFileDesc "input" filePath desc $ \stat (mtime, Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) ->
+        when (Posix.modificationTimeHiRes stat /= mtime) $ do
+          let verify str getDesc mPair =
+                verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
+          verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
+          verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
+          verifyMDesc "content"
+            (fileContentDescOfStat "When applying execution log (input)"
+             db filePath stat) $ fmap snd mContentAccess
 
 executionLogVerifyFilesState ::
   MonadIO m =>
   BuildTargetEnv -> TargetDesc -> Db.ExecutionLog ->
   EitherT (ByteString, FilePath) m ()
-executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionLog{..} = do
-  forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
-    verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
-      when (Posix.modificationTimeHiRes stat /= mtime) $ do
-        let verify str getDesc mPair =
-              verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
-        verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
-        verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
-        verify "content"
-          (fileContentDescOfStat "When applying execution log (input)"
-           db filePath stat) mContentAccess
-  -- For now, we don't store the output files' content
-  -- anywhere besides the actual output files, so just verify
-  -- the output content is still correct
-  forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) ->
-    verifyFileDesc "output" filePath outputDesc $ \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
-      verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
-      verifyMDesc "output(content)" filePath
-        (fileContentDescOfStat "When applying execution log (output)"
-         db filePath stat) oldMContentDesc
+executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} el@Db.ExecutionLogOf{..} = {-# SCC "executionLogVerifyFilesState" #-} do
+  verifyInputDescs db bte TargetDesc{..} $ Db.elInputsDescs el
+  verifyOutputDescs db bte TargetDesc{..} elOutputsDescs
   liftIO $
     replayExecutionLog bte tdTarget
-    (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
+    (S.fromList $ map fst $ Db.elInputsDescs el) (S.fromList $ map fst elOutputsDescs)
     elStdoutputs elSelfTime
   where
     db = bsDb bteBuildsome
-    verifyMDesc _   _        _       Nothing        = return ()
-    verifyMDesc str filePath getDesc (Just oldDesc) =
-      verifyDesc str filePath getDesc oldDesc
-
-    verifyDesc str filePath getDesc oldDesc = do
-      newDesc <- liftIO getDesc
-      case Cmp.cmp oldDesc newDesc of
-        Cmp.Equals -> return ()
-        Cmp.NotEquals reasons ->
-          -- fail entire computation
-          left (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
 executionLogBuildInputs ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->
-  Db.ExecutionLog -> IO BuiltTargets
-executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} Db.ExecutionLog {..} = do
+  [(FilePath, Db.FileDescInput)] -> IO BuiltTargets
+executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} inputsDescs = {-# SCC "executionLogBuildInputs" #-} do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
-  speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
+  speculativeSlaves <- concat <$> mapM mkInputSlaves inputsDescs
   waitForSlavesWithParReleased bte entity speculativeSlaves
   where
     mkInputSlavesFor desc inputPath =
@@ -561,20 +662,20 @@ executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} Db.Executio
     Color.Scheme{..} = Color.scheme
     hinted = S.fromList $ targetAllInputs tdTarget
     bteImplicit = bte { bteExplicitlyDemanded = False, bteSpeculative = True }
-    fromFileDesc (Db.FileDescNonExisting depReason) =
+    fromFileDesc (FileDescNonExisting depReason) =
       -- The access may be larger than mode-only, but we only need to
       -- know if it exists or not because we only need to know whether
       -- the execution log will be re-used or not, not more.
       Just (depReason, FSHook.AccessTypeModeOnly)
-    fromFileDesc (Db.FileDescExisting (_mtime, inputDesc)) =
+    fromFileDesc (FileDescExisting (_mtime, inputDesc)) =
       case inputDesc of
-      Db.InputDesc { Db.idContentAccess = Just (depReason, _) } ->
+      Db.ExistingInputDescOf { Db.idContentAccess = Just (depReason, _) } ->
         Just (depReason, FSHook.AccessTypeFull)
-      Db.InputDesc { Db.idStatAccess = Just (depReason, _) } ->
+      Db.ExistingInputDescOf { Db.idStatAccess = Just (depReason, _) } ->
         Just (depReason, FSHook.AccessTypeStat)
-      Db.InputDesc { Db.idModeAccess = Just (depReason, _) } ->
+      Db.ExistingInputDescOf { Db.idModeAccess = Just (depReason, _) } ->
         Just (depReason, FSHook.AccessTypeModeOnly)
-      Db.InputDesc Nothing Nothing Nothing -> Nothing
+      Db.ExistingInputDescOf Nothing Nothing Nothing -> Nothing
 
 parentDirs :: [FilePath] -> [FilePath]
 parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
@@ -588,15 +689,69 @@ buildManyWithParReleased mkReason bte@BuildTargetEnv{..} entity slaveRequests =
       slavesFor bte { bteReason = mkReason (inputFilePath req) } req
     Color.Scheme{..} = Color.scheme
 
+verbosePrint :: BuildTargetEnv -> ColorText -> IO ()
+verbosePrint BuildTargetEnv{..} = whenVerbose bteBuildsome . printStrLn btePrinter . bsRender bteBuildsome
+
 -- TODO: Remember the order of input files' access so can iterate here
 -- in order
 findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
-findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
-  mExecutionLog <- readIRef $ Db.executionLog tdTarget $ bsDb bteBuildsome
+findApplyExecutionLog bte entity targetDesc =
+    findApplyExecutionLog' bte entity targetDesc Nothing Nothing
+
+tryLoadLatestExecutionLog :: BuildTargetEnv -> Target -> IO (Maybe Db.ExecutionLog)
+tryLoadLatestExecutionLog bte@BuildTargetEnv{..} target = {-# SCC "tryLoadLatestExecutionLog" #-} do
+    mLatestExecutionLogKey <- readIRef $ Db.latestExecutionLog target (bsDb bteBuildsome)
+    case mLatestExecutionLogKey of
+        Nothing -> return Nothing
+        Just latestExecutionLogKey -> do
+          elNode <- readIRef $ Db.executionLogNode latestExecutionLogKey (bsDb bteBuildsome)
+          case elNode of
+              Nothing -> return Nothing
+              Just (Db.ExecutionLogNodeLeaf el) -> Just <$> Db.getExecutionLog (bsDb bteBuildsome) el
+              Just _ -> error "Expected leaf!" -- TODO bah
+
+findApplyExecutionLog' :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Maybe (FilePath) -> Maybe Db.ExecutionLog -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
+findApplyExecutionLog' bte@BuildTargetEnv{..} entity targetDesc@TargetDesc{..} retryingBecauseOfInput mLatestExecutionLog = {-# SCC "findApplyExecutionLog" #-} do
+  let speculativeReason = Db.BecauseSpeculative (Db.BecauseHooked FSHook.AccessDocEmpty)
+      buildInputs (Db.ELBranchPath inputs) = do
+          _ <- executionLogBuildInputsSpeculative bte entity targetDesc
+              -- AccessType is wrong here, nor we can we (rather
+              -- arbitrarily) use 'full' because it will fail on
+              -- directories that have patterns
+              $ map (fmap (Db.bimapFileDesc
+                           (const speculativeReason)
+                           (fmap . fmap $ const speculativeReason)))
+              $ map (fmap Db.toFileDesc)
+              $ inputs
+          return ()
+
+  mExecutionLog <- Db.executionLogLookup tdTarget db (mapM_ buildInputs) (getFileDescInput db speculativeReason)
   case mExecutionLog of
-    Nothing -> -- No previous execution log
-      return Nothing
-    Just executionLog -> do
+    Left Nothing -> handleCacheMiss
+    Left (Just missingInput) -> do
+      verbosePrint bte . mconcat $
+        [ "Mismatching input while searching for cached execution log of ", cTarget (show (targetOutputs tdTarget)), ":\n\t"
+        , cPath (show missingInput)
+        ]
+      handleCacheMiss
+    Right executionLog -> applyExecutionLog executionLog
+  where
+    Color.Scheme{..} = Color.scheme
+    describeError (MismatchedFiles (str, filePath)) =
+      fromBytestring8 str <> ": " <> cPath (show filePath)
+    describeError (SpeculativeBuildFailure exception) =
+      cWarning (showFirstLine exception)
+    db = bsDb bteBuildsome
+    getLatest = do
+      case mLatestExecutionLog of
+        Nothing -> tryLoadLatestExecutionLog bte tdTarget
+        Just el -> return $ Just el
+
+    applyExecutionLog executionLog = do
+      verbosePrint bte . mconcat $
+        [ "Found execution log of ", cTarget (show (targetOutputs tdTarget)), ":\n\t"
+        , ColorText.intercalate "\n\t" $ map show $ Db.elInputsDescs executionLog
+        ]
       eRes <- tryApplyExecutionLog bte entity TargetDesc{..} executionLog
       case eRes of
         Left (SpeculativeBuildFailure exception)
@@ -608,12 +763,13 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
             ]
           return Nothing
         Right res -> return (Just res)
-  where
-    Color.Scheme{..} = Color.scheme
-    describeError (MismatchedFiles (str, filePath)) =
-      fromBytestring8 str <> ": " <> cPath (show filePath)
-    describeError (SpeculativeBuildFailure exception) =
-      cWarning (showFirstLine exception)
+
+    handleCacheMiss = do
+      verbosePrint bte $ "Execution log missing for: " <> cTarget (show (targetOutputs tdTarget))
+      mEL <- getLatest
+      case mEL of
+          Nothing -> return Nothing
+          Just executionLog -> applyExecutionLog executionLog
 
 data TargetDependencyLoop = TargetDependencyLoop (ColorText -> ByteString) Parents
   deriving (Typeable)
@@ -770,14 +926,14 @@ recordOutputs ::
   Buildsome ->
   IORef (Map FilePath Reason) -> Reason ->
   Set FilePath -> Set FilePath -> IO ()
-recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = do
+recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = {-# SCC "recordOutputs" #-} do
   atomicModifyIORef'_ outputsRef $ mappend $ M.fromSet (const accessDoc) paths
   registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
 makeImplicitInputs ::
   IORef BuiltTargets -> BuildTargetEnv -> Parallelism.Entity -> Reason ->
   [FSHook.Input] -> [FSHook.DelayedOutput] -> IO ()
-makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} entity accessDoc inputs outputs =
+makeImplicitInputs builtTargetsRef bte@BuildTargetEnv{..} entity accessDoc inputs outputs = {-# SCC "makeImplicitInputs" #-}
   do
     targetParentsBuilt <-
       buildManyWithParReleased (Db.BecauseContainerDirectoryOfInput accessDoc)
@@ -827,7 +983,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
 
     commonAccessHandler accessDoc rawInputs rawOutputs
       getOutPath getOutEffect handler
-      = do
+      = {-# SCC "commonAccessHandler" #-} do
         recordedOutputs <- readIORef outputsRef
         let ignoredOutput = MagicFiles.outputIgnored . getOutPath
             ignoredInput = inputIgnored recordedOutputs
@@ -847,7 +1003,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
           filter ((`M.notMember` recordedOutputs) . FSHook.inputPath) inputs
 
 runCmd :: BuildTargetEnv -> Parallelism.Entity -> Target -> IO RunCmdResults
-runCmd bte@BuildTargetEnv{..} entity target = do
+runCmd bte@BuildTargetEnv{..} entity target = {-# SCC "runCmd" #-} do
   inputsRef <- newIORef M.empty
   outputsRef <- newIORef M.empty
   builtTargetsRef <- newIORef mempty
@@ -896,28 +1052,44 @@ makeExecutionLog ::
   Buildsome -> Target ->
   Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
   [FilePath] -> StdOutputs ByteString -> DiffTime -> IO Db.ExecutionLog
-makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
+makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "makeExecutionLog" #-} do
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
     forM outputs $ \outPath -> do
       mStat <- Dir.getMFileStatus outPath
       fileDesc <-
         case mStat of
-        Nothing -> return $ Db.FileDescNonExisting ()
+        Nothing -> return $ FileDescNonExisting ()
         Just stat -> do
           mContentDesc <-
             if Posix.isDirectory stat
             then return Nothing
-            else Just <$>
-                 fileContentDescOfStat "When making execution log (output)"
-                 db outPath stat
-          return $ Db.FileDescExisting $ Db.OutputDesc (fileStatDescOfStat stat) mContentDesc
+            else do
+              chash <- fileContentDescOfStat "When making execution log (output)"
+                       db outPath stat
+              case chash of
+                FileContentDescRegular contentHash ->
+                  if Hash.null contentHash
+                  then return ()
+                  else do
+                    let targetPath = ContentCache.mkTargetWithHashPath buildsome contentHash
+                    -- putStrLn $ BS8.unpack ("Caching: " <> outPath <> " -> " <> targetPath)
+                    alreadyExists <- FilePath.exists targetPath
+                    unless alreadyExists $ do
+                      removeFileOrDirectoryOrNothing targetPath
+                      Dir.createDirectories $ FilePath.takeDirectory targetPath
+                      Dir.copyFile outPath targetPath
+                _ -> return ()
+              return $ Just chash
+          let mtime = Posix.modificationTimeHiRes stat
+          return $ FileDescExisting
+            (mtime, Db.OutputDesc (fileStatDescOfStat stat) mContentDesc)
       return (outPath, fileDesc)
-  return Db.ExecutionLog
+  return Db.ExecutionLogOf
     { elBuildId = bsBuildId buildsome
     , elCommand = targetInterpolatedCmds target
-    , elInputsDescs = inputsDescs
-    , elOutputsDescs = M.fromList outputDescPairs
+    , elInputBranchPath = Db.ELBranchPath $ M.toList $ fmap Db.fromFileDesc inputsDescs
+    , elOutputsDescs = outputDescPairs
     , elStdoutputs = stdOutputs
     , elSelfTime = selfTime
     }
@@ -929,14 +1101,14 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
     inputAccess ::
       FilePath ->
       (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
-      IO (Db.FileDesc Reason (POSIXTime, Db.InputDesc))
+      IO (FileDesc Reason (POSIXTime, Db.ExistingInputDesc))
     inputAccess path (accessTypes, Nothing) = do
       let reason =
             case M.elems accessTypes of
             [] -> error $ "AccessTypes empty in rcrInputs:" ++ show path
             x:_ -> x
       assertFileMTime path Nothing
-      return $ Db.FileDescNonExisting reason
+      return $ FileDescNonExisting reason
     inputAccess path (accessTypes, Just stat) = do
       assertFileMTime path $ Just stat
       let
@@ -951,9 +1123,9 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
       contentAccess <-
         addDesc FSHook.AccessTypeFull $
         fileContentDescOfStat "When making execution log (input)" db path stat
-      return $ Db.FileDescExisting
+      return $ FileDescExisting
         ( Posix.modificationTimeHiRes stat
-        , Db.InputDesc
+        , Db.ExistingInputDescOf
           { Db.idModeAccess = modeAccess
           , Db.idStatAccess = statAccess
           , Db.idContentAccess = contentAccess
@@ -988,7 +1160,7 @@ buildTargetHints bte@BuildTargetEnv{..} entity target =
 
 buildTargetReal ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Db.ExecutionLog, BuiltTargets)
-buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
+buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} = {-# SCC "buildTargetReal" #-}
   Print.targetWrap btePrinter bteReason tdTarget "BUILDING" $ do
     deleteOldTargetOutputs bte tdTarget
 
@@ -1000,7 +1172,9 @@ buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
     executionLog <-
       makeExecutionLog bteBuildsome tdTarget rcrInputs (S.toList outputs)
       rcrStdOutputs rcrSelfTime
-    writeIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) executionLog
+
+    executionLogNodeKey <- Db.executionLogUpdate tdTarget (bsDb bteBuildsome) executionLog
+    writeIRef (Db.latestExecutionLog tdTarget (bsDb bteBuildsome)) executionLogNodeKey
 
     Print.targetTiming btePrinter "now" rcrSelfTime
     return (executionLog, rcrBuiltTargets)
@@ -1027,7 +1201,7 @@ statsOfNullCmd BuildTargetEnv{..} TargetDesc{..} hintedBuiltTargets =
     BuiltTargets deps stats = hintedBuiltTargets
 
 buildTarget :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO Stats
-buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
+buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} = {-# SCC "buildTarget" #-}
   maybeRedirectExceptions bte TargetDesc{..} $ do
     (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte entity tdTarget
     case explicitPathsBuilt of
@@ -1036,14 +1210,15 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
         return $ builtStats hintedBuiltTargets
       ExplicitPathsBuilt | BS8.null $ targetInterpolatedCmds tdTarget ->
         return $ statsOfNullCmd bte TargetDesc{..} hintedBuiltTargets
-      ExplicitPathsBuilt | otherwise ->  do
+      ExplicitPathsBuilt | otherwise ->  {-# SCC "buildTarget.ExplicitPathsBuilt" #-} do
         mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
-        (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
+        (whenBuilt, (el@Db.ExecutionLogOf{..}, builtTargets)) <-
           case mSlaveStats of
           Just res -> return (Stats.FromCache, res)
           Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..}
         return $! -- strict application, otherwise stuff below isn't
                   -- gc'd apparently.
+          {-# SCC "buildTarget.calc_stats" #-}
           case bteCollectStats of
             Don'tCollectStats -> mempty
             CollectStats putInputsInStats ->
@@ -1058,7 +1233,7 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
                     , tsExistingInputs =
                       case putInputsInStats of
                       PutInputsInStats ->
-                          Just $ targetAllInputs tdTarget ++ [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
+                          Just $ targetAllInputs tdTarget ++ [ path | (path, FileDescExisting _) <- Db.elInputsDescs el ]
                       Don'tPutInputsInStats -> Nothing
                     }
                   , Stats.stdErr =
@@ -1189,6 +1364,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         Buildsome
         { bsOpts = opt
         , bsMakefile = makefile
+        , bsBuildsomePath = buildDbFilename makefilePath
         , bsPhoniesSet = phoniesSet
         , bsBuildId = buildId
         , bsRootPath = rootPath
