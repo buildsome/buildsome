@@ -1,5 +1,6 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
+{-# LANGUAGE CPP, ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
 module Buildsome
   ( Buildsome(bsPhoniesSet), with, withDb
   , clean
@@ -12,6 +13,7 @@ import qualified Buildsome.BuildId as BuildId
 import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetDesc(..))
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
+import qualified Buildsome.ContentCache as ContentCache
 import qualified Buildsome.Color as Color
 import           Buildsome.Db (Db, IRef(..), Reason)
 import qualified Buildsome.Db as Db
@@ -47,6 +49,7 @@ import           Data.Time (DiffTime)
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Typeable (Typeable)
 import qualified Lib.Cmp as Cmp
+import           Lib.Cmp (Cmp)
 import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
 import           Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
@@ -54,10 +57,10 @@ import qualified Lib.Directory as Dir
 import           Lib.Exception (finally, logErrors, handle, catch, handleSync, putLn)
 import           Lib.FSHook (OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
-import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
+import qualified Lib.Fresh as Fresh
+import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat, FileContentDesc(..))
 import           Lib.FilePath (FilePath, (</>), (<.>))
 import qualified Lib.FilePath as FilePath
-import qualified Lib.Fresh as Fresh
 import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
 import           Lib.Once (once)
@@ -410,18 +413,44 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
   -- execution log, so all outputs keep no old content
   void $ verifyTargetSpec bte inputs outputs target
 
-verifyFileDesc ::
-  (IsString str, Monoid str, MonadIO m) =>
-  str -> FilePath -> Db.FileDesc ne desc ->
-  (Posix.FileStatus -> desc -> EitherT (str, FilePath) m ()) ->
-  EitherT (str, FilePath) m ()
-verifyFileDesc str filePath fileDesc existingVerify = do
+
+verifyFileDesc :: (IsString str, MonadIO m)
+  => BuildTargetEnv
+  -> FilePath
+  -> Db.FileDesc ne (POSIXTime, Db.OutputDesc)
+  -> (Posix.FileStatus -> Db.OutputDesc -> (EitherT ByteString IO ()))
+  -> EitherT str m ()
+verifyFileDesc bte@BuildTargetEnv{..} filePath fileDesc existingVerify = do
+  let restore (Db.OutputDesc oldStatDesc oldMContentDesc) =
+        ContentCache.refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
+      remove = liftIO . removeFileOrDirectoryOrNothing
   mStat <- liftIO $ Dir.getMFileStatus filePath
   case (mStat, fileDesc) of
     (Nothing, Db.FileDescNonExisting _) -> return ()
-    (Just stat, Db.FileDescExisting desc) -> existingVerify stat desc
-    (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
-    (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
+    (Just stat, Db.FileDescExisting (mtime, desc))
+      | Posix.modificationTimeHiRes stat /= mtime -> do
+          res <- liftIO $ runEitherT $ existingVerify stat desc
+          case res of
+            Left reason -> do
+              restore desc
+              explain $ mconcat
+                [ "File exists but is wrong ("
+                , ColorText.simple reason
+                , "): restored from cache "
+                ]
+            Right x -> return x
+      | otherwise -> return ()
+    (Just _, Db.FileDescNonExisting _)  -> do
+      remove filePath
+      explain "File exists, but shouldn't: removed "
+    (Nothing, Db.FileDescExisting (_, desc)) -> do
+      restore desc
+      explain "File doesn't exist, but should: restored from cache "
+  where
+    explain msg = liftIO $ printStrLn btePrinter
+      $ bsRender bteBuildsome $ mconcat
+      $ [ msg, cPath (show filePath) ]
+    Color.Scheme{..} = Color.scheme
 
 data WrapException = WrapException (ColorText -> ByteString) Parents E.SomeException
   deriving (Typeable)
@@ -496,47 +525,82 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog = do
       executionLogVerifyFilesState bte targetDesc executionLog
     return (executionLog, builtTargets)
 
+
+#if MIN_VERSION_base(4,8,0)
+bimapEitherT' :: Functor f => (e -> e') -> (a -> a') -> EitherT e f a -> EitherT e' f a'
+bimapEitherT' = bimapEitherT
+
+annotateError :: Functor f => b -> EitherT e f a -> EitherT (e, b) f a
+#else
+bimapEitherT' :: Monad m => (e -> e') -> (a -> a') -> EitherT e m a -> EitherT e' m a'
+bimapEitherT' f g (EitherT m) = EitherT (m >>= (return . h)) where
+  h (Left e)  = Left (f e)
+  h (Right a) = Right (g a)
+
+annotateError :: Monad m => b -> EitherT e m a -> EitherT (e,b) m a
+#endif
+
+annotateError ann = bimapEitherT' (, ann) id
+
+
+verifyMDesc :: (MonadIO m, Cmp a) => ByteString -> IO a -> Maybe a -> EitherT ByteString m ()
+verifyMDesc str getDesc = maybe (return ()) (verifyDesc str getDesc)
+
+verifyDesc ::
+  (MonadIO m, Cmp a) => ByteString -> IO a -> a -> EitherT ByteString m ()
+verifyDesc str getDesc oldDesc = do
+  newDesc <- liftIO getDesc
+  case Cmp.cmp oldDesc newDesc of
+    Cmp.Equals -> return ()
+    Cmp.NotEquals reasons ->
+      -- fail entire computation
+      left $ str <> ": " <> BS8.intercalate ", " reasons
+
+
+verifyOutputDescs ::
+    MonadIO m => Db -> BuildTargetEnv -> TargetDesc ->
+    Map FilePath (Db.FileDesc ne (POSIXTime, Db.OutputDesc)) ->
+    EitherT (ByteString, FilePath) m ()
+verifyOutputDescs db bte@BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = do
+  -- For now, we don't store the output files' content
+  -- anywhere besides the actual output files, so just verify
+  -- the output content is still correct
+  forM_ (M.toList esOutputsDescs) $ \(filePath, outputDesc) -> do
+      annotateError filePath $
+        verifyFileDesc bte filePath outputDesc $
+        \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
+              verifyDesc "output(stat)" (return (fileStatDescOfStat stat)) oldStatDesc
+              verifyMDesc "output(content)"
+                (fileContentDescOfStat "When applying execution log (output)"
+                 db filePath stat) oldMContentDesc
+
+
+-- executionSummaryVerifyFilesState ::
+--   MonadIO m =>
+--   BuildTargetEnv -> TargetDesc -> Db.ExecutionFilesSummary ->
+--   EitherT (ByteString, FilePath) m ()
+-- executionSummaryVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionFilesSummary{..} = do
+--   verifyInputsSummary db bte TargetDesc{..} efsInputsDescs
+--   verifyOutputDescs db bte TargetDesc{..} efsOutputsDescs
+--   liftIO $
+--     replayExecutionLog bte tdTarget (M.keysSet efsInputsDescs) (M.keysSet efsOutputsDescs)
+--     efsStdErr efsSelfTime
+--   where
+--     db = bsDb bteBuildsome
+--getInputState :: FilePath -> IO Db.InputLog
+
 executionLogVerifyFilesState ::
   MonadIO m =>
   BuildTargetEnv -> TargetDesc -> Db.ExecutionLog ->
   EitherT (ByteString, FilePath) m ()
 executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionLog{..} = do
-  forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
-    verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
-      when (Posix.modificationTimeHiRes stat /= mtime) $ do
-        let verify str getDesc mPair =
-              verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
-        verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
-        verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
-        verify "content"
-          (fileContentDescOfStat "When applying execution log (input)"
-           db filePath stat) mContentAccess
-  -- For now, we don't store the output files' content
-  -- anywhere besides the actual output files, so just verify
-  -- the output content is still correct
-  forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) ->
-    verifyFileDesc "output" filePath outputDesc $ \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
-      verifyDesc  "output(stat)"    filePath (return (fileStatDescOfStat stat)) oldStatDesc
-      verifyMDesc "output(content)" filePath
-        (fileContentDescOfStat "When applying execution log (output)"
-         db filePath stat) oldMContentDesc
+  verifyOutputDescs db bte TargetDesc{..} elOutputsDescs
   liftIO $
     replayExecutionLog bte tdTarget
     (M.keysSet elInputsDescs) (M.keysSet elOutputsDescs)
     elStdoutputs elSelfTime
   where
     db = bsDb bteBuildsome
-    verifyMDesc _   _        _       Nothing        = return ()
-    verifyMDesc str filePath getDesc (Just oldDesc) =
-      verifyDesc str filePath getDesc oldDesc
-
-    verifyDesc str filePath getDesc oldDesc = do
-      newDesc <- liftIO getDesc
-      case Cmp.cmp oldDesc newDesc of
-        Cmp.Equals -> return ()
-        Cmp.NotEquals reasons ->
-          -- fail entire computation
-          left $ (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
 executionLogBuildInputs ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->
@@ -920,10 +984,26 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
           mContentDesc <-
             if Posix.isDirectory stat
             then return Nothing
-            else Just <$>
-                 fileContentDescOfStat "When making execution log (output)"
-                 db outPath stat
-          return $ Db.FileDescExisting $ Db.OutputDesc (fileStatDescOfStat stat) mContentDesc
+            else do
+              chash <- fileContentDescOfStat "When making execution log (output)"
+                       db outPath stat
+              case chash of
+                FileContentDescRegular contentHash ->
+                  if BS8.null contentHash
+                  then return ()
+                  else do
+                    let targetPath = ContentCache.mkTargetWithHashPath buildsome contentHash
+                    -- putStrLn $ BS8.unpack ("Caching: " <> outPath <> " -> " <> targetPath)
+                    alreadyExists <- FilePath.exists targetPath
+                    unless alreadyExists $ do
+                      removeFileOrDirectoryOrNothing targetPath
+                      Dir.createDirectories $ FilePath.takeDirectory targetPath
+                      Dir.copyFile outPath targetPath
+                _ -> return ()
+              return $ Just chash
+          let mtime = Posix.modificationTimeHiRes stat
+          return $ Db.FileDescExisting
+            (mtime, Db.OutputDesc (fileStatDescOfStat stat) mContentDesc)
       return (outPath, fileDesc)
   return Db.ExecutionLog
     { elBuildId = bsBuildId buildsome
@@ -1173,6 +1253,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         Buildsome
         { bsOpts = opt
         , bsMakefile = makefile
+        , bsBuildsomePath = buildDbFilename makefilePath
         , bsPhoniesSet = phoniesSet
         , bsBuildId = buildId
         , bsRootPath = rootPath

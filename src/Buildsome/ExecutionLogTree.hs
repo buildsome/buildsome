@@ -31,8 +31,8 @@ import           Lib.FileDesc            (FileStatDesc (..),
                                           fileStatDescOfStat)
 import           Lib.FilePath (FilePath)
 import qualified Lib.NonEmptyMap as NonEmptyMap
-import           Prelude.Compat hiding (FilePath, lookup)
 import qualified System.Posix.ByteString as Posix
+import           Prelude.Compat hiding (FilePath, lookup)
 
 fileDescToInputLogStat :: FileStatDesc -> InputLogStat
 fileDescToInputLogStat (FileStatDirectory stat) =

@@ -28,6 +28,7 @@ type Parents = [(TargetRep, Target, Reason)]
 data Buildsome = Buildsome
   { -- static:
     bsOpts :: Opt
+  , bsBuildsomePath :: FilePath
   , bsMakefile :: Makefile
   , bsPhoniesSet :: Set FilePath
   , bsBuildId :: BuildId

@@ -37,6 +37,7 @@ executable buildsome
                ,     Buildsome.Clean
                ,     Buildsome.Color
                ,     Buildsome.CompatMakefile
+               ,     Buildsome.ContentCache
                ,     Buildsome.Db
                ,     Buildsome.ExecutionLogTree
                ,     Buildsome.FileContentDescCache
@@ -110,6 +111,7 @@ executable buildsome
                ,     aeson-pretty >=0.7 && <0.8
                ,     ansi-terminal == 0.6.*
                ,     async >=2.0 && <2.1
+               ,     base16-bytestring >= 0.1.1.6
                ,     binary >=0.7 && <0.8
                ,     bytestring >=0.10 && <0.11
                ,     cassava >=0.4.2 && <0.5
@@ -132,7 +134,7 @@ executable buildsome
                ,     template-haskell >= 2.8 && < 2.11
                ,     time >=1.4 && <1.6
                ,     transformers >=0.3 && <=0.5
-               ,     unix >=2.6 && <2.8
+               ,     unix >=2.7 && <2.8
 
   if flag(Charts)
     cpp-options:       -DWITH_CHARTS_SUPPORT
