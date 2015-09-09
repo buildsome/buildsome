@@ -1121,7 +1121,8 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
       ExplicitPathsNotBuilt ->
         -- Failed to build our hints when allowed, just leave with collected stats
         return $ builtStats hintedBuiltTargets
-      ExplicitPathsBuilt -> do
+      ExplicitPathsBuilt | BS8.null $ targetCmds tdTarget -> return mempty
+      ExplicitPathsBuilt | otherwise ->  do
         mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
         (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
           case mSlaveStats of
