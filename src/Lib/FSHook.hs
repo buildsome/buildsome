@@ -66,7 +66,7 @@ import           Prelude.Compat hiding (FilePath)
 
 data AccessDoc
     = AccessDocEmpty -- TODO: AccessDoc Protocol.Func JobLabel
-    deriving (Show, Generic)
+    deriving (Show, Generic, Ord, Eq)
 instance Binary AccessDoc
 
 type JobId = ByteString

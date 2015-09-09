@@ -9,7 +9,8 @@ module Buildsome.Db
   , InputDesc(..), FileDesc(..), bimapFileDesc
   , OutputDesc(..)
   , ExecutionLog(..), executionLogTree
-  , InputLog(..), InputLogStat(..), ExecutionLogTree(..), ExecutionLogTreeInput(..)
+  -- , InputLog(..), InputLogStat(..)
+  , ExecutionLogTree(..), ExecutionLogTreeInput(..)
   , FileContentDescCache(..), fileContentDescCache
   , Reason(..)
   , IRef(..)
@@ -35,9 +36,9 @@ import           Lib.Binary (encode, decode)
 import           Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
 import           Lib.Exception (bracket)
 import qualified Lib.FSHook as FSHook
-import           Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc, BasicStatEssence)
+import           Lib.FileDesc (FileContentDesc, FileModeDesc, FileStatDesc)
 import           Lib.FilePath (FilePath, (</>), (<.>))
-import           Lib.Posix.FileType (FileType)
+
 import           Lib.Makefile (Makefile)
 import qualified Lib.Makefile as Makefile
 import           Lib.Makefile.Monad (PutStrLn)
@@ -73,7 +74,7 @@ data Reason
   | BecauseContainerDirectoryOfOutput FilePath
   | BecauseInput Reason FilePath
   | BecauseRequested ByteString
-  deriving (Generic, Show)
+  deriving (Generic, Show, Ord, Eq)
 instance Binary Reason
 
 
@@ -81,7 +82,7 @@ data InputDesc = InputDesc
   { idModeAccess :: Maybe (Reason, FileModeDesc)
   , idStatAccess :: Maybe (Reason, FileStatDesc)
   , idContentAccess :: Maybe (Reason, FileContentDesc)
-  } deriving (Generic, Show)
+  } deriving (Generic, Show, Ord, Eq)
 instance Binary InputDesc
 
 data FileDesc ne e
@@ -110,22 +111,22 @@ data ExecutionLog = ExecutionLog
   } deriving (Generic, Show)
 instance Binary ExecutionLog
 
-data InputLogStat = InputLogStat
-  { ilsBasicStatEssence      :: BasicStatEssence
-  , ilsFileSize              :: Maybe Posix.FileOffset
-  , ilsFileType              :: Maybe FileType
-  } deriving (Generic, Show, Eq, Ord)
-instance Binary InputLogStat
+-- data InputLogStat = InputLogStat
+--   { ilsBasicStatEssence      :: BasicStatEssence
+--   , ilsFileSize              :: Maybe Posix.FileOffset
+--   , ilsFileType              :: Maybe FileType
+--   } deriving (Generic, Show, Eq, Ord)
+-- instance Binary InputLogStat
 
-data InputLog = InputLog
-  { ilModeAccess :: Maybe FileModeDesc
-  , ilStatAccess :: Maybe InputLogStat
-  , ilContentAccess :: Maybe FileContentDesc
-  } deriving (Generic, Show, Eq, Ord)
-instance Binary InputLog
+-- data InputLog = InputLog
+--   { ilModeAccess :: Maybe FileModeDesc
+--   , ilStatAccess :: Maybe InputLogStat
+--   , ilContentAccess :: Maybe FileContentDesc
+--   } deriving (Generic, Show, Eq, Ord)
+-- instance Binary InputLog
 
 data ExecutionLogTreeInput = ExecutionLogTreeInput
-  { eltiBranches :: NonEmptyMap (FileDesc () InputLog) ExecutionLogTree
+  { eltiBranches :: NonEmptyMap (FileDesc () InputDesc) ExecutionLogTree
   } deriving (Generic, Show)
 instance Binary ExecutionLogTreeInput
 

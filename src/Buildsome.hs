@@ -674,12 +674,12 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
       printStrLn btePrinter . bsRender bteBuildsome . mconcat $
         [ "No cached execution log of ", cTarget (show (targetOutputs tdTarget))
         , " matched. Mismatching inputs: "
-        , cPath . show . S.toList . S.fromList $ map fst reasons
+        , ColorText.intercalate ", " $ map (\(f,r) -> cPath (show f) <> ": " <> (fromString $ show r)) reasons
         ]
-      verbosePrint . mconcat $
-        [ "Reasons:\n\t"
-        , ColorText.intercalate "\n\t" $ map show reasons
-        ]
+      -- verbosePrint . mconcat $
+      --   [ "Reasons:\n\t"
+      --   , ColorText.intercalate "\n\t" $ map show reasons
+      --   ]
       return Nothing
     Right executionLog -> do
       verbosePrint . mconcat $
