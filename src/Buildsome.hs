@@ -1000,6 +1000,24 @@ buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
 
+statsOfNullCmd :: BuildTargetEnv -> TargetDesc -> BuiltTargets -> Stats
+statsOfNullCmd BuildTargetEnv{..} TargetDesc{..} hintedBuiltTargets =
+  stats <> Stats
+  { Stats.ofTarget =
+    M.singleton tdRep Stats.TargetStats
+    { tsWhen = Stats.BuiltNow
+    , tsTime = 0
+    , tsDirectDeps = deps
+    , tsExistingInputs =
+      case bteCollectStats of
+      CollectStats PutInputsInStats -> Just $ targetAllInputs tdTarget
+      _ -> Nothing
+    }
+  , Stats.stdErr = S.empty
+  }
+  where
+    BuiltTargets deps stats = hintedBuiltTargets
+
 buildTarget :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO Stats
 buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
   maybeRedirectExceptions bte TargetDesc{..} $ do
@@ -1008,7 +1026,9 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
       ExplicitPathsNotBuilt ->
         -- Failed to build our hints when allowed, just leave with collected stats
         return $ builtStats hintedBuiltTargets
-      ExplicitPathsBuilt -> do
+      ExplicitPathsBuilt | BS8.null $ targetInterpolatedCmds tdTarget ->
+        return $ statsOfNullCmd bte TargetDesc{..} hintedBuiltTargets
+      ExplicitPathsBuilt | otherwise ->  do
         mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
         (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
           case mSlaveStats of
