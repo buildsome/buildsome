@@ -666,20 +666,26 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
   case mExecutionLog of
     Left [] -> do -- No previous execution log
       verbosePrint . mconcat $
-          [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
-          , " not found."
-          ]
+        [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
+        , " not found."
+        ]
       return Nothing
     Left reasons -> do -- Execution log found but didn't match
-      let reasonsStr = (map show reasons) :: [ColorText]
+      printStrLn btePrinter . bsRender bteBuildsome . mconcat $
+        [ "No cached execution log of ", cTarget (show (targetOutputs tdTarget))
+        , " matched. Mismatching inputs: "
+        , cPath . show . S.toList . S.fromList $ map fst reasons
+        ]
       verbosePrint . mconcat $
-          [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
-          , " didn't match. Reasons:\n\t"
-          , ColorText.intercalate "\n\t" reasonsStr
-          ]
-
+        [ "Reasons:\n\t"
+        , ColorText.intercalate "\n\t" $ map show reasons
+        ]
       return Nothing
     Right executionLog -> do
+      verbosePrint . mconcat $
+        [ "Found execution log of ", cTarget (show (targetOutputs tdTarget)), ":\n\t"
+        , ColorText.intercalate "\n\t" $ map show . M.toList $ Db.elInputsDescs executionLog
+        ]
       eRes <- tryApplyExecutionLog bte entity TargetDesc{..} executionLog
       case eRes of
         Left (SpeculativeBuildFailure exception)

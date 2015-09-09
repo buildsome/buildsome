@@ -5,6 +5,7 @@ module Buildsome.ExecutionLogTree
   ( lookup
   , append
   , fromExecutionLog
+  , showTreeSummary
   )
   where
 
@@ -17,7 +18,7 @@ import           Buildsome.Db            (ExecutionLog (..),
 import           Control.Monad.IO.Class  (MonadIO, liftIO)
 import           Control.Monad.Trans.Either (EitherT (..), runEitherT)
 import           Data.Foldable           (asum)
-import           Data.List               (intercalate, sort)
+import           Data.List               (intercalate)
 import qualified Data.Map                as Map
 import qualified Lib.Directory           as Dir
 import           Lib.FileDesc            (FileStatDesc (..),
@@ -97,7 +98,7 @@ mapRight :: (r1 -> r2) -> Either a r1 -> Either a r2
 mapRight _ (Left e) = Left e
 mapRight f (Right r) = Right $ f r
 
-lookupInput :: FilePath -> ExecutionLogTreeInput -> IO (Either [MismatchReason] ExecutionLog)
+lookupInput :: FilePath -> ExecutionLogTreeInput -> IO (Either [(FilePath, MismatchReason)] ExecutionLog)
 lookupInput filePath ExecutionLogTreeInput{..} = do
   mStat <- liftIO $ Dir.getMFileStatus filePath
   let matches =
@@ -105,10 +106,11 @@ lookupInput filePath ExecutionLogTreeInput{..} = do
         $ NonEmptyMap.toList eltiBranches
   match <- firstRightAction matches
   case match of
-    Left reasons -> return $ Left reasons
+    -- include the input path in the error, for caller's convenience
+    Left reasons -> return . Left $ map (filePath,) reasons
     Right (_, elt) -> lookup elt
 
-lookup :: ExecutionLogTree -> IO (Either [MismatchReason] ExecutionLog)
+lookup :: ExecutionLogTree -> IO (Either [(FilePath, MismatchReason)] ExecutionLog)
 lookup (ExecutionLogLeaf el) = return $ Right el
 lookup (ExecutionLogBranch inputs) =
   firstRightAction
@@ -118,8 +120,7 @@ lookup (ExecutionLogBranch inputs) =
 
 getInputLogs :: ExecutionLog -> [(FilePath, FileDesc () InputLog)]
 getInputLogs ExecutionLog{..}
-  = sort
-  . Map.toList
+  = Map.toList
   -- 1. Throw away the Reason by mapping it to ()
   -- 2. Convert (mtime, InputDesc) to InputLog
   . fmap (bimapFileDesc (const ()) (inputDescToInputLog . snd))
@@ -143,7 +144,8 @@ append el elt' = go (getInputLogs el, el) elt' []
     go ((filePath,_):_, _) ExecutionLogLeaf{} oldInputs
       = error $ intercalate "\n\t"
         [ "Existing execution log with no further inputs exists, but new one has more inputs!"
-        , "Target: ", show $ elCommand el
+        , "Target: ", show $ elOutputsDescs el
+        , "Target command: ", show $ elCommand el
         , "Example extra input: ", show filePath
         , "Existing entry's inputs: ", concatMap (("\n\t\t" ++) . show) oldInputs
         ]
@@ -167,4 +169,20 @@ append el elt' = go (getInputLogs el, el) elt' []
 
               -- found exact match, go down the tree
               Just next -> go (is, new) next (filePath:oldInputs)
+
+showTreeSummary :: ExecutionLogTree -> [Char]
+showTreeSummary = showTreeSummary' ""
+
+showTreeSummary' :: [Char] -> ExecutionLogTree -> [Char]
+showTreeSummary' _   ExecutionLogLeaf{} = "Leaf"
+showTreeSummary' tab (ExecutionLogBranch m) =
+  mconcat
+  [ "\n", tab, ('>' :) . concatMap (uncurry showInput) $ NonEmptyMap.toList m ]
+  where showInput input ExecutionLogTreeInput{..} =
+          case branches of
+            []  -> error "can't be empty"
+            [x] -> mconcat [show input, showTreeSummary' (t : tab) $ snd x]
+            xs  -> concatMap ((mconcat ["\n", t : tab, show input, ":"] ++) . showTreeSummary' (t : tab) . snd) $ xs
+          where branches = NonEmptyMap.toList eltiBranches
+        t = ' '
 
