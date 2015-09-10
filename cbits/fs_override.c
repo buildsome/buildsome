@@ -19,6 +19,7 @@
 
 #define TRACE(sev, fmt, ...)                            \
     do {                                                \
+        initialize_process_state();                     \
         DEFINE_MSG(msg, trace);                         \
         msg.args.severity = severity_##sev;             \
         snprintf(PS(msg.args.msg), fmt, ##__VA_ARGS__); \
@@ -188,7 +189,6 @@ struct func_trace     {enum severity severity; char msg[1024];};
     })
 
 #define DEFINE_MSG(msg, name)                   \
-    initialize_process_state();                 \
     struct {                                    \
         enum func func;                         \
         struct func_##name args;                \
@@ -259,6 +259,7 @@ static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *can
 
 DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, creat);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
@@ -279,6 +280,7 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
 #define DEFINE_STAT_WRAPPER(name, msg_type, stat_struct)                \
 DEFINE_WRAPPER(int, name, (int vers, const char *path, struct stat_struct *buf)) \
 {                                                                       \
+    initialize_process_state();                                         \
     bool needs_await = false;                                           \
     DEFINE_MSG(msg, msg_type);                                          \
     IN_PATH_COPY(needs_await, msg.args.path, path);                     \
@@ -293,6 +295,7 @@ DEFINE_STAT_WRAPPER(__lxstat64, lstat, stat64)
 /* Depends on the full path */
 DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, opendir);
     IN_PATH_COPY(needs_await, msg.args.path, path);
@@ -302,6 +305,7 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 /* Depends on the full path */
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, access);
     IN_PATH_COPY(needs_await, msg.args.path, path);
@@ -312,6 +316,7 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
 /* Outputs the full path */
 DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, truncate);
     msg.args.length = length;
@@ -328,6 +333,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 /* Outputs the full path */
 DEFINE_WRAPPER(int, unlink, (const char *path))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, unlink);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
@@ -342,6 +348,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
 /* Outputs both full paths */
 DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, rename);
     OUT_PATH_COPY(needs_await, msg.args.oldpath, oldpath);
@@ -359,6 +366,7 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
 /* Outputs the full path */
 DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, chmod);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
@@ -374,6 +382,7 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
 /* Depends on the full direct path */
 DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, readlink);
     IN_PATH_COPY(needs_await, msg.args.path, path);
@@ -383,6 +392,7 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 /* Outputs the full path, must be deleted aftewards? */
 DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, mknod);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
@@ -399,6 +409,7 @@ DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
 /* Outputs the full path */
 DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, mkdir);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
@@ -414,6 +425,7 @@ DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
 /* Outputs the full path */
 DEFINE_WRAPPER(int, rmdir, (const char *path))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, rmdir);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
@@ -431,6 +443,7 @@ DEFINE_WRAPPER(int, rmdir, (const char *path))
  * depend on the target too) */
 DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, symlink);
     IN_PATH_COPY(needs_await, msg.args.target, target);
@@ -445,6 +458,7 @@ DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
 
 DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, link);
     OUT_PATH_COPY(needs_await, msg.args.oldpath, oldpath);
@@ -461,6 +475,7 @@ DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
 /* Outputs the full path */
 DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, chown);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
@@ -530,6 +545,7 @@ int execvpe_real(const char *file, char *const argv[], char *const envp[]);
 
 DEFINE_WRAPPER(int, execvpe, (const char *file, char *const argv[], char *const envp[]))
 {
+    initialize_process_state();
     DEFINE_MSG(msg, execp);
 
     // char env_var_PATH[MAX_PATH_ENV_VAR_LENGTH];
@@ -630,6 +646,7 @@ int execle(const char *path, const char *arg, ...)
 
 DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *const envp[]))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, exec);
     IN_PATH_COPY(needs_await, msg.args.path, filename);
@@ -640,6 +657,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 
 #define OPEN_HANDLER(name, path, flags)                                 \
     do {                                                                \
+        initialize_process_state();                                     \
         bool is_also_read = false;                                      \
         bool is_create = flags & CREATION_FLAGS;                        \
         bool is_truncate = flags & O_TRUNC;                             \
@@ -748,6 +766,7 @@ struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
 
 #define FOPEN_HANDLER(name, path, modestr, ...)                         \
     do {                                                                \
+        initialize_process_state();                                     \
         struct fopen_mode_bools mode = fopen_parse_modestr(modestr);    \
         if(!mode.is_write && !mode.is_create && !mode.is_truncate) {    \
             ASSERT(mode.is_read);                                       \
@@ -812,6 +831,7 @@ DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
 {
     if(!filename) return SILENT_CALL_REAL(dlopen, filename, flag);
 
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, openr);
     IN_PATH_COPY(needs_await, msg.args.path, filename);
@@ -823,6 +843,7 @@ DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
 
 DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
 {
+    initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, realpath);
     IN_PATH_COPY(needs_await, msg.args.path, path);
