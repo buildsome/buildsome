@@ -4,28 +4,27 @@ module Buildsome.CompatMakefile
   ( Phonies, make
   ) where
 
-import Prelude.Compat hiding (FilePath)
-
-import Buildsome.BuildMaps (TargetRep)
-import Buildsome.Stats (Stats)
-
-import Control.Monad (filterM)
-import Control.Monad.Trans.Class (MonadTrans(..))
-import Data.ByteString (ByteString)
-import Data.Maybe (fromMaybe)
-import Data.Monoid ((<>))
-import Data.Set (Set)
-import Lib.FilePath (FilePath, (</>))
-import Lib.Makefile (TargetType(..), Target)
-import Lib.Parsec (showPos)
+import           Buildsome.BuildMaps (TargetRep)
 import qualified Buildsome.BuildMaps as BuildMaps
+import           Buildsome.Stats (Stats)
 import qualified Buildsome.Stats as Stats
+import           Control.Monad (filterM)
+import           Control.Monad.Trans.Class (MonadTrans(..))
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
+import           Data.Maybe (fromMaybe)
+import           Data.Monoid ((<>))
+import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Lib.Directory as Directory
+import           Lib.FilePath (FilePath, (</>))
+import           Lib.Makefile (TargetType(..), Target)
+import           Lib.Parsec (showPos)
 import qualified Lib.Revisit as Revisit
 import qualified System.Posix.ByteString as Posix
+
+import           Prelude.Compat hiding (FilePath)
 
 isDir :: FilePath -> IO Bool
 isDir path = maybe False Posix.isDirectory <$> Directory.getMFileStatus path
