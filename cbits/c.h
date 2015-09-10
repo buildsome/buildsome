@@ -12,7 +12,6 @@ FILE *log_file(void);
         fflush(log_file());                                             \
     } while(0)
 
-#define DEBUG(fmt, ...) // LOG(fmt, ##__VA_ARGS__)
 #define ASSERT(x)  do { if (!(x)) { LOG("ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__); abort(); } } while(0)
 
 #define PS(x)   ((char *)& (x)) , sizeof (x)

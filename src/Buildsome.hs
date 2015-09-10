@@ -852,6 +852,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
     FSHook.FSAccessHandlers
     { delayedFSAccessHandler = fsDelayedAccessHandler
     , undelayedFSAccessHandler = fsUndelayedAccessHandler
+    , traceHandler = Print.hookTrace btePrinter
     }
   where
     fsUndelayedAccessHandler accessDoc rawInputs rawOutputs =

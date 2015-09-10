@@ -17,6 +17,19 @@
 /* NOTE: This must be kept in sync with Protocol.hs */
 #define MAX_PATH 256
 
+#define TRACE(sev, fmt, ...)                            \
+    do {                                                \
+        DEFINE_MSG(msg, trace);                         \
+        msg.args.severity = severity_##sev;             \
+        snprintf(PS(msg.args.msg), fmt, ##__VA_ARGS__); \
+        const bool success __attribute__((unused)) =    \
+            client__send_hooked(false, PS(msg));        \
+    } while(0)
+
+#define TRACE_DEBUG(...)   TRACE(debug, __VA_ARGS__)
+#define TRACE_WARNING(...) TRACE(warning, __VA_ARGS__)
+#define TRACE_ERROR(...)   TRACE(error, __VA_ARGS__)
+
 /* Some libc's (such as musl) define the following as macros pointing to the non-64 versions: */
 #ifdef open64
 #undef open64
@@ -120,6 +133,9 @@ enum func {
     func_exec      = 0x10012,
     func_execp     = 0x10013,
     func_realpath  = 0x10014,
+
+    /* Send a debug message */
+    func_trace     = 0xF0000
 };
 
 /* func_openw.flags */
@@ -149,6 +165,12 @@ typedef struct {
     enum out_effect out_effect;
 } out_path;
 
+enum severity {
+    severity_debug,
+    severity_warning,
+    severity_error,
+};
+
 /* NOTE: This must be kept in sync with Protocol.hs */
 struct func_openr     {in_path path;};
 struct func_openw     {out_path path; uint32_t flags; uint32_t mode;};
@@ -171,6 +193,7 @@ struct func_chown     {out_path path; uint32_t owner; uint32_t group;};
 struct func_exec      {in_path path;};
 struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_var_PATH[MAX_PATH_ENV_VAR_LENGTH]; char conf_str_CS_PATH[MAX_PATH_CONF_STR];};
 struct func_realpath  {in_path path;};
+struct func_trace     {enum severity severity; char msg[1024];};
 
 #define DEFINE_WRAPPER(ret_type, name, params)  \
     typedef ret_type name##_func params;        \

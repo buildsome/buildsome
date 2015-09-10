@@ -8,7 +8,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#define PROTOCOL_HELLO "PROTOCOL7: HELLO, I AM: "
+#define PROTOCOL_HELLO "PROTOCOL8: HELLO, I AM: "
 
 static __thread struct {
     pid_t pid;                  /* TODO: Document that this identifies fork()ed threads */
@@ -54,7 +54,6 @@ static int connect_master(const char *need_str)
     ASSERT(strlen(env_sockaddr) < sizeof addr.sun_path);
     strcpy(addr.sun_path, env_sockaddr);
 
-    DEBUG("pid%d, tid%d: connecting \"%s\"", getpid(), gettid(), env_sockaddr);
     int connect_rc = connect(fd, (struct sockaddr*) &addr, sizeof addr);
     if(0 != connect_rc) {
         close(fd);

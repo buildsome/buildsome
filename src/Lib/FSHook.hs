@@ -8,7 +8,7 @@ module Lib.FSHook
   , OutputEffect(..), OutputBehavior(..)
   , Input(..)
   , DelayedOutput(..), UndelayedOutput
-  , Protocol.OutFilePath(..), Protocol.OutEffect(..)
+  , Protocol.OutFilePath(..), Protocol.OutEffect(..), Protocol.Severity(..)
   , FSAccessHandlers(..)
 
   , AccessType(..), AccessDoc
@@ -39,7 +39,7 @@ import           Lib.Exception (finally, bracket_, onException, handleSync)
 import           Lib.FSHook.AccessType (AccessType(..))
 import           Lib.FSHook.OutputBehavior (OutputEffect(..), OutputBehavior(..))
 import qualified Lib.FSHook.OutputBehavior as OutputBehavior
-import           Lib.FSHook.Protocol (IsDelayed(..))
+import           Lib.FSHook.Protocol (IsDelayed(..), Severity(..))
 import qualified Lib.FSHook.Protocol as Protocol
 import           Lib.FilePath (FilePath, (</>), takeDirectory, canonicalizePath)
 import qualified Lib.FilePath as FilePath
@@ -87,6 +87,7 @@ type UndelayedOutput = Protocol.OutFilePath
 data FSAccessHandlers = FSAccessHandlers
   { delayedFSAccessHandler   :: AccessDoc -> [Input] -> [DelayedOutput] -> IO ()
   , undelayedFSAccessHandler :: AccessDoc -> [Input] -> [UndelayedOutput] -> IO ()
+  , traceHandler             :: Severity -> ByteString -> IO ()
   }
 
 type JobLabel = [FilePath]
@@ -246,6 +247,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
       map (Input AccessTypeFull) (maybeToList mPath) ++
       map (Input AccessTypeModeOnly) attempted
     Protocol.RealPath path         -> handleInput AccessTypeModeOnly path
+    Protocol.Trace severity msg    -> traceHandler handlers severity msg
   where
     handlers = jobFSAccessHandlers job
     handleDelayed   inputs outputs = wrap $ delayedFSAccessHandler handlers actDesc inputs outputs
@@ -334,6 +336,7 @@ timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAcc
       FSAccessHandlers
         (wrappedFsAccessHandler Delayed delayed)
         (wrappedFsAccessHandler NotDelayed undelayed)
+        traceHandler
   (time, res) <-
     timeIt $
     runCommand fsHook rootFilter inheritEnvs cmdSpec
@@ -341,7 +344,7 @@ timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAcc
   subtractedTime <- (time-) <$> readIORef pauseTimeRef
   return (subtractedTime, res)
   where
-    FSAccessHandlers delayed undelayed = fsAccessHandlers
+    FSAccessHandlers delayed undelayed traceHandler = fsAccessHandlers
 
 withRunningJob :: FSHook -> JobId -> RunningJob -> IO r -> IO r
 withRunningJob fsHook jobId job body = do

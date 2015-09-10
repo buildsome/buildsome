@@ -9,9 +9,8 @@ module Buildsome.Print
   , delimitMultiline
   , outputsStr
   , replay
+  , hookTrace
   ) where
-
-import Prelude.Compat hiding (show)
 
 import qualified Buildsome.Color as Color
 import           Buildsome.Db (Reason)
@@ -25,6 +24,7 @@ import           Lib.ByteString (chopTrailingNewline)
 import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
 import           Lib.Exception (onExceptionWith)
+import           Lib.FSHook (Severity(..))
 import           Lib.Makefile (TargetType(..), Target)
 import           Lib.Parsec (showPos)
 import           Lib.Printer (Printer, printStrLn)
@@ -33,6 +33,8 @@ import           Lib.Show (show)
 import           Lib.StdOutputs (StdOutputs(..))
 import qualified Lib.StdOutputs as StdOutputs
 import           Text.Parsec (SourcePos)
+
+import           Prelude.Compat hiding (show)
 
 fromBytestring8 :: IsString str => ByteString -> str
 fromBytestring8 = fromString . BS8.unpack
@@ -155,4 +157,15 @@ buildsomeCreation printer version withs withouts verbosity
   where
     header =
       "Buildsome " <> cTiming (ColorText.simple version) <> " invoked"
+    Color.Scheme{..} = Color.scheme
+
+hookTrace :: Printer -> Severity -> ByteString -> IO ()
+hookTrace printer severity =
+  printStrLn printer . color . fromBytestring8
+  where
+    color =
+      case severity of
+      SeverityDebug -> cDebug
+      SeverityWarning -> cWarning
+      SeverityError -> cError
     Color.Scheme{..} = Color.scheme

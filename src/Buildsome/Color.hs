@@ -14,21 +14,23 @@ fgColor = Console.SetColor Console.Foreground
 -- bgColor = Console.SetColor Console.Background
 
 data Scheme = Scheme
-  { cWarning :: ColorText -> ColorText
-  , cError :: ColorText -> ColorText
-  , cTarget :: ColorText -> ColorText
-  , cPath :: ColorText -> ColorText
-  , cTiming :: ColorText -> ColorText
+  { cDebug   :: ColorText -> ColorText
+  , cWarning :: ColorText -> ColorText
+  , cError   :: ColorText -> ColorText
+  , cTarget  :: ColorText -> ColorText
+  , cPath    :: ColorText -> ColorText
+  , cTiming  :: ColorText -> ColorText
   , cSuccess :: ColorText -> ColorText
   , cCommand :: ColorText -> ColorText
-  , cStdout :: ColorText -> ColorText
-  , cStderr :: ColorText -> ColorText
+  , cStdout  :: ColorText -> ColorText
+  , cStderr  :: ColorText -> ColorText
   , cPrinter :: Printer.ColorScheme
   }
 
 scheme :: Scheme
 scheme = Scheme
-  { cWarning = withAttr [fgColor Vivid Yellow]
+  { cDebug   = withAttr [fgColor Dull  White]
+  , cWarning = withAttr [fgColor Vivid Yellow]
   , cError   = withAttr [fgColor Vivid Red]
   , cTarget  = withAttr [fgColor Vivid Cyan]
   , cPath    = withAttr [fgColor Dull  Cyan]

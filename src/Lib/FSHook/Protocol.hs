@@ -6,13 +6,11 @@ module Lib.FSHook.Protocol
   , OpenTruncateMode(..), showOpenTruncateMode
   , CreationMode(..), showCreationMode
   , InFilePath, OutFilePath(..), OutEffect(..)
+  , Severity(..)
   , Func(..), showFunc
   , IsDelayed(..)
   , Msg(..)
   ) where
-
-import Prelude.Compat hiding (FilePath)
-
 
 import Control.Monad
 import Data.Binary.Get
@@ -30,6 +28,8 @@ import System.Posix.Files.ByteString (fileAccess)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntMap as M
+
+import Prelude.Compat hiding (FilePath)
 
 data OpenWriteMode = WriteMode | ReadWriteMode
   deriving (Show, Generic)
@@ -67,6 +67,13 @@ data OutEffect
   deriving (Eq, Ord, Show, Enum, Generic)
 instance Binary OutEffect
 
+data Severity
+  = SeverityDebug
+  | SeverityWarning
+  | SeverityError
+  deriving (Eq, Ord, Show, Enum, Generic)
+instance Binary Severity
+
 data OutFilePath = OutFilePath
   { outPath :: FilePath
   , outEffect :: OutEffect
@@ -95,6 +102,7 @@ data Func
   | Exec InFilePath
   | ExecP (Maybe FilePath) [FilePath]{-prior searched paths (that did not exist)-}
   | RealPath InFilePath
+  | Trace Severity ByteString
   deriving (Show, Generic)
 
 instance Binary Func
@@ -131,6 +139,7 @@ showFunc (Exec path) = unwords ["exec:", show path]
 showFunc (ExecP (Just path) attempted) = unwords ["execP:", show path, "searched:", show attempted]
 showFunc (ExecP Nothing attempted) = unwords ["failedExecP:searched:", show attempted]
 showFunc (RealPath path) = unwords ["realPath:", show path]
+showFunc (Trace severity msg) = unwords ["trace:", show severity, BS8.unpack msg]
 
 {-# ANN module ("HLint: ignore Use ++"::String) #-}
 {-# ANN module ("HLint: ignore Use camelCase"::String) #-}
@@ -158,6 +167,9 @@ getOutEffect = toEnum . fromIntegral <$> getWord32le
 
 getOutPath :: Get OutFilePath
 getOutPath = OutFilePath <$> getPath <*> getOutEffect
+
+getSeverity :: Get Severity
+getSeverity = toEnum . fromIntegral <$> getWord32le
 
 fLAG_ALSO_READ :: Word32
 fLAG_ALSO_READ = 1
@@ -221,6 +233,7 @@ funcs =
   , (0x10012, ("exec"    , return <$> (Exec <$> getInPath)))
   , (0x10013, ("execp"   , execP <$> getNullTerminated mAX_EXEC_FILE <*> getPath <*> getNullTerminated mAX_PATH_ENV_VAR_LENGTH <*> getNullTerminated mAX_PATH_CONF_STR))
   , (0x10014, ("realPath", return <$> (RealPath <$> getInPath)))
+  , (0xF0000, ("trace"   , return <$> (Trace <$> getSeverity <*> getNullTerminated 1024)))
   ]
 
 {-# INLINE parseMsgLazy #-}
@@ -247,4 +260,4 @@ parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloPrefix #-}
 helloPrefix :: ByteString
-helloPrefix = "PROTOCOL7: HELLO, I AM: "
+helloPrefix = "PROTOCOL8: HELLO, I AM: "
