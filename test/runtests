@@ -4,7 +4,9 @@ set -e
 
 buildsome=$(realpath ../dist/build/buildsome/buildsome)
 
-# DLopen
+${buildsome} -f implicitphony
+git clean -fdx -- implicitphony
+
 ${buildsome} -f dlopen
 ${buildsome} -f dlopen
 git clean -fdx -- dlopen
