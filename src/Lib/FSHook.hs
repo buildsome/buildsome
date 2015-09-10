@@ -216,7 +216,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     Protocol.Creat outPath _    -> handleOutputs [(OutputBehavior.fileChanger, outPath)]
     Protocol.Rename a b         -> handleOutputs [ (OutputBehavior.existingFileChanger, a)
                                                  , (OutputBehavior.fileChanger, b) ]
-    Protocol.Unlink outPath     -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.Unlink outPath _   -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
     Protocol.Truncate outPath _ -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
     Protocol.Chmod outPath _    -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
     Protocol.Chown outPath _ _  -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]

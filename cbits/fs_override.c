@@ -244,16 +244,81 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
         });
 }
 
+/* Depends on the full direct path */
+DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
+{
+    initialize_process_state();
+    bool needs_await = false;
+    DEFINE_MSG(msg, readlink);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
+    return AWAIT_CALL_REAL(needs_await, msg, readlink, path, buf, bufsiz);
+}
+
+static bool dereference_dir(int dirfd, char *buf, size_t buf_len) ATTR_WARN_UNUSED_RESULT;
+static bool dereference_dir(int dirfd, char *buf, size_t buf_len)
+{
+    const pid_t pid = getpid();
+    char path[MAX_PATH];
+    snprintf(PS(path), "/proc/%d/fd/%d", pid, dirfd);
+    const ssize_t res = SILENT_CALL_REAL(readlink, path, buf, buf_len);
+    if (res < 1) return false;
+
+    buf[MIN(buf_len-1, (size_t)res)] = 0;
+    return true;
+}
+
+static bool get_fullpath_of_dirfd(char *fullpath, size_t fullpath_size, int dirfd, const char *path) ATTR_WARN_UNUSED_RESULT;
+static bool get_fullpath_of_dirfd(char *fullpath, size_t fullpath_size, int dirfd, const char *path)
+{
+    /* path is relative to some dir... */
+    char dirpath[MAX_PATH];
+    if (!dereference_dir(dirfd, PS(dirpath))) {
+        TRACE_ERROR("failed to dereference dir fd: %d", dirfd);
+        LOG("Cannot dereference directory fd");
+        return false;
+    }
+    const uint32_t size = snprintf(fullpath, fullpath_size, "%s/%s", dirpath, path);
+    if (size >= fullpath_size) {
+        TRACE_ERROR("Path too long!");
+        ASSERT(0);
+    }
+    return true;
+}
+
 /* Outputs the full path */
 DEFINE_WRAPPER(int, unlink, (const char *path))
 {
     initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, unlink);
+    msg.args.flags = 0;
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     return CALL_WITH_OUTPUTS(
         msg, needs_await,
         int, (unlink, path),
+        {
+            msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
+        });
+}
+
+/* Outputs the full path */
+DEFINE_WRAPPER(int, unlinkat, (int dirfd, const char *path, int flags))
+{
+    char fullpath[MAX_PATH];
+    const char *pathptr = path;
+    initialize_process_state();
+    if (AT_FDCWD != dirfd && path[0] != '/') {
+        if (!get_fullpath_of_dirfd(PS(fullpath), dirfd, path)) return -1;
+        TRACE_ERROR("unlinkat %d, %s, %X -> %s", dirfd, path, flags, fullpath);
+        pathptr = fullpath;
+    }
+    bool needs_await = false;
+    DEFINE_MSG(msg, unlink);
+    msg.args.flags = flags;
+    OUT_PATH_COPY(needs_await, msg.args.path, pathptr);
+    return CALL_WITH_OUTPUTS(
+        msg, needs_await,
+        int, (unlinkat, dirfd, path, flags),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
         });
@@ -291,16 +356,6 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED);
         });
-}
-
-/* Depends on the full direct path */
-DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
-{
-    initialize_process_state();
-    bool needs_await = false;
-    DEFINE_MSG(msg, readlink);
-    IN_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(needs_await, msg, readlink, path, buf, bufsiz);
 }
 
 /* Outputs the full path, must be deleted aftewards? */
@@ -569,39 +624,39 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 
 /****************** open ********************/
 
-#define OPEN_HANDLER(name, path, flags)                                 \
+#define OPEN_HANDLER(_name, _path, _flags)                              \
     do {                                                                \
         initialize_process_state();                                     \
         bool is_also_read = false;                                      \
-        bool is_create = flags & CREATION_FLAGS;                        \
-        bool is_truncate = flags & O_TRUNC;                             \
+        bool is_create = _flags & CREATION_FLAGS;                       \
+        bool is_truncate = _flags & O_TRUNC;                            \
         va_list args;                                                   \
-        va_start(args, flags);                                          \
+        va_start(args, _flags);                                         \
         mode_t mode = is_create ? va_arg(args, mode_t) : 0;             \
         va_end(args);                                                   \
-        switch(flags & (O_RDONLY | O_RDWR | O_WRONLY)) {                \
+        switch(_flags & (O_RDONLY | O_RDWR | O_WRONLY)) {               \
         case O_RDONLY: {                                                \
             /* TODO: Remove ASSERT and correctly handle O_CREAT, O_TRUNCATE */ \
             ASSERT(!(flags & CREATION_FLAGS));                          \
             bool needs_await = false;                                   \
             DEFINE_MSG(msg, openr);                                     \
-            IN_PATH_COPY(needs_await, msg.args.path, path);             \
+            IN_PATH_COPY(needs_await, msg.args.path, _path);            \
             return AWAIT_CALL_REAL(                                     \
-                needs_await, msg, name, path, flags);                   \
+                needs_await, msg, _name, _path, _flags);                \
         }                                                               \
         case O_RDWR:                                                    \
             is_also_read = true;                                        \
         case O_WRONLY: {                                                \
             bool needs_await = false;                                   \
             DEFINE_MSG(msg, openw);                                     \
-            OUT_PATH_COPY(needs_await, msg.args.path, path);            \
+            OUT_PATH_COPY(needs_await, msg.args.path, _path);           \
             if(is_also_read) msg.args.flags |= FLAG_ALSO_READ;          \
             if(is_create)    msg.args.flags |= FLAG_CREATE;             \
             if(is_truncate)  msg.args.flags |= FLAG_TRUNCATE;           \
             msg.args.mode = mode;                                       \
             return CALL_WITH_OUTPUTS(                                   \
                 msg, needs_await,                                       \
-                int, (name, path, flags, mode),                         \
+                int, (_name, _path, _flags, mode),                      \
                 {                                                       \
                     msg.args.path.out_effect =                          \
                         OUT_EFFECT_IF_NOT_ERROR(                        \
@@ -627,6 +682,19 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 DEFINE_WRAPPER(int, open, (const char *path, int flags, ...))
 {
     OPEN_HANDLER(open, path, flags);
+}
+
+DEFINE_WRAPPER(int, openat, (int dirfd, const char *path, int flags, ...))
+{
+    if (AT_FDCWD == dirfd || path[0] == '/') {
+        TRACE_DEBUG("openat %d %s %X degrading to normal open", dirfd, path, flags);
+        OPEN_HANDLER(open, path, flags);
+    } else {
+        char fullpath[MAX_PATH];
+        if (!get_fullpath_of_dirfd(PS(fullpath), dirfd, path)) return -1;
+        TRACE_DEBUG("openat %d %s %X converted to open of %s", dirfd, path, flags, fullpath);
+        OPEN_HANDLER(open, fullpath, flags);
+    }
 }
 
 /* Ditto open */

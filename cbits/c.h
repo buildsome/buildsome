@@ -16,6 +16,8 @@ FILE *log_file(void);
 
 #define PS(x)   ((char *)& (x)) , sizeof (x)
 
+#define MIN(x, y)  ((x) < (y) ? (x) : (y))
+
 #define ATTR_UNUSED  __attribute__((unused))
 #define ATTR_WARN_UNUSED_RESULT __attribute__((warn_unused_result))
 

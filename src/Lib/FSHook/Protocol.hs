@@ -87,7 +87,7 @@ data Func
   | LStat InFilePath
   | Creat OutFilePath Word32
   | Rename OutFilePath OutFilePath
-  | Unlink OutFilePath
+  | Unlink OutFilePath Word32
   | Access InFilePath Word32{- TODO: replace Int with AccessMode -}
   | OpenDir InFilePath
   | Truncate OutFilePath Word64{- length -}
@@ -123,7 +123,7 @@ showFunc (Stat path) = "stat:" ++ show path
 showFunc (LStat path) = "lstat:" ++ show path
 showFunc (Creat path perms) = concat ["create:", show path, " ", showOct perms ""]
 showFunc (Rename old new) = concat ["rename:", show old, "->", show new]
-showFunc (Unlink path) = concat ["unlink:", show path]
+showFunc (Unlink path mode) = concat ["unlink:", show path, " ", show mode]
 showFunc (Access path mode) = concat ["access:", show path, " ", show mode]
 showFunc (OpenDir path) = concat ["openDir:", show path]
 showFunc (Truncate path len) = concat ["truncate:", show path, " ", show len]
@@ -220,7 +220,7 @@ funcs =
   , (0x10005, ("opendir" , return <$> (OpenDir <$> getInPath)))
   , (0x10006, ("access"  , return <$> (Access <$> getInPath <*> getWord32le)))
   , (0x10007, ("truncate", return <$> (Truncate <$> getOutPath <*> getWord64le)))
-  , (0x10008, ("unlink"  , return <$> (Unlink <$> getOutPath)))
+  , (0x10008, ("unlink"  , return <$> (Unlink <$> getOutPath <*> getWord32le)))
   , (0x10009, ("rename"  , return <$> (Rename <$> getOutPath <*> getOutPath)))
   , (0x1000A, ("chmod"   , return <$> (Chmod <$> getOutPath <*> getWord32le)))
   , (0x1000B, ("readlink", return <$> (ReadLink <$> getInPath)))
@@ -260,4 +260,4 @@ parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloPrefix #-}
 helloPrefix :: ByteString
-helloPrefix = "PROTOCOL8: HELLO, I AM: "
+helloPrefix = "PROTOCOL9: HELLO, I AM: "

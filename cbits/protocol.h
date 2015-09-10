@@ -76,7 +76,7 @@ struct func_lstat     {in_path path;};
 struct func_opendir   {in_path path;};
 struct func_access    {in_path path; uint32_t mode;};
 struct func_truncate  {out_path path; uint64_t length;};
-struct func_unlink    {out_path path;};
+struct func_unlink    {out_path path; uint32_t flags;};
 struct func_rename    {out_path oldpath; out_path newpath;};
 struct func_chmod     {out_path path; uint32_t mode;};
 struct func_readlink  {in_path path; };

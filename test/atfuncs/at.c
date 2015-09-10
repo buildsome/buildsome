@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <unistd.h>
+#include <string.h>
 
 static void verify_fd(int xfd)
 {
@@ -23,10 +25,16 @@ int main(void) {
     verify_fd(openat(parfd, "atfuncs/x", O_RDONLY));
 
     create_file("scratch");
-    unlinkat(AT_FDCWD, "scratch");
+    if (-1 == unlinkat(AT_FDCWD, "scratch", 0)) {
+        perror("unlinkat (AT_FDCWD, \"scratch\")");
+        return -1;
+    }
 
     create_file("scratch2");
-    unlinkat(parfd, "atfuncs/scratch2");
+    if (-1 == unlinkat(parfd, "atfuncs/scratch2", 0)) {
+        perror("unlinkat (AT_FDCWD, \"scratch\")");
+        return -1;
+    }
 
     return 0;
 }
