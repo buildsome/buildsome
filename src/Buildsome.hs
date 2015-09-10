@@ -4,7 +4,7 @@ module Buildsome
   ( Buildsome(bsPhoniesSet), with, withDb
   , clean
   , BuiltTargets(..)
-  , want
+  , PutInputsInStats(..), want
   ) where
 
 import           Buildsome.BuildId (BuildId)
@@ -176,6 +176,9 @@ updateGitIgnore buildsome makefilePath = do
               BS8.concat
              ["# If you need to ignore files not managed by buildsome, add to ", gitignoreBaseName]]
 
+data PutInputsInStats = PutInputsInStats | Don'tPutInputsInStats
+    deriving (Eq, Ord, Show)
+
 data BuildTargetEnv = BuildTargetEnv
   { bteBuildsome :: Buildsome
   , btePrinter :: Printer
@@ -183,6 +186,8 @@ data BuildTargetEnv = BuildTargetEnv
   , bteParents :: Parents
   , bteExplicitlyDemanded :: Bool
   , bteSpeculative :: Bool
+  , -- used by compat makefile, undesirable memory consumption otherwise
+    btePutInputsInStats :: PutInputsInStats
   }
 
 data BuiltTargets = BuiltTargets
@@ -222,8 +227,8 @@ assertExplicitInputsExist BuildTargetEnv{..} paths = do
              | otherwise -> return ExplicitPathsNotBuilt
 
 -- | Top-level root target
-want :: Printer -> Buildsome -> Reason -> [FilePath] -> IO BuiltTargets
-want printer buildsome reason paths = do
+want :: Printer -> Buildsome -> PutInputsInStats -> Reason -> [FilePath] -> IO BuiltTargets
+want printer buildsome putInputsInStats reason paths = do
   printStrLn printer $
     "Building: " <> ColorText.intercalate ", " (map (cTarget . show) paths)
   let bte =
@@ -234,6 +239,7 @@ want printer buildsome reason paths = do
         , bteParents = []
         , bteExplicitlyDemanded = True
         , bteSpeculative = False
+        , btePutInputsInStats = putInputsInStats
         }
   entity <- Parallelism.rootEntity $ bsParPool buildsome
   (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
@@ -1053,14 +1059,22 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
           Just res -> return (Stats.FromCache, res)
           Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..}
         let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
+        let existingInputs = concat
+              [ targetAllInputs tdTarget
+              , [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
+              ]
         return $ stats <>
           Stats
           { Stats.ofTarget =
-               M.singleton tdRep Stats.TargetStats
-               { tsWhen = whenBuilt
-               , tsTime = elSelfTime
-               , tsDirectDeps = deps
-               }
+            M.singleton tdRep Stats.TargetStats
+            { tsWhen = whenBuilt
+            , tsTime = elSelfTime
+            , tsDirectDeps = deps
+            , tsExistingInputs =
+              case btePutInputsInStats of
+              PutInputsInStats -> Just existingInputs
+              Don'tPutInputsInStats -> Nothing
+            }
           , Stats.stdErr =
             if mempty /= stdErr elStdoutputs
             then S.singleton tdRep
