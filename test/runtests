@@ -44,6 +44,9 @@ ${buildsome} -f atfuncs
 ${buildsome} -f atfuncs
 git clean -fdx -- atfuncs
 
+phonycmds/test ${buildsome}
+git clean -fdx -- phonycmds
+
 speculative_error/test ${buildsome}
 git clean -fdx -- speculative_error
 

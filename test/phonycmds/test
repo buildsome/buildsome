@@ -1,0 +1,8 @@
+#!/bin/bash
+buildsome=${1:-buildsome}
+set -e
+
+cd $(dirname $0)
+
+${buildsome} 2>/dev/null && (echo Should not allow phony cmds ; exit 1)
+exit 0
