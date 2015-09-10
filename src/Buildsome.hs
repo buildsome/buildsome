@@ -520,7 +520,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog = do
       EitherT $
       syncCatchAndLogSpeculativeErrors btePrinter targetDesc
       (Left . SpeculativeBuildFailure)
-      (Right <$> executionLogBuildInputs bte entity targetDesc executionLog)
+      (Right <$> executionLogBuildInputs bte entity targetDesc (M.toList $ Db.elInputsDescs executionLog))
     bimapEitherT MismatchedFiles id $
       executionLogVerifyFilesState bte targetDesc executionLog
     return (executionLog, builtTargets)
@@ -604,12 +604,12 @@ executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionL
 
 executionLogBuildInputs ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->
-  Db.ExecutionLog -> IO BuiltTargets
-executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} Db.ExecutionLog {..} = do
+  [(FilePath, Db.FileDescInput)] -> IO BuiltTargets
+executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} inputsDescs = do
   -- TODO: This is good for parallelism, but bad if the set of
   -- inputs changed, as it may build stuff that's no longer
   -- required:
-  speculativeSlaves <- concat <$> mapM mkInputSlaves (M.toList elInputsDescs)
+  speculativeSlaves <- concat <$> mapM mkInputSlaves inputsDescs
   waitForSlavesWithParReleased bte entity speculativeSlaves
   where
     mkInputSlavesFor desc inputPath =

@@ -9,7 +9,7 @@ module Buildsome.Db
   , InputDesc(..), FileDesc(..), bimapFileDesc
   , OutputDesc(..)
   , ExecutionLog(..), executionLogTree
-  -- , InputLog(..), InputLogStat(..)
+  , FileDescInput
   , ExecutionLogTree(..), ExecutionLogTreeInput(..)
   , FileContentDescCache(..), fileContentDescCache
   , Reason(..)
@@ -101,10 +101,13 @@ data OutputDesc = OutputDesc
   } deriving (Generic, Show, Eq)
 instance Binary OutputDesc
 
+-- TODO: naming...
+type FileDescInput = FileDesc Reason (POSIXTime, InputDesc)
+
 data ExecutionLog = ExecutionLog
   { elBuildId :: BuildId
   , elCommand :: ByteString -- Mainly for debugging
-  , elInputsDescs :: Map FilePath (FileDesc Reason (POSIXTime, InputDesc))
+  , elInputsDescs :: Map FilePath FileDescInput
   , elOutputsDescs :: Map FilePath (FileDesc () (POSIXTime, OutputDesc))
   , elStdoutputs :: StdOutputs ByteString
   , elSelfTime :: DiffTime
@@ -126,7 +129,7 @@ instance Binary ExecutionLog
 -- instance Binary InputLog
 
 data ExecutionLogTreeInput = ExecutionLogTreeInput
-  { eltiBranches :: NonEmptyMap (FileDesc () InputDesc) ExecutionLogTree
+  { eltiBranches :: NonEmptyMap FileDescInput ExecutionLogTree
   } deriving (Generic, Show)
 instance Binary ExecutionLogTreeInput
 
