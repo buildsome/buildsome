@@ -40,6 +40,10 @@ ${buildsome} -f overpar
 ${buildsome} -f overpar
 git clean -fdx -- overpar
 
+${buildsome} -f atfuncs
+${buildsome} -f atfuncs
+git clean -fdx -- atfuncs
+
 speculative_error/test ${buildsome}
 git clean -fdx -- speculative_error
 
