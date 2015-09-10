@@ -14,21 +14,23 @@ import           Buildsome.Db            (ExecutionLog (..),
                                           ExecutionLogTreeInput (..),
                                           FileDesc (..), InputDesc (..),
                                           FileDescInput)
-import           Control.Monad.IO.Class  (MonadIO, liftIO)
+import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Control.Monad.Trans.Either (EitherT (..), runEitherT)
-import           Data.Foldable           (asum)
-import           Data.List               (intercalate)
-import qualified Data.Map                as Map
-import           Lib.Cmp                 (Cmp(..), ComparisonResult(..), Reasons)
-import qualified Lib.Directory           as Dir
+import           Data.Foldable (asum)
+import           Data.List (intercalate)
+import qualified Data.Map as Map
+import           Lib.Cmp (Cmp(..), ComparisonResult(..), Reasons)
+import qualified Lib.Directory as Dir
 import           Lib.FileDesc            (fileContentDescOfStat,
                                           fileModeDescOfStat,
                                           fileStatDescOfStat,
                                           fileStatDescOfStat)
 import           Lib.FilePath (FilePath)
+import           Lib.NonEmptyList (NonEmptyList(..))
+import           Lib.NonEmptyMap (NonEmptyMap)
 import qualified Lib.NonEmptyMap as NonEmptyMap
-import qualified System.Posix.ByteString as Posix
 import           Prelude.Compat hiding (FilePath, lookup)
+import qualified System.Posix.ByteString as Posix
 
 -- fileDescToInputLogStat :: FileStatDesc -> InputLogStat
 -- fileDescToInputLogStat (FileStatDirectory stat) =
@@ -96,20 +98,31 @@ firstRightAction
   => t (m (Either e a)) -> m (Either e a)
 firstRightAction = runEitherT . asum . fmap EitherT
 
-mapRight :: (r1 -> r2) -> Either a r1 -> Either a r2
-mapRight _ (Left e) = Left e
-mapRight f (Right r) = Right $ f r
+bimapEither :: (e -> e') -> (a -> a') -> Either e a -> Either e' a'
+bimapEither f _ (Left x)  = Left $ f x
+bimapEither _ g (Right x) = Right $ g x
+
+checkBranches ::
+    MonadIO f =>
+    FilePath -> Maybe Posix.FileStatus -> NonEmptyMap FileDescInput b ->
+    NonEmptyList (f (Either [(b, MismatchReason)] (FileDescInput, b)))
+checkBranches filePath mStat branches =
+  fmap (\x -> fmap (bimapEither (map (snd x,)) (const x)) <$> matchesCurrentFS filePath mStat $ fst x)
+  $ NonEmptyMap.toNonEmptyList branches
 
 lookupInput :: FilePath -> ExecutionLogTreeInput -> IO (Either [(FilePath, MismatchReason)] ExecutionLog)
 lookupInput filePath ExecutionLogTreeInput{..} = do
   mStat <- liftIO $ Dir.getMFileStatus filePath
-  let matches =
-        map (\x -> fmap (mapRight (const x)) <$> matchesCurrentFS filePath mStat $ fst x)
-        $ NonEmptyMap.toList eltiBranches
-  match <- firstRightAction matches
+  match <- firstRightAction $ checkBranches filePath mStat eltiBranches
   case match of
     -- include the input path in the error, for caller's convenience
-    Left reasons -> return . Left $ map (filePath,) reasons
+    Left results -> do
+      branchResults <- mapM (lookup . fst) results
+      return
+        $ Left
+        . ((map ((filePath, ) . snd) results) ++)
+        $ mconcat $ map (either id (const [])) branchResults
+
     Right (_, elt) -> lookup elt
 
 lookup :: ExecutionLogTree -> IO (Either [(FilePath, MismatchReason)] ExecutionLog)

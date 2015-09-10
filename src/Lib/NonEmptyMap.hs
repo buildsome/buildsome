@@ -10,6 +10,7 @@ module Lib.NonEmptyMap
   , lookup
   , toMap
   , toList
+  , toNonEmptyList
   )
   where
 
@@ -17,6 +18,8 @@ import           Data.Binary    (Binary)
 import           Data.Map       (Map)
 import qualified Data.Map       as Map
 import           GHC.Generics   (Generic)
+
+import           Lib.NonEmptyList (NonEmptyList(..))
 import           Prelude.Compat hiding (lookup)
 
 newtype NonEmptyMap k v = NonEmptyMap (Map k v)
@@ -37,3 +40,7 @@ toMap (NonEmptyMap m) = m
 
 toList :: NonEmptyMap k v -> [(k, v)]
 toList = Map.toList . toMap
+
+toNonEmptyList :: NonEmptyMap k v -> NonEmptyList (k, v)
+toNonEmptyList nem = NonEmptyList (head l) (tail l)
+  where l = toList nem
