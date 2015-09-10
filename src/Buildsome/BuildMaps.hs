@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Buildsome.BuildMaps
   ( TargetRep(..), computeTargetRep
+  , TargetDesc(..), descOfTarget
   , DirectoryBuildMap(..)
   , BuildMaps(..)
   , make
@@ -34,8 +35,16 @@ newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimu
 computeTargetRep :: Target -> TargetRep
 computeTargetRep = TargetRep . minimum . targetOutputs
 
+data TargetDesc = TargetDesc
+  { tdRep :: TargetRep
+  , tdTarget :: Target
+  } deriving (Show)
+
+descOfTarget :: Target -> TargetDesc
+descOfTarget target = TargetDesc (computeTargetRep target) target
+
 data DirectoryBuildMap = DirectoryBuildMap
-  { dbmTargets :: [(TargetRep, Target)]
+  { dbmTargets :: [TargetDesc]
   , dbmPatterns :: [Pattern]
   } deriving (Show)
 instance Monoid DirectoryBuildMap where
@@ -44,27 +53,26 @@ instance Monoid DirectoryBuildMap where
     DirectoryBuildMap (mappend x0 y0) (mappend x1 y1)
 
 data BuildMaps = BuildMaps
-  { _bmBuildMap :: Map FilePath (TargetRep, Target) -- output paths -> min(representative) path and original spec
+  { _bmBuildMap :: Map FilePath TargetDesc -- output paths -> min(representative) path and original spec
   , _bmChildrenMap :: Map FilePath DirectoryBuildMap
   }
 
 data TargetKind = TargetPattern | TargetSimple
   deriving (Eq)
 
-find :: BuildMaps -> FilePath -> Maybe (TargetRep, TargetKind, Target)
+find :: BuildMaps -> FilePath -> Maybe (TargetKind, TargetDesc)
 find (BuildMaps buildMap childrenMap) path =
   -- Allow specific/simple matches to override pattern matches
-  (set TargetSimple <$> simpleMatch) `mplus`
-  (set TargetPattern <$> patternMatch)
+  ((,) TargetSimple <$> simpleMatch) `mplus`
+  ((,) TargetPattern <$> patternMatch)
   where
-    set kind (rep, tgt) = (rep, kind, tgt)
     simpleMatch = path `M.lookup` buildMap
     patterns = dbmPatterns $ M.findWithDefault mempty (takeDirectory path) childrenMap
     instantiate pattern = (,) pattern <$> Makefile.instantiatePatternByOutput path pattern
     patternMatch =
       case mapMaybe instantiate patterns of
       [] -> Nothing
-      [(_, target)] -> Just (computeTargetRep target, target)
+      [(_, target)] -> Just $ descOfTarget target
       targets ->
         error $ BS8.unpack $ mconcat
         [ "Multiple matching patterns for: ", BS8.pack (show path), "\n"
@@ -86,15 +94,14 @@ make :: Makefile -> BuildMaps
 make makefile = BuildMaps buildMap childrenMap
   where
     outputs =
-      [ (outputPath, target)
+      [ (outputPath, descOfTarget target)
       | target <- makefileTargets makefile
       , outputPath <- targetOutputs target
       ]
     childrenMap =
       M.fromListWith mappend $
-
-      [ (takeDirectory outputPath, mempty { dbmTargets = [pairWithTargetRep target] })
-      | (outputPath, target) <- outputs
+      [ (takeDirectory outputPath, mempty { dbmTargets = [targetDesc] })
+      | (outputPath, targetDesc) <- outputs
       ] ++
 
       [ (outPatDir, mempty { dbmPatterns = [targetPattern] })
@@ -102,12 +109,10 @@ make makefile = BuildMaps buildMap childrenMap
       , outPatDir <- nub (map Makefile.filePatternDirectory (targetOutputs targetPattern))
       ]
 
-    pairWithTargetRep target = (computeTargetRep target, target)
-
-    overlappingOutputs path (_, a) (_, b) =
+    overlappingOutputs path (TargetDesc _ a) (TargetDesc _ b) =
       error $ "Overlapping output paths for: " ++ show path ++ " at:\n" ++
       show (targetPos a) ++ "vs.\n" ++ show (targetPos b)
     buildMap =
       M.fromListWithKey overlappingOutputs
-      [ (outputPath, pairWithTargetRep target)
-      | (outputPath, target) <- outputs ]
+      [ (outputPath, targetDesc)
+      | (outputPath, targetDesc) <- outputs ]

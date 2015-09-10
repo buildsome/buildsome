@@ -9,7 +9,7 @@ module Buildsome
 
 import           Buildsome.BuildId (BuildId)
 import qualified Buildsome.BuildId as BuildId
-import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep)
+import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep, TargetDesc(..))
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
 import qualified Buildsome.Color as Color
@@ -284,12 +284,12 @@ slaveForDirectPath bte@BuildTargetEnv{..} path
   | otherwise =
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing -> return Nothing
-  Just (targetRep, targetKind, target) ->
+  Just (targetKind, targetDesc) ->
     Just <$>
     getSlaveForTarget
     bte { bteExplicitlyDemanded =
           bteExplicitlyDemanded || targetKind == BuildMaps.TargetSimple }
-    (TargetDesc targetRep target)
+    targetDesc
 
 slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [(Parallelism.Entity, Slave Stats)]
 slavesForChildrenOf bte@BuildTargetEnv{..} path
@@ -301,8 +301,7 @@ slavesForChildrenOf bte@BuildTargetEnv{..} path
     traverse (getSlaveForTarget bte { bteExplicitlyDemanded = True }) $
     filter (not . targetIsPhony bteBuildsome . tdTarget) childTargetDescs
   where
-    childTargetDescs = map (uncurry TargetDesc) childTargets
-    DirectoryBuildMap childTargets childPatterns =
+    DirectoryBuildMap childTargetDescs childPatterns =
       BuildMaps.findDirectory (bsBuildMaps bteBuildsome) path
 
 data SlaveRequest
@@ -462,11 +461,6 @@ verifyFileDesc str filePath fileDesc existingVerify = do
     (Just stat, Db.FileDescExisting desc) -> existingVerify stat desc
     (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
     (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
-
-data TargetDesc = TargetDesc
-  { tdRep :: TargetRep
-  , tdTarget :: Target
-  }
 
 data WrapException = WrapException (ColorText -> ByteString) Parents E.SomeException
   deriving (Typeable)
@@ -1105,10 +1099,10 @@ getFileBuildRule registeredOutputs buildMaps = go
     go path =
       case BuildMaps.find buildMaps path of
       Nothing -> return NoBuildRule
-      Just (_rep, BuildMaps.TargetSimple, _) -> return ValidBuildRule
-      Just (_rep, BuildMaps.TargetPattern, tgt) ->
+      Just (BuildMaps.TargetSimple, _) -> return ValidBuildRule
+      Just (BuildMaps.TargetPattern, targetDesc) ->
         do
-          inputsCanExist <- and <$> mapM fileCanExist (targetAllInputs tgt)
+          inputsCanExist <- and <$> mapM fileCanExist (targetAllInputs (tdTarget targetDesc))
           return $
             if inputsCanExist
             then ValidBuildRule
