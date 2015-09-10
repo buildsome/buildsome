@@ -400,6 +400,7 @@ handleLegalUnspecifiedOutputs BuildTargetEnv{..} target unspecifiedOutputs = do
     mconcat ["Leaked unspecified outputs: ", show legalUnspecified]
   registerLeakedOutputs bteBuildsome $ S.fromList legalUnspecified
 
+-- TODO: Verify phony outputs are not written to
 verifyTargetOutputs ::
   BuildTargetEnv -> Set FilePath -> Target -> IO (Set FilePath)
 verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
