@@ -281,6 +281,7 @@ slaveForDirectPath bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path =
     -- Only project-relative paths may have output rules:
     return Nothing
+  | not bteExplicitlyDemanded && isPhony bteBuildsome path = return Nothing
   | otherwise =
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing -> return Nothing
@@ -299,6 +300,9 @@ slavesForChildrenOf bte@BuildTargetEnv{..} path
   | otherwise =
     -- Non-pattern targets here, so they're explicitly demanded
     traverse (getSlaveForTarget bte { bteExplicitlyDemanded = True }) $
+    -- TODO: targetIsPhony is the wrong question, the right question
+    -- is whether the path IN THE DIRECTORY is phony OR we can ban
+    -- "partially phony targets"
     filter (not . targetIsPhony bteBuildsome . tdTarget) childTargetDescs
   where
     DirectoryBuildMap childTargetDescs childPatterns =
@@ -1090,41 +1094,45 @@ registerLeakedOutputs = registerDbList Db.leakedOutputsRef
 
 data FileBuildRule
   = NoBuildRule
+  | PhonyBuildRule
   | ValidBuildRule
   | InvalidPatternBuildRule {- transitively missing inputs -}
   deriving (Eq)
-getFileBuildRule :: Set FilePath -> BuildMaps -> FilePath -> IO FileBuildRule
-getFileBuildRule registeredOutputs buildMaps = go
+getFileBuildRule :: Set FilePath -> Set FilePath -> BuildMaps -> FilePath -> IO FileBuildRule
+getFileBuildRule registeredOutputs phonies buildMaps = go
   where
-    go path =
-      case BuildMaps.find buildMaps path of
-      Nothing -> return NoBuildRule
-      Just (BuildMaps.TargetSimple, _) -> return ValidBuildRule
-      Just (BuildMaps.TargetPattern, targetDesc) ->
-        do
-          inputsCanExist <- and <$> mapM fileCanExist (targetAllInputs (tdTarget targetDesc))
-          return $
-            if inputsCanExist
-            then ValidBuildRule
-            else InvalidPatternBuildRule
+    go path
+      | path `S.member` phonies = return PhonyBuildRule
+      | otherwise =
+        case BuildMaps.find buildMaps path of
+        Nothing -> return NoBuildRule
+        Just (BuildMaps.TargetSimple, _) -> return ValidBuildRule
+        Just (BuildMaps.TargetPattern, targetDesc) ->
+          do
+            inputsCanExist <- and <$> mapM fileCanExist (targetAllInputs (tdTarget targetDesc))
+            return $
+              if inputsCanExist
+              then ValidBuildRule
+              else InvalidPatternBuildRule
     fileCanExist path = do
       fileBuildRule <- go path
       case fileBuildRule of
         InvalidPatternBuildRule -> return False
+        PhonyBuildRule -> return False
         ValidBuildRule -> return True
         NoBuildRule
           | path `S.member` registeredOutputs -> return False -- a has-been
           | otherwise -> FilePath.exists path
 
-deleteRemovedOutputs :: Printer -> Db -> BuildMaps -> IO ()
-deleteRemovedOutputs printer db buildMaps = do
+deleteRemovedOutputs :: Printer -> Db -> Set FilePath -> BuildMaps -> IO ()
+deleteRemovedOutputs printer db phonies buildMaps = do
   -- No need for IORef atomicity here, this happens strictly before
   -- anything else, without parallelism
   oldRegisteredOutputs <- readIORef (Db.registeredOutputsRef db)
   (newRegisteredOutputs, toDelete) <-
     LibSet.partitionA
     (fmap (== ValidBuildRule) .
-     getFileBuildRule oldRegisteredOutputs buildMaps)
+     getFileBuildRule oldRegisteredOutputs phonies buildMaps)
     oldRegisteredOutputs
   writeIORef (Db.registeredOutputsRef db) newRegisteredOutputs
   forM_ (S.toList toDelete) $ \path -> do
@@ -1166,7 +1174,8 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     buildId <- BuildId.new
     rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
     let buildMaps = BuildMaps.make makefile
-    deleteRemovedOutputs printer db buildMaps
+    let phoniesSet = S.fromList . map snd $ makefilePhonies makefile
+    deleteRemovedOutputs printer db phoniesSet buildMaps
 
     runOnce <- once
     errorRef <- newIORef Nothing
@@ -1180,7 +1189,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         Buildsome
         { bsOpts = opt
         , bsMakefile = makefile
-        , bsPhoniesSet = S.fromList . map snd $ makefilePhonies makefile
+        , bsPhoniesSet = phoniesSet
         , bsBuildId = buildId
         , bsRootPath = rootPath
         , bsBuildMaps = buildMaps
