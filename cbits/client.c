@@ -114,7 +114,7 @@ bool client__send_hooked(bool is_delayed, const char *buf, size_t size)
     int fd = connection();
     if(-1 == fd) return false;
 
-    if(!send_size(fd, 1+size)) return false;
+    if(!send_size(fd, sizeof(is_delayed)+size)) return false;
     if(!send_all(fd, PS(is_delayed))) return false;
     if(!send_all(fd, buf, size)) return false;
 
