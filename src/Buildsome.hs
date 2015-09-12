@@ -414,6 +414,8 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
   void $ verifyTargetSpec bte inputs outputs target
 
 
+-- REVIEW(Eyal): => and -> on the end of prev line like everywhere else?
+-- REVIEW(Eyal): (Or change everything to be consistent with this new style :-) )
 verifyFileDesc :: (IsString str, MonadIO m)
   => BuildTargetEnv
   -> FilePath
@@ -653,8 +655,21 @@ buildManyWithParReleased mkReason bte@BuildTargetEnv{..} entity slaveRequests =
       slavesFor bte { bteReason = mkReason (inputFilePath req) } req
     Color.Scheme{..} = Color.scheme
 
-liftMaybe :: (a -> IO (Either [e] b)) -> Maybe a -> IO (Either [e] b)
-liftMaybe _ Nothing = return $ Left []
+-- REVIEW(Eyal): This is much simpler/nicer:
+--
+-- maybeToEither :: e -> Maybe a -> Either e a
+-- maybeToEither e = maybe (Left e) Right
+--
+-- REVIEW(Eyal): And then instead of the liftMaybe function, where it is used as:
+--
+-- liftMaybe ExecutionLogTree.lookup mExecutionLogTree
+--
+-- You can use:
+-- maybeToEither [] mExecutionLogTree >>= ExecutionLogTree.lookup
+--
+-- Which is made from simpler primitives
+liftMaybe :: (Applicative m, Monoid e) => (a -> m (Either e b)) -> Maybe a -> m (Either e b)
+liftMaybe _ Nothing = pure $ Left mempty
 liftMaybe f (Just a) = f a
 
 -- TODO: Remember the order of input files' access so can iterate here
@@ -1101,6 +1116,7 @@ buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
 
     mExecutionLogTree <- readIRef $ Db.executionLogTree tdTarget $ bsDb bteBuildsome
     let executionLogTree =
+          -- REVIEW(Eyal): Monoid instead of this?
           maybe
           (ExecutionLogTree.fromExecutionLog executionLog)
           (ExecutionLogTree.append executionLog)

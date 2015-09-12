@@ -18,7 +18,7 @@ import           Data.Binary    (Binary)
 import           Data.Map       (Map)
 import qualified Data.Map       as Map
 import           GHC.Generics   (Generic)
-
+-- REVIEW(Eyal): Why the space?
 import           Lib.NonEmptyList (NonEmptyList(..))
 import           Prelude.Compat hiding (lookup)
 

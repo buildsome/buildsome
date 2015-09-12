@@ -6,6 +6,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Lib.NonEmptyList
        ( NonEmptyList(..)
+         -- REVIEW(Eyal): Why not export neHead/neTail as head tail
+         -- directly?
        , head
        , tail
        , singleton
@@ -47,5 +49,6 @@ lookup x (NonEmptyList (y,b) ys) = go x ((y, b):ys)
       | x' == y'  = Just b'
       | otherwise = go x' ys'
 
+-- REVIEW(Eyal): Why export this, you already export the constructor
 fromHeadAndTail :: a -> [a] -> NonEmptyList a
 fromHeadAndTail = NonEmptyList

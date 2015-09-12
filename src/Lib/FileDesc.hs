@@ -107,6 +107,7 @@ data FileStatDesc
   = FileStatDirectory BasicStatEssence
   | FileStatOther FullStatEssence
   deriving (Generic, Eq, Show, Ord)
+  -- Weird deriving order!
 instance Binary FileStatDesc
 instance Cmp FileStatDesc where
   FileStatDirectory a `cmp` FileStatDirectory b = cmp a b
