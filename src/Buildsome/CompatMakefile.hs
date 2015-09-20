@@ -115,8 +115,11 @@ onOneTarget phoniesSet cwd stats target =
     targetRep = BuildMaps.computeTargetRep target
     directDeps = Stats.tsDirectDeps targetStats
     targetStats =
-      fromMaybe (error "BUG: Stats does not contain targets that appear as root/dependencies") $
-      Map.lookup targetRep (Stats.ofTarget stats)
+      fromMaybe
+      (error $ mconcat
+       [ "BUG: Stats does not contain targets that appear as root/dependencies: "
+       , show $ BuildMaps.targetRepPath targetRep ])
+      $ Map.lookup targetRep (Stats.ofTarget stats)
     depBuildCommands = onMultipleTargets phoniesSet cwd stats directDeps
 
 onMultipleTargets :: Phonies -> FilePath -> Stats -> [Target] -> M [ByteString]
