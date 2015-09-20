@@ -1,6 +1,0 @@
-* "Concurrent" identifiers for each concurrent command (even paused ones)
-  * Indentation is based on this
-
-* "Parallel" identifiers for actual allocated parallelism,
-  illustrating actual use of parallelism
-  * Record this to figure out actual achieved parallelism
