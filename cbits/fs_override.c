@@ -25,7 +25,7 @@
             client__send_hooked(false, PS(msg));        \
     } while(0)
 
-#define TRACE_DEBUG(...)   TRACE(debug, __VA_ARGS__)
+#define TRACE_DEBUG(...)   // TRACE(debug, __VA_ARGS__)
 #define TRACE_WARNING(...) TRACE(warning, __VA_ARGS__)
 #define TRACE_ERROR(...)   TRACE(error, __VA_ARGS__)
 
@@ -273,7 +273,7 @@ static bool get_fullpath_of_dirfd(char *fullpath, size_t fullpath_size, int dirf
     /* path is relative to some dir... */
     char dirpath[MAX_PATH];
     if (!dereference_dir(dirfd, PS(dirpath))) {
-        TRACE_ERROR("failed to dereference dir fd: %d", dirfd);
+        TRACE_ERROR("Failed to dereference dir fd: %d", dirfd);
         LOG("Cannot dereference directory fd");
         return false;
     }
@@ -309,7 +309,7 @@ DEFINE_WRAPPER(int, unlinkat, (int dirfd, const char *path, int flags))
     initialize_process_state();
     if (AT_FDCWD != dirfd && path[0] != '/') {
         if (!get_fullpath_of_dirfd(PS(fullpath), dirfd, path)) return -1;
-        TRACE_ERROR("unlinkat %d, %s, %X -> %s", dirfd, path, flags, fullpath);
+        TRACE_DEBUG("unlinkat %d, %s, %X -> %s", dirfd, path, flags, fullpath);
         pathptr = fullpath;
     }
     bool needs_await = false;
