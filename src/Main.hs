@@ -18,6 +18,7 @@ import qualified Control.Exception as E
 import           Control.Monad (forM_)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Functor.Identity (Identity(..))
 import           Data.List (foldl')
 import qualified Data.Map as M
 import           Data.Maybe (mapMaybe)
@@ -143,7 +144,7 @@ parseMakefile printer db origMakefilePath finalMakefilePath vars cwd = do
   let absFinalMakefilePath = cwd </> finalMakefilePath
   (parseTime, (isHit, makefile)) <- timeIt $ do
     (isHit, rawMakefile) <- MemoParseMakefile.memoParse db absFinalMakefilePath vars
-    makefile <- Makefile.onMakefilePaths (pure . FilePath.canonicalizePathAsRelativeCwd cwd) rawMakefile
+    let makefile = runIdentity $ Makefile.onMakefilePaths (Identity . FilePath.canonicalizePathAsRelativeCwd cwd) rawMakefile
     Makefile.verifyPhonies makefile
     return (isHit, makefile)
   let msg =
