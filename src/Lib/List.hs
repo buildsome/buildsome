@@ -15,12 +15,14 @@ filterA p = go
         combine False rest = rest
 
 partitionA :: Applicative f => (a -> f Bool) -> [a] -> f ([a], [a])
-partitionA p =
-  fmap mconcat . traverse onEach
+partitionA _ [] = pure ([], [])
+partitionA p (x:xs) =
+  combine
+  <$> p x
+  <*> partitionA p xs
   where
-    onEach x = partitionOne x <$> p x
-    partitionOne x True  = ([x], [])
-    partitionOne x False = ([], [x])
+    combine True (as, bs) = (x:as, bs)
+    combine False (as, bs) = (as, x:bs)
 
 unprefixed :: Eq a => [a] -> [a] -> Maybe [a]
 unprefixed prefix full
