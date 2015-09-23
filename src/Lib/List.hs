@@ -1,7 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Lib.List (filterA, unprefixed, unsuffixed, partitionA) where
 
-import Control.Applicative (Alternative(..))
 import Data.List (isPrefixOf, isSuffixOf)
 
 import Prelude.Compat
@@ -20,8 +19,8 @@ partitionA p =
   fmap mconcat . traverse onEach
   where
     onEach x = partitionOne x <$> p x
-    partitionOne x True  = (pure x, empty)
-    partitionOne x False = (empty, pure x)
+    partitionOne x True  = ([x], [])
+    partitionOne x False = ([], [x])
 
 unprefixed :: Eq a => [a] -> [a] -> Maybe [a]
 unprefixed prefix full
