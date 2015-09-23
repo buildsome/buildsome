@@ -1093,6 +1093,18 @@ registerOutputs = registerDbList Db.registeredOutputsRef
 registerLeakedOutputs :: Buildsome -> Set FilePath -> IO ()
 registerLeakedOutputs = registerDbList Db.leakedOutputsRef
 
+{-# INLINE andM #-}
+andM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+andM check = go
+    where
+        go [] = return True
+        go (x:xs) =
+            do
+                res <- check x
+                if res
+                    then go xs
+                    else return False
+
 data FileBuildRule
   = NoBuildRule
   | PhonyBuildRule
@@ -1110,7 +1122,7 @@ getFileBuildRule registeredOutputs phonies buildMaps = go
         Just (BuildMaps.TargetSimple, _) -> return ValidBuildRule
         Just (BuildMaps.TargetPattern, targetDesc) ->
           do
-            inputsCanExist <- and <$> mapM fileCanExist (targetAllInputs (tdTarget targetDesc))
+            inputsCanExist <- andM fileCanExist (targetAllInputs (tdTarget targetDesc))
             return $
               if inputsCanExist
               then ValidBuildRule
