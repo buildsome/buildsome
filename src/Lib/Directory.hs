@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Directory
   ( getMFileStatus
@@ -6,12 +8,14 @@ module Lib.Directory
   , removeFileOrDirectoryOrNothing
   , createDirectories
   , getDirectoryContents
+  , getDirectoryContentsHash
   , makeAbsolutePath
   ) where
 
 
 import Prelude.Compat hiding (FilePath)
 
+import Data.Monoid ((<>))
 import Control.Monad
 import Lib.Exception (bracket)
 import Lib.FilePath (FilePath, (</>))
@@ -21,6 +25,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Lib.FilePath as FilePath
 import qualified System.Directory as Dir
 import qualified System.Posix.ByteString as Posix
+import qualified Crypto.Hash.MD5 as MD5
 
 catchDoesNotExist :: IO a -> IO a -> IO a
 catchDoesNotExist act handler =
@@ -75,6 +80,16 @@ getDirectoryContents path =
       if BS8.null fn
         then return []
         else (fn :) <$> go dirStream
+
+getDirectoryContentsHash :: FilePath -> IO BS8.ByteString
+getDirectoryContentsHash path =
+  E.bracket (Posix.openDirStream path) Posix.closeDirStream (go "")
+  where
+    go !hash !dirStream = do
+      fn <- Posix.readDirStream dirStream
+      if BS8.null fn
+        then return hash
+        else go (MD5.hash (hash <> fn)) dirStream
 
 makeAbsolutePath :: FilePath -> IO FilePath
 makeAbsolutePath path = (</> path) <$> Posix.getWorkingDirectory
