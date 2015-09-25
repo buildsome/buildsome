@@ -2,7 +2,7 @@
 
 set -e
 
-buildsome=$(realpath ../dist/build/buildsome/buildsome)
+buildsome="$(realpath ../dist/build/buildsome/buildsome) $@"
 
 ${buildsome} -f implicitphony
 git clean -fdx -- implicitphony

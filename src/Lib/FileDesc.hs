@@ -153,7 +153,7 @@ fileContentDescOfStat path stat
   | Posix.isRegularFile stat =
     FileContentDescRegular . MD5.hash <$> BS8.readFile (BS8.unpack path)
   | Posix.isDirectory stat =
-    FileContentDescDir . MD5.hash . BS8.unlines <$> Dir.getDirectoryContents path
+    FileContentDescDir <$> Dir.getDirectoryContentsHash path
   | Posix.isSymbolicLink stat =
     FileContentDescSymlink <$> Posix.readSymbolicLink path
   | otherwise = E.throwIO $ UnsupportedFileTypeError path
