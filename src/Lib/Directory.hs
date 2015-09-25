@@ -82,7 +82,7 @@ getDirectoryContents path =
 
 getDirectoryContentsHash :: FilePath -> IO BS8.ByteString
 getDirectoryContentsHash path =
-  E.bracket (Posix.openDirStream path) Posix.closeDirStream (go BS8.empty)
+  bracket (Posix.openDirStream path) Posix.closeDirStream (go BS8.empty)
   where
     go !hash !dirStream = do
       fn <- Posix.readDirStream dirStream
