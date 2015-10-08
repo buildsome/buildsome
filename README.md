@@ -1,3 +1,7 @@
+# Installation instructions
+
+To install buildsome follow [these](install.md) instructions.
+
 # Introduction
 
 Tired of cryptic bugs in the build system? Of ever having to run "make
