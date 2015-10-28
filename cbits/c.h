@@ -6,13 +6,19 @@
 
 FILE *log_file(void);
 
-#define LOG(fmt, ...)                                                   \
-    do {                                                                \
-        fprintf(log_file(), __FILE__ ": " fmt "\n", ##__VA_ARGS__);     \
-        fflush(log_file());                                             \
+#define PRINT(file, fmt, ...)                                     \
+    do {                                                          \
+        fprintf(file, __FILE__ ": " fmt "\n", ##__VA_ARGS__);     \
+        fflush(file);                                             \
     } while(0)
 
-#define ASSERT(x)  do { if (!(x)) { LOG("ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__); abort(); } } while(0)
+#define LOG(fmt, ...) PRINT(log_file(), fmt, ##__VA_ARGS__)
+
+#define ASSERT(x)  do { if (!(x)) {                                     \
+            LOG("BUILDSOME - ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__);  \
+            PRINT(stderr, "BUILDSOME - ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__); \
+            abort();                                                    \
+        } } while(0)
 
 #define PS(x)   ((char *)& (x)) , sizeof (x)
 
