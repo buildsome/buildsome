@@ -4,13 +4,9 @@
 #include <stdio.h>              /* fprintf */
 #include <stdlib.h>             /* abort */
 
-FILE *log_file(void);
+void _do_log(const char *fmt, ...);
 
-#define LOG(fmt, ...)                                                   \
-    do {                                                                \
-        fprintf(log_file(), __FILE__ ": " fmt "\n", ##__VA_ARGS__);     \
-        fflush(log_file());                                             \
-    } while(0)
+#define LOG(fmt, ...) _do_log(fmt "\n", ##__VA_ARGS__)
 
 #define ASSERT(x)  do { if (!(x)) { LOG("ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__); abort(); } } while(0)
 

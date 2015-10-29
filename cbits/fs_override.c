@@ -840,7 +840,7 @@ DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
 /* TODO: Track flock? */
 /* TODO: Track ioctls? */
 
-FILE *log_file(void)
+static FILE *log_file(void)
 {
     /* TODO: This is buggy for fork() */
     static FILE *f = NULL;
@@ -856,4 +856,13 @@ FILE *log_file(void)
         ASSERT(f);
     }
     return f;
+}
+
+void _do_log(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(log_file(), fmt, args);
+    va_end(args);
+    fflush(log_file());
 }
