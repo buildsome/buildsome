@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /* NOTE: This must be kept in sync with Protocol.hs */
-#define MAX_PATH 256
+#define MAX_PATH 1024
 
 /* NOTE: This must be kept in sync with Protocol.hs */
 enum func {

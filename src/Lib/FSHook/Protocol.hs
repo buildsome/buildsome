@@ -145,7 +145,7 @@ showFunc (Trace severity msg) = unwords ["trace:", show severity, BS8.unpack msg
 {-# ANN module ("HLint: ignore Use camelCase"::String) #-}
 
 mAX_PATH :: Int
-mAX_PATH = 256
+mAX_PATH = 1024
 mAX_PATH_ENV_VAR_LENGTH :: Int
 mAX_PATH_ENV_VAR_LENGTH = 10*1024
 mAX_PATH_CONF_STR :: Int
@@ -260,4 +260,4 @@ parseMsg = parseMsgLazy . strictToLazy
 
 {-# INLINE helloPrefix #-}
 helloPrefix :: ByteString
-helloPrefix = "PROTOCOL9: HELLO, I AM: "
+helloPrefix = "PROTOCOL10: HELLO, I AM: "
