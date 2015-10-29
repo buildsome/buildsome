@@ -15,19 +15,12 @@
 
 #include <errno.h>
 
-#define TRACE(sev, fmt, ...)                            \
-    do {                                                \
-        initialize_process_state();                     \
-        DEFINE_MSG(msg, trace);                         \
-        msg.args.severity = severity_##sev;             \
-        snprintf(PS(msg.args.msg), fmt, ##__VA_ARGS__); \
-        const bool success __attribute__((unused)) =    \
-            client__send_hooked(false, PS(msg));        \
-    } while(0)
+static void vtrace(enum severity, const char *fmt, va_list);
+static void trace(enum severity, const char *fmt, ...);
 
-#define TRACE_DEBUG(...)   // TRACE(debug, __VA_ARGS__)
-#define TRACE_WARNING(...) TRACE(warning, __VA_ARGS__)
-#define TRACE_ERROR(...)   TRACE(error, __VA_ARGS__)
+#define TRACE_DEBUG(...)   // TRACE(severity_debug, __VA_ARGS__)
+#define TRACE_WARNING(...) trace(severity_warning, __VA_ARGS__)
+#define TRACE_ERROR(...)   trace(severity_error, __VA_ARGS__)
 
 #include "undef_64_symbols.h"
 
@@ -41,7 +34,7 @@ static struct {
 static void update_cwd(void)
 {
     if(NULL == getcwd(process_state.cwd, sizeof process_state.cwd)) {
-        LOG("Failed to getcwd: %s", strerror(errno));
+        LOG(error, "Failed to getcwd: %s", strerror(errno));
         ASSERT(0);
     }
     process_state.cwd_length = strnlen(process_state.cwd, sizeof process_state.cwd);
@@ -273,8 +266,7 @@ static bool get_fullpath_of_dirfd(char *fullpath, size_t fullpath_size, int dirf
     /* path is relative to some dir... */
     char dirpath[MAX_PATH];
     if (!dereference_dir(dirfd, PS(dirpath))) {
-        TRACE_ERROR("Failed to dereference dir fd: %d", dirfd);
-        LOG("Cannot dereference directory fd");
+        LOG(error, "Cannot dereference directory fd: %d", dirfd);
         return false;
     }
     const uint32_t size = snprintf(fullpath, fullpath_size, "%s/%s", dirpath, path);
@@ -541,7 +533,7 @@ DEFINE_WRAPPER(int, execvpe, (const char *file, char *const argv[], char *const 
         errno = 0;
         size_t size = confstr(_CS_PATH, msg.args.conf_str_CS_PATH, sizeof msg.args.conf_str_CS_PATH);
         if(0 == size && 0 != errno) {
-            LOG("confstr failed: %s", strerror(errno));
+            LOG(error, "confstr failed: %s", strerror(errno));
             ASSERT(0);
         }
         ASSERT(size <= sizeof msg.args.conf_str_CS_PATH); /* Value truncated */
@@ -664,7 +656,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
                 });                                                     \
         }                                                               \
         }                                                               \
-        LOG("invalid open mode?!");                                     \
+        LOG(error, "invalid open mode?!");                              \
         ASSERT(0);                                                      \
         return -1;                                                      \
     } while(0)
@@ -740,7 +732,7 @@ struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
         res.is_read = true;
         res.is_create = true;
     default:
-        LOG("Invalid fopen mode?!");
+        LOG(error, "Invalid fopen mode?!");
         ASSERT(0);
     }
     return res;
@@ -834,6 +826,24 @@ DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
 
 /*************************************/
 
+static void vtrace(enum severity sev, const char *fmt, va_list args)
+{
+    initialize_process_state();
+    DEFINE_MSG(msg, trace);
+    msg.args.severity = sev;
+    vsnprintf(PS(msg.args.msg), fmt, args);
+    const bool success __attribute__((unused)) =
+        client__send_hooked(false, PS(msg));
+}
+
+static void trace(enum severity sev, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    vtrace(sev, fmt, args);
+    va_end(args);
+}
+
 /* TODO: Track utime? */
 /* TODO: Track statfs? */
 /* TODO: Track extended attributes? */
@@ -858,11 +868,14 @@ static FILE *log_file(void)
     return f;
 }
 
-void _do_log(const char *fmt, ...)
+void _do_log(enum severity sev, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
     vfprintf(log_file(), fmt, args);
     va_end(args);
     fflush(log_file());
+    va_start(args, fmt);
+    vtrace(sev, fmt, args);
+    va_end(args);
 }

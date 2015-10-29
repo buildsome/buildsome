@@ -1,6 +1,7 @@
 #ifndef ___BUILDSOME_CBITS_PROTOCOL_H_
 #define ___BUILDSOME_CBITS_PROTOCOL_H_
 
+#include "severity.h"
 #include <stdint.h>
 
 /* NOTE: This must be kept in sync with Protocol.hs */
@@ -60,12 +61,6 @@ typedef struct {
     char out_path[MAX_PATH];
     enum out_effect out_effect;
 } out_path;
-
-enum severity {
-    severity_debug,
-    severity_warning,
-    severity_error,
-};
 
 /* NOTE: This must be kept in sync with Protocol.hs */
 struct func_openr     {in_path path;};

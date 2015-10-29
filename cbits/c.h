@@ -1,14 +1,15 @@
 #ifndef __c_h_
 #define __c_h_
 
+#include "severity.h"
 #include <stdio.h>              /* fprintf */
 #include <stdlib.h>             /* abort */
 
-void _do_log(const char *fmt, ...);
+void _do_log(enum severity, const char *fmt, ...);
 
-#define LOG(fmt, ...) _do_log(fmt "\n", ##__VA_ARGS__)
+#define LOG(sev, fmt, ...) _do_log(severity_##sev, fmt "\n", ##__VA_ARGS__)
 
-#define ASSERT(x)  do { if (!(x)) { LOG("ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__); abort(); } } while(0)
+#define ASSERT(x)  do { if (!(x)) { LOG(error, "ASSERTION FAILED at %s:%d: " #x, __FILE__, __LINE__); abort(); } } while(0)
 
 #define PS(x)   ((char *)& (x)) , sizeof (x)
 
