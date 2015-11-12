@@ -3,7 +3,7 @@
 module Main (main) where
 
 import qualified Buildsome
-import           Buildsome (Buildsome, PutInputsInStats(..))
+import           Buildsome (Buildsome, CollectStats(..))
 import qualified Buildsome.Chart as Chart
 import qualified Buildsome.ClangCommands as ClangCommands
 import qualified Buildsome.Color as Color
@@ -273,17 +273,20 @@ handleRequested
     (Opts.ExtraOutputs mChartPath mClangCommandsPath compatMakefile)))
   = do
       Buildsome.BuiltTargets rootTargets slaveStats <-
-        Buildsome.want printer buildsome putInputsInStats reason requestedTargetPaths
+        Buildsome.want printer buildsome collectStats reason requestedTargetPaths
       maybe (return ()) (Chart.make slaveStats) mChartPath
       cwd <- Posix.getWorkingDirectory
       maybe (return ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
       whenCompat $
         CompatMakefile.make (Buildsome.bsPhoniesSet buildsome) cwd slaveStats rootTargets "compat-makefile"
   where
-    (putInputsInStats, whenCompat) =
+    (collectStats, whenCompat) =
       case compatMakefile of
-      Opts.NoCompatMakefile -> (Don'tPutInputsInStats, const (return ()))
-      Opts.CompatMakefile -> (PutInputsInStats, id :: IO a -> IO a)
+      Opts.CompatMakefile -> (CollectStats PutInputsInStats, id :: IO a -> IO a)
+      Opts.NoCompatMakefile
+          | (mChartPath /= Nothing) || (mClangCommandsPath /= Nothing)
+            -> (CollectStats Don'tPutInputsInStats, const (return ()))
+          | otherwise -> (Don'tCollectStats, const (return ()))
 
 main :: IO ()
 main = do
