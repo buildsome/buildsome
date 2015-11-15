@@ -3,7 +3,7 @@
 module Main (main) where
 
 import qualified Buildsome
-import           Buildsome (Buildsome, CollectStats(..))
+import           Buildsome (Buildsome, CollectStats(..), PutInputsInStats(..))
 import qualified Buildsome.Chart as Chart
 import qualified Buildsome.ClangCommands as ClangCommands
 import qualified Buildsome.Color as Color
