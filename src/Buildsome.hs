@@ -4,7 +4,7 @@ module Buildsome
   ( Buildsome(bsPhoniesSet), with, withDb
   , clean
   , BuiltTargets(..)
-  , PutInputsInStats(..), want
+  , PutInputsInStats(..), CollectStats(..), want
   ) where
 
 import           Buildsome.BuildId (BuildId)
@@ -179,6 +179,9 @@ updateGitIgnore buildsome makefilePath = do
 data PutInputsInStats = PutInputsInStats | Don'tPutInputsInStats
     deriving (Eq, Ord, Show)
 
+data CollectStats = CollectStats PutInputsInStats | Don'tCollectStats
+    deriving (Eq, Ord, Show)
+
 data BuildTargetEnv = BuildTargetEnv
   { bteBuildsome :: Buildsome
   , btePrinter :: Printer
@@ -186,8 +189,9 @@ data BuildTargetEnv = BuildTargetEnv
   , bteParents :: Parents
   , bteExplicitlyDemanded :: Bool
   , bteSpeculative :: Bool
-  , -- used by compat makefile, undesirable memory consumption otherwise
-    btePutInputsInStats :: PutInputsInStats
+    -- used by charts & compat makefile, undesirable memory
+    -- consumption otherwise
+  , bteCollectStats :: CollectStats
   }
 
 data BuiltTargets = BuiltTargets
@@ -227,8 +231,8 @@ assertExplicitInputsExist BuildTargetEnv{..} paths = do
              | otherwise -> return ExplicitPathsNotBuilt
 
 -- | Top-level root target
-want :: Printer -> Buildsome -> PutInputsInStats -> Reason -> [FilePath] -> IO BuiltTargets
-want printer buildsome putInputsInStats reason paths = do
+want :: Printer -> Buildsome -> CollectStats -> Reason -> [FilePath] -> IO BuiltTargets
+want printer buildsome collectStats reason paths = do
   printStrLn printer $
     "Building: " <> ColorText.intercalate ", " (map (cTarget . show) paths)
   let bte =
@@ -239,7 +243,7 @@ want printer buildsome putInputsInStats reason paths = do
         , bteParents = []
         , bteExplicitlyDemanded = True
         , bteSpeculative = False
-        , btePutInputsInStats = putInputsInStats
+        , bteCollectStats = collectStats
         }
   entity <- Parallelism.rootEntity $ bsParPool buildsome
   (buildTime, (ExplicitPathsBuilt, builtTargets)) <-
@@ -1063,23 +1067,27 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
               [ targetAllInputs tdTarget
               , [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
               ]
-        return $ stats <>
-          Stats
-          { Stats.ofTarget =
-            M.singleton tdRep Stats.TargetStats
-            { tsWhen = whenBuilt
-            , tsTime = elSelfTime
-            , tsDirectDeps = deps
-            , tsExistingInputs =
-              case btePutInputsInStats of
-              PutInputsInStats -> Just existingInputs
-              Don'tPutInputsInStats -> Nothing
-            }
-          , Stats.stdErr =
-            if mempty /= stdErr elStdoutputs
-            then S.singleton tdRep
-            else S.empty
-          }
+        return $! -- strict application, otherwise stuff below isn't
+                  -- gc'd apparently.
+          case bteCollectStats of
+            Don'tCollectStats -> stats
+            CollectStats putInputsInStats -> stats <>
+              Stats
+              { Stats.ofTarget =
+                M.singleton tdRep Stats.TargetStats
+                { tsWhen = whenBuilt
+                , tsTime = elSelfTime
+                , tsDirectDeps = deps
+                , tsExistingInputs =
+                  case putInputsInStats of
+                  PutInputsInStats -> Just existingInputs
+                  Don'tPutInputsInStats -> Nothing
+                }
+              , Stats.stdErr =
+                if mempty /= stdErr elStdoutputs
+                then S.singleton tdRep
+                else S.empty
+              }
   where
     Color.Scheme{..} = Color.scheme
 
