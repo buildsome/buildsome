@@ -8,20 +8,19 @@ module Buildsome.Slave
     , cancel
     ) where
 
-import           Prelude.Compat hiding (show, FilePath)
-
 import qualified Buildsome.Color as Color
-
-import           Control.Concurrent.Async (Async)
-import qualified Control.Concurrent.Async as Async
 import qualified Control.Exception as E
 import           Data.Monoid
+import           Lib.Async (Async)
+import qualified Lib.Async as Async
 import           Lib.ColorText (ColorText)
 import           Lib.FilePath (FilePath)
 import           Lib.Makefile (Target)
 import qualified Lib.Printer as Printer
 import           Lib.Show (show)
 import           Lib.TimeInstances ()
+
+import           Prelude.Compat hiding (show, FilePath)
 
 data Slave a = Slave
     { slaveTarget :: Target
