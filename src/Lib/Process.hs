@@ -1,12 +1,14 @@
+{-# LANGUAGE TupleSections #-}
 -- | Low level wrapping over System.Process
 module Lib.Process (getOutputs, Env, CmdSpec(..)) where
 
 import Control.Concurrent.Async
 import Control.Exception (uninterruptibleMask)
 import Control.Monad
+import Data.Maybe (catMaybes)
 import Data.Foldable (traverse_)
 import Lib.Exception (bracket, finally)
-import System.Environment (getEnv)
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
 import System.IO (Handle, hClose)
 import System.Process
@@ -36,9 +38,7 @@ withProcess params =
 -- | Get the outputs of a process with a given environment spec
 getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, BS.ByteString, BS.ByteString)
 getOutputs cmd inheritedEnvs envs = do
-  oldEnvs <- forM inheritedEnvs $ \name -> do
-    val <- getEnv name
-    return (name, val)
+  oldEnvs <- catMaybes <$> (forM inheritedEnvs $ \name -> fmap (name,) <$> lookupEnv name)
   withProcess
     CreateProcess
     { cwd = Nothing
