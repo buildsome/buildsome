@@ -1064,32 +1064,33 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
           case mSlaveStats of
           Just res -> return (Stats.FromCache, res)
           Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..}
-        let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
-        let existingInputs = concat
-              [ targetAllInputs tdTarget
-              , [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
-              ]
         return $! -- strict application, otherwise stuff below isn't
                   -- gc'd apparently.
           case bteCollectStats of
-            Don'tCollectStats -> stats
-            CollectStats putInputsInStats -> stats <>
-              Stats
-              { Stats.ofTarget =
-                M.singleton tdRep Stats.TargetStats
-                { tsWhen = whenBuilt
-                , tsTime = elSelfTime
-                , tsDirectDeps = deps
-                , tsExistingInputs =
-                  case putInputsInStats of
-                  PutInputsInStats -> Just existingInputs
-                  Don'tPutInputsInStats -> Nothing
-                }
-              , Stats.stdErr =
-                if mempty /= stdErr elStdoutputs
-                then S.singleton tdRep
-                else S.empty
-              }
+            Don'tCollectStats -> mempty
+            CollectStats putInputsInStats ->
+              let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
+              in  stats <>
+                  Stats
+                  { Stats.ofTarget =
+                    M.singleton tdRep Stats.TargetStats
+                    { tsWhen = whenBuilt
+                    , tsTime = elSelfTime
+                    , tsDirectDeps = deps
+                    , tsExistingInputs =
+                      case putInputsInStats of
+                      PutInputsInStats ->
+                          Just $ concat
+                          [ targetAllInputs tdTarget
+                          , [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
+                          ]
+                      Don'tPutInputsInStats -> Nothing
+                    }
+                  , Stats.stdErr =
+                    if mempty /= stdErr elStdoutputs
+                    then S.singleton tdRep
+                    else S.empty
+                  }
   where
     Color.Scheme{..} = Color.scheme
 
