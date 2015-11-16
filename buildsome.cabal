@@ -28,8 +28,8 @@ flag Charts
 executable buildsome
   hs-source-dirs:    src/
   main-is:           Main.hs
-  ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M
-  ghc-prof-options:  -threaded -Wall -O2 -auto-all -caf-all -rtsopts -with-rtsopts=-A16M
+  ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns
+  ghc-prof-options:  -threaded -Wall -O2 -auto-all -caf-all -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns
   other-modules:     Buildsome
                ,     Buildsome.BuildId
                ,     Buildsome.BuildMaps
