@@ -904,6 +904,8 @@ runCmd bte@BuildTargetEnv{..} entity target = do
           fsAccessHandlers outputsRef inputsRef builtTargetsRef bte entity target
   Parallelism.upgradePriority btePrinter entity
   (time, (exitCode, stdOutputs)) <-
+    -- TODO we should record what the values of these env vars were,
+    -- and if they change - rebuild
     FSHook.timedRunCommand hook rootPath ["HOME", "PATH"] shellCmd
     (targetOutputs target)
     (cTarget (show (targetOutputs target))) accessHandlers

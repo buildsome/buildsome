@@ -1,0 +1,10 @@
+#!/bin/bash -eu
+buildsome=${1:-buildsome}
+
+cd $(dirname $0)
+
+${buildsome} --overwrite
+
+diff hi.expected hi || (echo "failed!"; exit 1)
+
+
