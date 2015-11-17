@@ -138,6 +138,12 @@ serve printer fsHook conn = do
           [ "Bad hello message from connection: ", show helloLine, " expected: "
           , show Protocol.helloPrefix, " (check your fs_override.so installation)" ]
         Just pidJobId -> do
+          (pidStr, tidStr, jobId, needStr) <-
+            case BS8.split ':' pidJobId of
+            [a,b,c,d] -> return (a,b,c,d)
+            _ -> E.throwIO $ ProtocolError $ "Bad pid/jobid: " ++ BS8.unpack pidJobId
+          let fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
+
           runningJobs <- readIORef (fsHookRunningJobs fsHook)
           case M.lookup jobId runningJobs of
             Nothing -> do
@@ -152,11 +158,8 @@ serve printer fsHook conn = do
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
               -- which connected again!
-                [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer labelStr)
-                , ") received new connections after formal completion!"]
-          where
-            fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
-            [pidStr, tidStr, jobId, needStr] = BS8.split ':' pidJobId
+              [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer labelStr)
+              , ") received new connections after formal completion!"]
 
 -- Except thread killed
 printRethrowExceptions :: String -> IO a -> IO a
