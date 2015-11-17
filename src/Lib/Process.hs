@@ -1,4 +1,6 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 -- | Low level wrapping over System.Process
 module Lib.Process (getOutputs, Env, CmdSpec(..)) where
 
@@ -14,6 +16,8 @@ import System.IO (Handle, hClose)
 import System.Process
 import qualified Data.ByteString.Char8 as BS
 import qualified Lib.Timeout as Timeout
+
+import Prelude.Compat
 
 type Env = [(String, String)]
 
