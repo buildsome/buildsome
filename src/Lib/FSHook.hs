@@ -342,19 +342,19 @@ timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAcc
       case isDelayed of
         Delayed -> measurePauseTime act
         NotDelayed -> act
+  let
+    FSAccessHandlers oldDelayed oldUndelayed oldTraceHandler = fsAccessHandlers
     wrappedFsAccessHandlers =
       FSAccessHandlers
-        (wrappedFsAccessHandler Delayed delayed)
-        (wrappedFsAccessHandler NotDelayed undelayed)
-        traceHandler
+        (wrappedFsAccessHandler Delayed oldDelayed)
+        (wrappedFsAccessHandler NotDelayed oldUndelayed)
+        oldTraceHandler
   (time, res) <-
     timeIt $
     runCommand fsHook rootFilter inheritEnvs cmdSpec
     label labelColorText wrappedFsAccessHandlers
   subtractedTime <- (time-) <$> readIORef pauseTimeRef
   return (subtractedTime, res)
-  where
-    FSAccessHandlers delayed undelayed traceHandler = fsAccessHandlers
 
 withRunningJob :: FSHook -> JobId -> RunningJob -> IO r -> IO r
 withRunningJob fsHook jobId job body = do
