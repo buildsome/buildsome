@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric, RecordWildCards #-}
+{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric #-}
 module Lib.FSHook
   ( getLdPreloadPath
   , FSHook
@@ -147,8 +147,8 @@ serve printer fsHook conn = do
               -- New connection created in the process of killing connections, ignore it
               return ()
             Just (LiveJob job) ->
-              (handleJobConnection fullTidStr conn job $ fromNeedStr needStr)
-            Just (CompletedJob _label labelStr) -> do
+              handleJobConnection fullTidStr conn job $ fromNeedStr needStr
+            Just (CompletedJob _label labelStr) ->
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
               -- which connected again!

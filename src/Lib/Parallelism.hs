@@ -72,13 +72,13 @@ rootEntity pool =
     do
         parId <- PoolAlloc.alloc 0 pool
         state <-
-            newIORef $ EntityStateRunning $ EntityRunning
+            newIORef $ EntityStateRunning EntityRunning
             { entityRunningParents = []
             , entityRunningPriority = Priority False 0
             , entityRunningState = EntityAlloced parId
             , entityRunningReleaseCounter = 0
             }
-        return $ Entity
+        return Entity
             { entityState = state
             , entityId = "Root"
             }
@@ -293,7 +293,7 @@ fork ident _printer pool =
     do
         alloc <- PoolAlloc.startAlloc 0 pool
         stateRef <-
-            newIORef $ EntityStateRunning $
+            newIORef $ EntityStateRunning
             EntityRunning
             { entityRunningParents = []
             , entityRunningPriority = Priority False 0
@@ -349,10 +349,8 @@ wrapChild pool child alloc printer =
             _ -> error "forked child did not return to Alloced state with rc=0"
 
 boostChildPriority :: Printer -> PoolAlloc.Priority -> Entity -> IO ()
-boostChildPriority printer parentVal child =
-    boostPriority printer upgrade child
-    where
-        upgrade p = p { priorityMaxOfParents = parentVal }
+boostChildPriority printer parentVal =
+    boostPriority printer $ \p -> p { priorityMaxOfParents = parentVal }
 
 boostPriority :: Printer -> (Priority -> Priority) -> Entity -> IO ()
 boostPriority printer upgrade entity =
