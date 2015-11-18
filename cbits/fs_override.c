@@ -80,7 +80,8 @@ static void send_connection_await(const char *buf, size_t size, bool is_delayed)
 
 #define SILENT_CALL_REAL(name, ...)                     \
     ({                                                  \
-        name##_func *real = dlsym(RTLD_NEXT, #name);    \
+        static name##_func *real = NULL;                \
+        if (!real) real = dlsym(RTLD_NEXT, #name);      \
         real(__VA_ARGS__);                              \
     })
 
