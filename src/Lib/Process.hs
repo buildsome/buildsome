@@ -54,19 +54,21 @@ getOutputs cmd inheritedEnvs envs = do
     , close_fds = True -- MUST close fds so we don't leak server-side FDs as open/etc
     , create_group = True -- MUST be true so that interruptProcessGroupOf works
     , delegate_ctlc = False -- MUST be false to avoid disabling buildsome's SIGINT/SIGQUIT handlers
-    } $ \(Just stdinHandle, Just stdoutHandle, Just stderrHandle, processHandle) -> do
-    hClose stdinHandle
-    -- Read both stdout and stderr concurrently to prevent deadlock - e.g. if we read them
-    -- sequentially (stdout then stderr) and the child writes to both interleaved, it can block
-    -- indefinitely on stderr due to full buffers since we are not reading it yet.
+    } $ \case
+      (Just stdinHandle, Just stdoutHandle, Just stderrHandle, processHandle) -> do
+        hClose stdinHandle
+        -- Read both stdout and stderr concurrently to prevent deadlock - e.g. if we read them
+        -- sequentially (stdout then stderr) and the child writes to both interleaved, it can block
+        -- indefinitely on stderr due to full buffers since we are not reading it yet.
 
-    -- NOTE: withAsync has unsafe interruptible exception handler,
-    -- protect it with uninterruptibleMask_
-    uninterruptibleMask $ \restore ->
-      withAsyncWithUnmask (\unmask -> unmask (BS.hGetContents stdoutHandle)) $ \stdoutReader ->
-      withAsyncWithUnmask (\unmask -> unmask (BS.hGetContents stderrHandle)) $ \stderrReader ->
-      restore $ do
-        exitCode <- waitForProcess processHandle
-        stdout <- wait stdoutReader
-        stderr <- wait stderrReader
-        return (exitCode, stdout, stderr)
+        -- NOTE: withAsync has unsafe interruptible exception handler,
+        -- protect it with uninterruptibleMask_
+        uninterruptibleMask $ \restore ->
+          withAsyncWithUnmask (\unmask -> unmask (BS.hGetContents stdoutHandle)) $ \stdoutReader ->
+          withAsyncWithUnmask (\unmask -> unmask (BS.hGetContents stderrHandle)) $ \stderrReader ->
+          restore $ do
+            exitCode <- waitForProcess processHandle
+            stdout <- wait stdoutReader
+            stderr <- wait stderrReader
+            return (exitCode, stdout, stderr)
+      _ -> error "withProcess didn't supply handles?!"

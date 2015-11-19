@@ -1,5 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric, RecordWildCards #-}
+{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric #-}
 module Lib.FSHook
   ( getLdPreloadPath
   , FSHook
@@ -138,6 +138,12 @@ serve printer fsHook conn = do
           [ "Bad hello message from connection: ", show helloLine, " expected: "
           , show Protocol.helloPrefix, " (check your fs_override.so installation)" ]
         Just pidJobId -> do
+          (pidStr, tidStr, jobId, needStr) <-
+            case BS8.split ':' pidJobId of
+            [a,b,c,d] -> return (a,b,c,d)
+            _ -> E.throwIO $ ProtocolError $ "Bad pid/jobid: " ++ BS8.unpack pidJobId
+          let fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
+
           runningJobs <- readIORef (fsHookRunningJobs fsHook)
           case M.lookup jobId runningJobs of
             Nothing -> do
@@ -147,16 +153,13 @@ serve printer fsHook conn = do
               -- New connection created in the process of killing connections, ignore it
               return ()
             Just (LiveJob job) ->
-              (handleJobConnection fullTidStr conn job $ fromNeedStr needStr)
-            Just (CompletedJob _label labelStr) -> do
+              handleJobConnection fullTidStr conn job $ fromNeedStr needStr
+            Just (CompletedJob _label labelStr) ->
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
               -- which connected again!
-                [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer labelStr)
-                , ") received new connections after formal completion!"]
-          where
-            fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
-            [pidStr, tidStr, jobId, needStr] = BS8.split ':' pidJobId
+              [ "Job: ", BS8.unpack jobId, "(", BS8.unpack (Printer.render printer labelStr)
+              , ") received new connections after formal completion!"]
 
 -- Except thread killed
 printRethrowExceptions :: String -> IO a -> IO a
@@ -339,19 +342,19 @@ timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAcc
       case isDelayed of
         Delayed -> measurePauseTime act
         NotDelayed -> act
+  let
+    FSAccessHandlers oldDelayed oldUndelayed oldTraceHandler = fsAccessHandlers
     wrappedFsAccessHandlers =
       FSAccessHandlers
-        (wrappedFsAccessHandler Delayed delayed)
-        (wrappedFsAccessHandler NotDelayed undelayed)
-        traceHandler
+        (wrappedFsAccessHandler Delayed oldDelayed)
+        (wrappedFsAccessHandler NotDelayed oldUndelayed)
+        oldTraceHandler
   (time, res) <-
     timeIt $
     runCommand fsHook rootFilter inheritEnvs cmdSpec
     label labelColorText wrappedFsAccessHandlers
   subtractedTime <- (time-) <$> readIORef pauseTimeRef
   return (subtractedTime, res)
-  where
-    FSAccessHandlers delayed undelayed traceHandler = fsAccessHandlers
 
 withRunningJob :: FSHook -> JobId -> RunningJob -> IO r -> IO r
 withRunningJob fsHook jobId job body = do
