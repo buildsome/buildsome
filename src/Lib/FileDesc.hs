@@ -44,7 +44,7 @@ data FileContentDesc
 instance Binary FileContentDesc
 instance Cmp FileContentDesc where
   FileContentDescRegular x `cmp` FileContentDescRegular y = Cmp.eq ["change"] x y
-  FileContentDescSymlink x `cmp` FileContentDescSymlink y = fmap (map ("symlink target: " <>)) $ Cmp.eqShow x y
+  FileContentDescSymlink x `cmp` FileContentDescSymlink y = map ("symlink target: " <>) <$> Cmp.eqShow x y
   FileContentDescDir x `cmp` FileContentDescDir y = Cmp.eq ["dir listing changed"] x y
   FileContentDescRegular _ `cmp` _ = Cmp.NotEquals ["regular file vs. non-regular"]
   FileContentDescSymlink _ `cmp` _ = Cmp.NotEquals ["symlink vs. non-symlink"]

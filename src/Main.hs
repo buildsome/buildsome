@@ -21,7 +21,7 @@ import qualified Data.ByteString.Char8 as BS8
 import           Data.Functor.Identity (Identity(..))
 import           Data.List (foldl')
 import qualified Data.Map as M
-import           Data.Maybe (mapMaybe)
+import           Data.Maybe (mapMaybe, isJust)
 import           Data.Monoid
 import           Data.String (IsString(..))
 import           Data.Typeable (Typeable)
@@ -199,7 +199,7 @@ flagsOfVars :: Makefile.Vars -> Makefile.Vars
 flagsOfVars = M.fromList . mapMaybe filterFlag . M.toList
   where
     filterFlag (key, value) =
-      fmap (flip (,) value) $ unprefixed flagPrefix key
+      flip (,) value <$> unprefixed flagPrefix key
 
 ljust :: Int -> ByteString -> ByteString
 ljust padding bs = bs <> BS8.replicate (padding - l) ' '
@@ -284,7 +284,7 @@ handleRequested
       case compatMakefile of
       Opts.CompatMakefile -> (CollectStats PutInputsInStats, id :: IO a -> IO a)
       Opts.NoCompatMakefile
-          | (mChartPath /= Nothing) || (mClangCommandsPath /= Nothing)
+          | isJust mChartPath || isJust mClangCommandsPath
             -> (CollectStats Don'tPutInputsInStats, const (return ()))
           | otherwise -> (Don'tCollectStats, const (return ()))
 
