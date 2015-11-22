@@ -10,6 +10,7 @@ import Control.Monad
 import Data.Maybe (catMaybes)
 import Data.Foldable (traverse_)
 import Lib.Exception (bracket, finally)
+import Lib.StdOutputs (StdOutputs(..))
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
 import System.IO (Handle, hClose)
@@ -40,7 +41,7 @@ withProcess params =
       )
 
 -- | Get the outputs of a process with a given environment spec
-getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, BS.ByteString, BS.ByteString)
+getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, StdOutputs BS.ByteString)
 getOutputs cmd inheritedEnvs envs = do
   oldEnvs <- catMaybes <$> forM inheritedEnvs (\name -> fmap (name,) <$> lookupEnv name)
   withProcess
@@ -70,5 +71,5 @@ getOutputs cmd inheritedEnvs envs = do
             exitCode <- waitForProcess processHandle
             stdout <- wait stdoutReader
             stderr <- wait stderrReader
-            return (exitCode, stdout, stderr)
+            return (exitCode, StdOutputs { stdOut = stdout, stdErr = stderr })
       _ -> error "withProcess didn't supply handles?!"
