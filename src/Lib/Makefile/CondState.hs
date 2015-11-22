@@ -1,3 +1,4 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE RecordWildCards #-}
 module Lib.Makefile.CondState
   ( CondState, empty
@@ -6,6 +7,8 @@ module Lib.Makefile.CondState
   , unnest
   , inverse
   ) where
+
+import Prelude.Compat
 
 data CondState = CondState
   { trueNesting :: Int -- ignored unless false=0
@@ -44,6 +47,6 @@ unnest errMsg condState@CondState {..} =
 
 inverse :: String -> CondState -> Either String CondState
 inverse errMsg condState =
-  fmap (nest (not oldIsTrue)) $ unnest errMsg condState
+  nest (not oldIsTrue) <$> unnest errMsg condState
   where
     oldIsTrue = isTrue condState

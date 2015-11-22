@@ -44,7 +44,7 @@ cmpGetterBy ::
   (b -> b -> ComparisonResult Reasons) ->
   ByteString -> (a -> b) -> a -> a -> ComparisonResult Reasons
 cmpGetterBy f str getter x y =
-  fmap (map ((str <> ": ") <>)) $
+  map ((str <> ": ") <>) <$>
   f (getter x) (getter y)
 
 cmpGetter :: Cmp b => ByteString -> (a -> b) -> a -> a -> ComparisonResult Reasons

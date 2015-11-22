@@ -533,7 +533,7 @@ data ExecutionLogFailure
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Db.ExecutionLog ->
   IO (Either ExecutionLogFailure (Db.ExecutionLog, BuiltTargets))
-tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog = do
+tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog =
   runEitherT $ do
     builtTargets <-
       EitherT $
@@ -584,7 +584,7 @@ executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionL
         Cmp.Equals -> return ()
         Cmp.NotEquals reasons ->
           -- fail entire computation
-          left $ (str <> ": " <> BS8.intercalate ", " reasons, filePath)
+          left (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
 executionLogBuildInputs ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->
@@ -630,8 +630,7 @@ parentDirs = map FilePath.takeDirectory . filter (`notElem` ["", "/"])
 buildManyWithParReleased ::
   (FilePath -> Reason) -> BuildTargetEnv -> Parallelism.Entity -> [SlaveRequest] -> IO BuiltTargets
 buildManyWithParReleased mkReason bte@BuildTargetEnv{..} entity slaveRequests =
-  do
-    waitForSlavesWithParReleased bte entity =<< fmap concat (mapM mkSlave slaveRequests)
+  waitForSlavesWithParReleased bte entity =<< fmap concat (mapM mkSlave slaveRequests)
   where
     mkSlave req =
       slavesFor bte { bteReason = mkReason (inputFilePath req) } req
@@ -651,7 +650,7 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
         Left (SpeculativeBuildFailure exception)
           | isThreadKilled exception -> return Nothing
         Left err -> do
-          printStrLn btePrinter $ bsRender bteBuildsome $ mconcat $
+          printStrLn btePrinter $ bsRender bteBuildsome $ mconcat
             [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
             , " did not match because ", describeError err
             ]
@@ -889,7 +888,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
               return $ if hasEffect
                 then Just $ getOutPath output
                 else Nothing
-        filteredOutputs <- fmap (S.fromList . catMaybes) $ mapM addMEffect outputs
+        filteredOutputs <- S.fromList . catMaybes <$> mapM addMEffect outputs
         recordOutputs bteBuildsome outputsRef reason
           targetOutputsSet filteredOutputs
         mapM_ (recordInput inputsRef reason) $

@@ -62,13 +62,13 @@ startAlloc priority (PoolAlloc stateRef) = do
         ( PoolStateWithoutTokens (PriorityQueue.enqueue priority candidate waiters)
         , Alloc
           { finish = takeMVar candidate `onException` stopAllocation candidate
-          , changePriority = \newPriority -> changeAllocationPriority newPriority candidate
+          , changePriority = (`changeAllocationPriority` candidate)
           , identity = ident
           }
         )
       PoolStateWithTokens (token, []) ->
           (PoolStateWithoutTokens PriorityQueue.empty, trivialAlloc token)
-      PoolStateWithTokens (token, (x:xs)) ->
+      PoolStateWithTokens (token, x:xs) ->
           (PoolStateWithTokens (x, xs), trivialAlloc token)
   where
     extract PoolStateWithTokens{} _candidate notThere _extracted = notThere

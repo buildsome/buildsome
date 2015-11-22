@@ -42,7 +42,7 @@ withProcess params =
 -- | Get the outputs of a process with a given environment spec
 getOutputs :: CmdSpec -> [String] -> Env -> IO (ExitCode, BS.ByteString, BS.ByteString)
 getOutputs cmd inheritedEnvs envs = do
-  oldEnvs <- catMaybes <$> (forM inheritedEnvs $ \name -> fmap (name,) <$> lookupEnv name)
+  oldEnvs <- catMaybes <$> forM inheritedEnvs (\name -> fmap (name,) <$> lookupEnv name)
   withProcess
     CreateProcess
     { cwd = Nothing
