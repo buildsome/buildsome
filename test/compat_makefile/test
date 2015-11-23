@@ -6,7 +6,8 @@ touch should_be_deleted_by_make_dependency
 $buildsome -M --overwrite
 $buildsome clean
 
-for f in foo.o moshe.a moshe.a.b escape_input should_be_deleted_by_make
+FILES="out/foo.o moshe.a moshe.a.b escape_input should_be_deleted_by_make"
+for f in $FILES
 do
     test ! -e $f || (echo "ERROR: file: $f was not deleted by buildsome clean?!" && exit 1)
 done
@@ -20,7 +21,7 @@ touch should_be_deleted_by_make_dependency
 
 make -f compat-makefile
 
-for f in foo.o moshe.a moshe.a.b escape_input should_be_deleted_by_make
+for f in $FILES
 do
     test -e $f || (echo "ERROR: file: $f was not created during make/build?!" && exit 1)
 done
