@@ -389,7 +389,7 @@ runCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHa
     let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
     (`onException` onActiveConnections killConnection) $
       do
-        (exitCode, stdOut, stdErr) <-
+        (exitCode, stdOutputs) <-
           withRunningJob fsHook jobId job $ runCmd $ mkEnvVars fsHook rootFilter jobId
         let timeoutMsg =
               Printer.render (fsHookPrinter fsHook)
@@ -397,7 +397,7 @@ runCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHa
                "children connected to FS hooks")
         Timeout.warning (Timeout.seconds 5) timeoutMsg $
           onActiveConnections awaitConnection
-        return (exitCode, StdOutputs stdOut stdErr)
+        return (exitCode, stdOutputs)
   where
     runCmd = Process.getOutputs cmdSpec inheritEnvs
     killConnection (tid, awaitConn) = killThread tid >> awaitConn
