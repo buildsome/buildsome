@@ -95,7 +95,7 @@ onOneTarget phoniesSet cwd stats target =
       (phonies, nonPhonies) = partition (`Set.member` phoniesSet) $ makefileTargetPaths tgt
       targetDecl =
         [ "T := " <> BS8.unwords (makefileTargetPaths tgt)
-        , "D := " <> (BS8.unwords $ sortNub $ directDepsPaths <> inputs)
+        , "D := " <> BS8.unwords (sortNub $ directDepsPaths <> inputs)
         , "$(T): $(D)"
         ]
       myLines = concat

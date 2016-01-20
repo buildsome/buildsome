@@ -33,6 +33,13 @@ data Slave a = Slave
 target :: Slave a -> Target
 target = slaveTarget
 
+-- The annotation here is to prevent hlint from collapsing our lambda
+-- below which is needed due to rank-2 typing.
+--
+-- The :: String in the annotation is needed because of GHC weirdness
+-- with OverloadedStrings, see
+-- http://comments.gmane.org/gmane.comp.lang.haskell.glasgow.bugs/74427
+{-# ANN newWithUnmask ("HLint: ignore Avoid lambda" :: String) #-}
 newWithUnmask :: Target -> Printer.Id -> [FilePath] -> ((forall b. IO b -> IO b) -> IO a) -> IO (Slave a)
 newWithUnmask tgt printerId outputPaths action =
     E.uninterruptibleMask $ \unmaskUninterruptible ->
