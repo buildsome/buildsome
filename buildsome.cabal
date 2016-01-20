@@ -36,7 +36,7 @@ executable buildsome
     ghc-options:       -threaded -Wall -O0
   } else {
     ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns
-    ghc-prof-options:  -threaded -Wall -O2 -auto-all -caf-all -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns
+    ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -auto-all -caf-all
   }
   other-modules:     Buildsome
                ,     Buildsome.BuildId
