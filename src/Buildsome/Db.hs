@@ -119,6 +119,7 @@ options =
     LevelDB.defaultOptions
     { LevelDB.createIfMissing = True
     , LevelDB.errorIfExists = False
+    , LevelDB.writeBufferSize = 64 * 1024 * 1024
     }
 
 withLevelDb :: FilePath -> (LevelDB.DB -> IO a) -> IO a
