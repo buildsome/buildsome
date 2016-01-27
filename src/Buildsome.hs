@@ -611,7 +611,7 @@ getFileDescInput' db reason filePath = {-# SCC "getFileDescInput" #-} do
           contentDesc <- liftIO $ fileContentDescOfStat "wat" db filePath stat
           let time = Posix.modificationTimeHiRes stat
           return
-              $ Db.InputDescOfExisting . (time,) $ Db.ExistingInputDescOf
+              $ Db.InputDescOfExisting $ Db.ExistingInputDescOf
               { idModeAccess = Just (reason, fileModeDescOfStat stat)
               , idStatAccess = Just (reason, fileStatDescOfStat stat)
               , idContentAccess = Just (reason, contentDesc)
@@ -620,20 +620,20 @@ getFileDescInput' db reason filePath = {-# SCC "getFileDescInput" #-} do
 verifyInputDescs ::
   MonadIO f =>
   Db -> BuildTargetEnv -> TargetDesc ->
-  [(FilePath, (FileDesc ne (POSIXTime, Db.ExistingInputDesc)))] ->
+  [(FilePath, (FileDesc ne Db.ExistingInputDesc))] ->
   EitherT (ByteString, FilePath) f ()
 verifyInputDescs db BuildTargetEnv{..} TargetDesc{..} elInputsDescs = {-# SCC "verifyInputDescs" #-} do
   forM_ elInputsDescs $ \(filePath, desc) ->
     annotateError filePath $
-      verifyFileDesc "input" filePath desc $ \stat (mtime, Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) ->
-        when (Posix.modificationTimeHiRes stat /= mtime) $ do
+      verifyFileDesc "input" filePath desc $ \stat (Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) ->
+      do
           let verify str getDesc mPair =
-                verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
+                  verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
           verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
           verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
           verifyMDesc "content"
-            (fileContentDescOfStat "When applying execution log (input)"
-             db filePath stat) $ fmap snd mContentAccess
+              (fileContentDescOfStat "When applying execution log (input)"
+               db filePath stat) $ fmap snd mContentAccess
 
 executionLogVerifyFilesState ::
   MonadIO m =>
@@ -677,7 +677,7 @@ executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} inputsDescs
       -- know if it exists or not because we only need to know whether
       -- the execution log will be re-used or not, not more.
       Just (depReason, FSHook.AccessTypeModeOnly)
-    fromFileDesc (FileDescExisting (_mtime, inputDesc)) =
+    fromFileDesc (FileDescExisting inputDesc) =
       case inputDesc of
       Db.ExistingInputDescOf { Db.idContentAccess = Just (depReason, _) } ->
         Just (depReason, FSHook.AccessTypeFull)
@@ -1096,7 +1096,7 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
     inputAccess ::
       FilePath ->
       (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
-      IO (FileDesc Reason (POSIXTime, Db.ExistingInputDesc))
+      IO (FileDesc Reason Db.ExistingInputDesc)
     inputAccess path (accessTypes, Nothing) = do
       let reason =
             case M.elems accessTypes of
@@ -1119,13 +1119,12 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
         addDesc FSHook.AccessTypeFull $
         fileContentDescOfStat "When making execution log (input)" db path stat
       return $ FileDescExisting
-        ( Posix.modificationTimeHiRes stat
-        , Db.ExistingInputDescOf
-          { Db.idModeAccess = modeAccess
-          , Db.idStatAccess = statAccess
-          , Db.idContentAccess = contentAccess
-          }
-        )
+        Db.ExistingInputDescOf
+        { Db.idModeAccess = modeAccess
+        , Db.idStatAccess = statAccess
+        , Db.idContentAccess = contentAccess
+        }
+
 
 deleteOldTargetOutputs :: BuildTargetEnv -> TargetType FilePath input -> IO ()
 deleteOldTargetOutputs BuildTargetEnv{..} target = do

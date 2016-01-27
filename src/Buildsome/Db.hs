@@ -141,17 +141,17 @@ instance NFData OutputDesc where rnf = genericRnf
 -- TODO: naming...
 data InputDescOf a
     = InputDescOfNonExisting (ReasonOf a)
-    | InputDescOfExisting (POSIXTime, ExistingInputDescOf (ReasonOf a))
+    | InputDescOfExisting (ExistingInputDescOf (ReasonOf a))
     deriving (Show, Generic, Functor, Foldable, Traversable)
 instance NFData a => NFData (InputDescOf a) where rnf = genericRnf
 instance Binary (InputDescOf StringKey)
 
 mapInputDescOfReason :: (ReasonOf a -> ReasonOf b) -> InputDescOf a -> InputDescOf b
 mapInputDescOfReason f (InputDescOfNonExisting r) = InputDescOfNonExisting (f r)
-mapInputDescOfReason f (InputDescOfExisting (t, e)) = InputDescOfExisting (t, fmap f e)
+mapInputDescOfReason f (InputDescOfExisting e) = InputDescOfExisting (fmap f e)
 
 type InputDesc = InputDescOf FilePath
-type FileDescInputOf a = FileDesc (ReasonOf a) (POSIXTime, ExistingInputDescOf (ReasonOf a))
+type FileDescInputOf a = FileDesc (ReasonOf a) (ExistingInputDescOf (ReasonOf a))
 type FileDescInput = FileDescInputOf FilePath
 
 toFileDesc :: InputDescOf a -> FileDescInputOf a
@@ -335,7 +335,7 @@ maybeCmp (Just x) (Just y) = Cmp.Equals == (x `cmp` y)
 maybeCmp _        _        = True
 
 cmpFileDescInput :: InputDescOf r -> InputDescOf r -> Bool
-cmpFileDescInput (InputDescOfExisting (_, a)) (InputDescOfExisting (_, b))   =
+cmpFileDescInput (InputDescOfExisting a) (InputDescOfExisting b)   =
   maybeCmp' (idModeAccess a) (idModeAccess b)
   && maybeCmp' (idStatAccess a) (idStatAccess b)
   && maybeCmp' (idContentAccess a) (idContentAccess b)
