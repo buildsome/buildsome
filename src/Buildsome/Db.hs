@@ -109,8 +109,8 @@ data ReasonOf a
   | BecauseInput (ReasonOf a) a
   | BecauseRequested ByteString
   deriving (Generic, Show, Ord, Eq, Functor, Foldable, Traversable)
-instance Binary a => Binary (ReasonOf a)
 instance NFData a => NFData (ReasonOf a) where rnf = genericRnf
+instance Binary (ReasonOf StringKey)
 
 type Reason = ReasonOf FilePath
 
@@ -119,8 +119,8 @@ data ExistingInputDescOf a = ExistingInputDescOf
   , idStatAccess :: Maybe (a, FileStatDesc)
   , idContentAccess :: Maybe (a, FileContentDesc)
   } deriving (Generic, Show, Ord, Eq, Functor, Foldable, Traversable)
-instance Binary a => Binary (ExistingInputDescOf a)
 instance NFData a => NFData (ExistingInputDescOf a) where rnf = genericRnf
+instance Binary (ExistingInputDescOf (ReasonOf StringKey))
 
 type ExistingInputDesc = ExistingInputDescOf (ReasonOf FilePath)
 
@@ -141,8 +141,8 @@ data InputDescOf a
     = InputDescOfNonExisting (ReasonOf a)
     | InputDescOfExisting (POSIXTime, ExistingInputDescOf (ReasonOf a))
     deriving (Show, Generic, Functor, Foldable, Traversable)
-instance Binary a => Binary (InputDescOf a)
 instance NFData a => NFData (InputDescOf a) where rnf = genericRnf
+instance Binary (InputDescOf StringKey)
 
 type InputDesc = InputDescOf FilePath
 type FileDescInputOf a = FileDesc (ReasonOf a) (POSIXTime, ExistingInputDescOf (ReasonOf a))
@@ -158,8 +158,8 @@ fromFileDesc (FileDescExisting a) = InputDescOfExisting a
 
 newtype ELBranchPath a = ELBranchPath { unELBranchPath :: [(a, InputDescOf a)] }
     deriving (Show, Generic, Functor, Foldable, Traversable)
-instance Binary a => Binary (ELBranchPath a)
 instance NFData a => NFData (ELBranchPath a) where rnf = genericRnf
+instance Binary (ELBranchPath StringKey)
 
 splitBranchPathAt :: Int -> ELBranchPath a -> (ELBranchPath a, ELBranchPath a)
 splitBranchPathAt x (ELBranchPath p) = (ELBranchPath prefix, ELBranchPath suffix)
@@ -174,13 +174,13 @@ data ExecutionLogOf s = ExecutionLogOf
   , elSelfTime :: DiffTime
   } deriving (Generic, Functor, Foldable, Traversable)
 instance NFData a => NFData (ExecutionLogOf a) where rnf = genericRnf
+instance Binary (ExecutionLogOf StringKey)
 
 --elInputsDescs :: ExecutionLogOf s -> [(s, InputDescOf s)]
 elInputsDescs = map (fmap toFileDesc) . unELBranchPath . elInputBranchPath
 
 type ExecutionLog = ExecutionLogOf ByteString
 type ExecutionLogForDb = ExecutionLogOf StringKey
-instance Binary (ExecutionLogOf StringKey)
 deriving instance Show (ExecutionLogOf ByteString)
 
 newtype ExecutionLogNodeKey = ExecutionLogNodeKey Hash -- [(FilePath, FileDescInputNoReasons)]
