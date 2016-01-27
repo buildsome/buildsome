@@ -699,7 +699,7 @@ findApplyExecutionLog bte entity targetDesc =
     findApplyExecutionLog' bte entity targetDesc Nothing Nothing
 
 tryLoadLatestExecutionLog :: BuildTargetEnv -> Target -> IO (Maybe Db.ExecutionLog)
-tryLoadLatestExecutionLog bte@BuildTargetEnv{..} target = {-# SCC "tryLoadLatestExecutionLog" #-} do
+tryLoadLatestExecutionLog BuildTargetEnv{..} target = {-# SCC "tryLoadLatestExecutionLog" #-} do
     mLatestExecutionLogKey <- readIRef $ Db.latestExecutionLog target (bsDb bteBuildsome)
     case mLatestExecutionLogKey of
         Nothing -> return Nothing
@@ -711,7 +711,7 @@ tryLoadLatestExecutionLog bte@BuildTargetEnv{..} target = {-# SCC "tryLoadLatest
               Just _ -> error "Expected leaf!" -- TODO bah
 
 findApplyExecutionLog' :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Maybe (FilePath) -> Maybe Db.ExecutionLog -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
-findApplyExecutionLog' bte@BuildTargetEnv{..} entity targetDesc@TargetDesc{..} retryingBecauseOfInput mLatestExecutionLog = {-# SCC "findApplyExecutionLog" #-} do
+findApplyExecutionLog' bte@BuildTargetEnv{..} entity targetDesc@TargetDesc{..} _retryingBecauseOfInput mLatestExecutionLog = {-# SCC "findApplyExecutionLog" #-} do
   let speculativeReason = Db.BecauseSpeculative (Db.BecauseHooked FSHook.AccessDocEmpty)
       buildInputs (Db.ELBranchPath inputs) = do
           _ <- executionLogBuildInputsSpeculative bte entity targetDesc
