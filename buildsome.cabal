@@ -29,13 +29,8 @@ flag Charts
   description: Enable Cairo charts support
   default: False
 
-executable buildsome
+library
   hs-source-dirs:    src/
-  main-is:           Main.hs
-  c-sources:         cbits/shared.c
-               ,     cbits/sha1.c
-               ,     src/Lib/SharedMemory.c
-  cc-options:        -Wall -O2 -fPIC -std=gnu11
 
   if flag(debug) {
     ghc-options:       -threaded -Wall -O0
@@ -43,7 +38,7 @@ executable buildsome
     ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g
     ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -auto-all -caf-all
   }
-  other-modules:     Buildsome
+  exposed-modules:   Buildsome
                ,     Buildsome.BuildId
                ,     Buildsome.BuildMaps
                ,     Buildsome.Chart
@@ -123,7 +118,7 @@ executable buildsome
                ,     Lib.Version
                ,     Paths_buildsome
 
-  build-depends:     aeson >=0.7 
+  build-depends:     aeson >=0.7
                    , aeson-pretty >=0.7 && <0.8
                    , ansi-terminal == 0.6.*
                    , array >= 0.5.1
@@ -166,3 +161,20 @@ executable buildsome
 
   build-tools:         happy, alex
   default-language:    Haskell2010
+
+executable buildsome
+  main-is:           src/Main.hs
+  c-sources:         cbits/shared.c
+               ,     cbits/sha1.c
+               ,     src/Lib/SharedMemory.c
+  cc-options:        -Wall -O2 -fPIC -std=gnu11
+
+  ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g
+  ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g
+  build-depends:     base >=4.6 && <4.9
+               ,     buildsome
+               ,     base-compat
+               ,     bytestring >=0.10 && <0.11
+               ,     containers >=0.5 && <0.6
+               ,     unix >=2.7 && <2.8
+  default-language:  Haskell2010
