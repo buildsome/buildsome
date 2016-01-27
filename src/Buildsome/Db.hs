@@ -1,14 +1,15 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE CPP                #-}
+{-# LANGUAGE DeriveFoldable     #-}
+{-# LANGUAGE DeriveFunctor      #-}
+{-# LANGUAGE DeriveGeneric      #-}
+{-# LANGUAGE DeriveTraversable  #-}
+{-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE NoImplicitPrelude  #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE RecordWildCards    #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections      #-}
 module Buildsome.Db
   ( Db, with
   , registeredOutputsRef, leakedOutputsRef
@@ -30,53 +31,51 @@ module Buildsome.Db
   , ExecutionLogNodeKey(..), StringKey(..)
   ) where
 
-import           Buildsome.BuildId (BuildId)
-import           Control.Applicative ((<|>), Alternative(..))
-import           Control.DeepSeq (NFData(..))
-import           Control.DeepSeq.Generics (genericRnf)
-import           Control.Monad (join, liftM)
-import           Control.Monad.IO.Class (liftIO, MonadIO)
-import           Control.Monad.Trans.Either (runEitherT, EitherT(..), left)
-import           Data.Binary (Binary(..))
-import           Data.ByteString (ByteString)
-import qualified Data.ByteString.Char8 as BS8
-import           Data.Default (def)
-import qualified Data.List as List
+import           Buildsome.BuildId          (BuildId)
+import           Control.Applicative        (Alternative (..), (<|>))
+import           Control.DeepSeq            (NFData (..))
+import           Control.DeepSeq.Generics   (genericRnf)
+import           Control.Monad              (join, liftM)
+import           Control.Monad.IO.Class     (MonadIO, liftIO)
+import           Control.Monad.Trans.Either (EitherT (..), left, runEitherT)
+import           Data.Binary                (Binary (..))
+import           Data.ByteString            (ByteString)
+import qualified Data.ByteString.Char8      as BS8
+import           Data.Default               (def)
+import qualified Data.List                  as List
 
 import           Data.IORef
-import           Data.Map (Map)
-import qualified Data.Map as Map
+import           Data.Map                   (Map)
+import qualified Data.Map                   as Map
 
-import           Data.Monoid ((<>))
-import           Data.Set (Set)
-import qualified Data.Set as S
-import           Data.Time.Clock (DiffTime)
-import           Data.Time.Clock.POSIX (POSIXTime)
-import qualified Database.LevelDB.Base as LevelDB
-import           GHC.Generics (Generic)
-import           Lib.Binary (encode, decode)
-import           Lib.Cmp (Cmp(..))
-import qualified Lib.Cmp as Cmp
-import           Lib.Directory (catchDoesNotExist, createDirectories, makeAbsolutePath)
-import           Lib.Exception (bracket)
-import qualified Lib.FSHook as FSHook
-import           Lib.FileDesc (FileDesc(..), bimapFileDesc, FileContentDesc, FileModeDesc, FileStatDesc)
-import           Lib.FilePath (FilePath, (</>), (<.>))
-import           Lib.Hash (Hash)
-import qualified Lib.Hash as Hash
-import           Lib.Makefile (Makefile)
-import qualified Lib.Makefile as Makefile
-import           Lib.Makefile.Monad (PutStrLn)
-
-import           Lib.StdOutputs (StdOutputs(..))
-
-
-
-import           Lib.TimeInstances ()
-import qualified System.Posix.ByteString as Posix
-
-
-import           Prelude.Compat hiding (FilePath)
+import           Data.Monoid                ((<>))
+import           Data.Set                   (Set)
+import qualified Data.Set                   as S
+import           Data.Time.Clock            (DiffTime)
+import           Data.Time.Clock.POSIX      (POSIXTime)
+import qualified Database.LevelDB.Base      as LevelDB
+import           GHC.Generics               (Generic)
+import           Lib.Binary                 (decode, encode)
+import           Lib.Cmp                    (Cmp (..))
+import qualified Lib.Cmp                    as Cmp
+import           Lib.Directory              (catchDoesNotExist,
+                                             createDirectories,
+                                             makeAbsolutePath)
+import           Lib.Exception              (bracket)
+import           Lib.FileDesc               (FileContentDesc, FileDesc (..),
+                                             FileModeDesc, FileStatDesc,
+                                             bimapFileDesc)
+import           Lib.FilePath               (FilePath, (<.>), (</>))
+import qualified Lib.FSHook                 as FSHook
+import           Lib.Hash                   (Hash)
+import qualified Lib.Hash                   as Hash
+import           Lib.Makefile               (Makefile)
+import qualified Lib.Makefile               as Makefile
+import           Lib.Makefile.Monad         (PutStrLn)
+import           Lib.StdOutputs             (StdOutputs (..))
+import           Lib.TimeInstances          ()
+import           Prelude.Compat             hiding (FilePath)
+import qualified System.Posix.ByteString    as Posix
 
 schemaVersion :: ByteString
 schemaVersion = "schema.ver.21"
@@ -89,15 +88,15 @@ debugPrint _ = liftIO $ return ()
 #endif
 
 data Db = Db
-  { dbLevel :: LevelDB.DB
+  { dbLevel             :: LevelDB.DB
   , dbRegisteredOutputs :: IORef (Set FilePath)
-  , dbLeakedOutputs :: IORef (Set FilePath)
-  , dbStrings :: IORef (Map Hash ByteString)
+  , dbLeakedOutputs     :: IORef (Set FilePath)
+  , dbStrings           :: IORef (Map Hash ByteString)
   }
 
 data FileContentDescCache = FileContentDescCache
   { fcdcModificationTime :: POSIXTime
-  , fcdcFileContentDesc :: FileContentDesc
+  , fcdcFileContentDesc  :: FileContentDesc
   } deriving (Generic, Show)
 instance Binary FileContentDescCache
 
@@ -117,8 +116,8 @@ instance Binary (ReasonOf StringKey)
 type Reason = ReasonOf FilePath
 
 data ExistingInputDescOf a = ExistingInputDescOf
-  { idModeAccess :: Maybe (a, FileModeDesc)
-  , idStatAccess :: Maybe (a, FileStatDesc)
+  { idModeAccess    :: Maybe (a, FileModeDesc)
+  , idStatAccess    :: Maybe (a, FileStatDesc)
   , idContentAccess :: Maybe (a, FileContentDesc)
   } deriving (Generic, Show, Ord, Eq, Functor, Foldable, Traversable)
 instance NFData a => NFData (ExistingInputDescOf a) where rnf = genericRnf
@@ -130,7 +129,7 @@ inputDescDropReasons :: ExistingInputDesc -> ExistingInputDescOf ()
 inputDescDropReasons = fmap (const ())
 
 data OutputDesc = OutputDesc
-  { odStatDesc :: FileStatDesc
+  { odStatDesc    :: FileStatDesc
   , odContentDesc :: Maybe FileContentDesc -- Nothing if directory
   } deriving (Generic, Show, Eq)
 instance Binary OutputDesc
@@ -168,12 +167,12 @@ splitBranchPathAt x (ELBranchPath p) = (ELBranchPath prefix, ELBranchPath suffix
     where (prefix, suffix) = List.splitAt x p
 
 data ExecutionLogOf s = ExecutionLogOf
-  { elBuildId :: BuildId
-  , elCommand :: s
+  { elBuildId         :: BuildId
+  , elCommand         :: s
   , elInputBranchPath :: ELBranchPath s
-  , elOutputsDescs :: [(s, (FileDesc () (POSIXTime, OutputDesc)))]
-  , elStdoutputs :: StdOutputs s
-  , elSelfTime :: DiffTime
+  , elOutputsDescs    :: [(s, (FileDesc () (POSIXTime, OutputDesc)))]
+  , elStdoutputs      :: StdOutputs s
+  , elSelfTime        :: DiffTime
   } deriving (Generic, Functor, Foldable, Traversable)
 instance NFData a => NFData (ExecutionLogOf a) where rnf = genericRnf
 instance Binary (ExecutionLogOf StringKey)
@@ -246,9 +245,9 @@ with rawDbPath body = do
       `catchDoesNotExist` return S.empty
 
 data IRef a = IRef
-  { readIRef :: IO (Maybe a)
+  { readIRef  :: IO (Maybe a)
   , writeIRef :: a -> IO ()
-  , delIRef :: IO ()
+  , delIRef   :: IO ()
   }
 
 data TargetLogType
