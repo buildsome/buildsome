@@ -8,6 +8,8 @@ module Lib.Hash
        , md5
        ) where
 
+import           Control.DeepSeq (NFData(..))
+import           Control.DeepSeq.Generics (genericRnf)
 import qualified Crypto.Hash.MD5 as MD5
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
@@ -19,6 +21,7 @@ import           Prelude.Compat hiding (null)
 newtype Hash = Hash { asByteString :: ByteString }
     deriving (Generic, Show, Eq, Ord)
 instance Binary Hash
+instance NFData Hash where rnf = genericRnf
 instance Monoid Hash where
     (Hash x) `mappend` (Hash y) = md5 (x `mappend` y)
     mempty                      = Hash mempty

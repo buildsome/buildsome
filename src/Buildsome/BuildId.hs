@@ -7,6 +7,9 @@ module Buildsome.BuildId
 
 import Prelude.Compat
 
+import Control.DeepSeq (NFData(..))
+import Control.DeepSeq.Generics (genericRnf)
+
 import Data.Binary (Binary)
 import Data.Time.Clock (getCurrentTime)
 
@@ -21,7 +24,7 @@ import GHC.Generics (Generic)
 
 newtype BuildId = BuildId String
   deriving (Show, Generic)
-
+instance NFData BuildId where rnf = genericRnf
 instance Binary BuildId
 
 new :: IO BuildId

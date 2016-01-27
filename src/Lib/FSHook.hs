@@ -19,6 +19,8 @@ module Lib.FSHook
 
 import           Control.Concurrent (ThreadId, myThreadId, killThread)
 import           Control.Concurrent.MVar
+import           Control.DeepSeq (NFData(..))
+import           Control.DeepSeq.Generics (genericRnf)
 import qualified Control.Exception as E
 import           Control.Monad (forever, void, unless, (<=<))
 import           Data.Binary (Binary(..))
@@ -71,6 +73,8 @@ data AccessDoc
     = AccessDocEmpty -- TODO: AccessDoc Protocol.Func JobLabel
     deriving (Show, Generic, Ord, Eq)
 instance Binary AccessDoc
+instance NFData AccessDoc
+    where rnf = genericRnf
 
 type JobId = ByteString
 

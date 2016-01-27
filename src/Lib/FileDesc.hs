@@ -24,6 +24,8 @@ module Lib.FileDesc
 
 import Prelude.Compat hiding (FilePath)
 
+import Control.DeepSeq (NFData(..))
+import Control.DeepSeq.Generics (genericRnf)
 import Data.Binary (Binary(..))
 import Data.Function (on)
 import Data.Monoid ((<>))
@@ -51,6 +53,7 @@ data FileContentDesc
   | FileContentDescDir ContentHash -- Of the getDirectoryContents
   deriving (Generic, Eq, Show, Ord)
 instance Binary FileContentDesc
+instance NFData FileContentDesc where rnf = genericRnf
 instance Cmp FileContentDesc where
   FileContentDescRegular x `cmp` FileContentDescRegular y = Cmp.eq ["change"] x y
   FileContentDescSymlink x `cmp` FileContentDescSymlink y = map ("symlink target: " <>) <$> Cmp.eqShow x y
@@ -62,6 +65,7 @@ instance Cmp FileContentDesc where
 data FileModeDesc = FileModeDesc Posix.FileMode
   deriving (Generic, Eq, Show, Ord)
 instance Binary FileModeDesc
+instance NFData FileModeDesc where rnf = const () -- TODO: ok?
 instance Cmp FileModeDesc where
   FileModeDesc x `cmp` FileModeDesc y = Cmp.eqShow x y
 
@@ -69,14 +73,15 @@ instance Cmp FileModeDesc where
 -- they may change as files are created by various process in the
 -- directory (see KNOWN_ISSUES).
 data BasicStatEssence = BasicStatEssence
-  { deviceID        :: Posix.DeviceID
-  , fileGroup       :: Posix.GroupID
-  , fileID          :: Posix.FileID
-  , fileMode        :: Posix.FileMode
-  , fileOwner       :: Posix.UserID
-  , specialDeviceID :: Posix.DeviceID
+  { deviceID        :: !Posix.DeviceID
+  , fileGroup       :: !Posix.GroupID
+  , fileID          :: !Posix.FileID
+  , fileMode        :: !Posix.FileMode
+  , fileOwner       :: !Posix.UserID
+  , specialDeviceID :: !Posix.DeviceID
   } deriving (Generic, Eq, Show, Ord)
 instance Binary BasicStatEssence
+instance NFData BasicStatEssence where rnf = const () -- TODO: ok?
 instance Cmp BasicStatEssence where
   cmp =
     mconcat
@@ -90,14 +95,15 @@ instance Cmp BasicStatEssence where
       cShow = cmpGetterBy Cmp.eqShow
 
 data FullStatEssence = FullStatEssence
-  { basicStatEssence      :: BasicStatEssence
-  , fileSize              :: Posix.FileOffset
-  , fileType              :: FileType
+  { basicStatEssence      :: !BasicStatEssence
+  , fileSize              :: !Posix.FileOffset
+  , fileType              :: !FileType
   -- Tracking access time is meaningless
-  , modificationTimeHiRes :: POSIXTime
-  , statusChangeTimeHiRes :: POSIXTime
+  , modificationTimeHiRes :: !POSIXTime
+  , statusChangeTimeHiRes :: !POSIXTime
   } deriving (Generic, Eq, Show, Ord)
 instance Binary FullStatEssence
+instance NFData FullStatEssence where rnf = const () -- TODO wat
 instance Cmp FullStatEssence where
   cmp =
     mconcat
@@ -114,6 +120,8 @@ data FileStatDesc
   deriving (Generic, Eq, Show, Ord)
   -- Weird deriving order!
 instance Binary FileStatDesc
+instance NFData FileStatDesc
+    where rnf = genericRnf
 instance Cmp FileStatDesc where
   FileStatDirectory a `cmp` FileStatDirectory b = cmp a b
   FileStatOther a `cmp` FileStatOther b = cmp a b
@@ -173,6 +181,7 @@ data FileDesc ne e
   | FileDescExisting e
   deriving (Generic, Eq, Ord, Show, Functor, Foldable, Traversable)
 instance (Binary ne, Binary e) => Binary (FileDesc ne e)
+instance (NFData ne, NFData e) => NFData (FileDesc ne e) where rnf = genericRnf
 
 bimapFileDesc :: (ne -> ne') -> (e -> e') -> FileDesc ne e -> FileDesc ne' e'
 bimapFileDesc f _ (FileDescNonExisting x) = FileDescNonExisting (f x)
