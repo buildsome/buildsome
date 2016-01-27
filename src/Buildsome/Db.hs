@@ -178,7 +178,7 @@ data ExecutionLogOf s = ExecutionLogOf
 instance NFData a => NFData (ExecutionLogOf a) where rnf = genericRnf
 instance Binary (ExecutionLogOf StringKey)
 
---elInputsDescs :: ExecutionLogOf s -> [(s, InputDescOf s)]
+elInputsDescs :: ExecutionLogOf s -> [(s, FileDescInputOf s)]
 elInputsDescs = map (fmap toFileDesc) . unELBranchPath . elInputBranchPath
 
 type ExecutionLog = ExecutionLogOf ByteString
@@ -365,9 +365,9 @@ firstRight = foldr firstRightAlt (left Nothing)
 
 executionLogPathCheck ::
     (MonadIO m) =>
-    Db -> (ByteString -> IO InputDesc) -> ELBranchPath FilePath
+    (ByteString -> IO InputDesc) -> ELBranchPath FilePath
     -> EitherT (Maybe FilePath) m ()
-executionLogPathCheck db getCurFileDesc (ELBranchPath path) = {-# SCC "executionLogPathCheck" #-}
+executionLogPathCheck getCurFileDesc (ELBranchPath path) = {-# SCC "executionLogPathCheck" #-}
     allRight $ flip map path $ \(filePath, expectedFileDesc) -> do
         curFileDesc <- liftIO $ getCurFileDesc filePath
         if cmpFileDescInput curFileDesc expectedFileDesc
@@ -408,7 +408,7 @@ executionLogLookup' iref db prepareInputs getCurFileDesc = {-# SCC "executionLog
                 Left _ -> left Nothing
             firstRight
                 $ flip map resolvedPaths $ \(path, target) ->
-                    (executionLogPathCheck db getCurFileDesc path
+                    (executionLogPathCheck getCurFileDesc path
                      >> executionLogLookup' (executionLogNode target db) db prepareInputs getCurFileDesc)
 
 executionLogNodeKey :: ExecutionLogNodeKey -> ELBranchPath StringKey -> ExecutionLogNodeKey
