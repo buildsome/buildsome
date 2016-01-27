@@ -70,6 +70,9 @@ refreshFromContentCache
       $ mconcat [ "Copying: " <> cPath (show cachedPath) <> " -> " <> cPath (show filePath) ]
     removeIfExists filePath
     removeIfExists tempFile
+    -- Update the cached file's mtime so as to make cache cleanup by last usage possible
+    Posix.touchFile cachedPath
+
     Dir.createDirectories $ FilePath.takeDirectory filePath
     -- Set stat attributes before creating the file, so the target file is created with correct
     -- attrs from the start

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Directory
@@ -79,6 +80,9 @@ removeFileOrDirectory path =
   -- the meaningful IO exception:
   (Posix.removeLink path) path
 
+isDotDir :: FilePath -> Bool
+isDotDir fn = fn == "." || fn == ".."
+
 getDirectoryContents :: FilePath -> IO [FilePath]
 getDirectoryContents path =
   bracket (Posix.openDirStream path) Posix.closeDirStream go
@@ -87,7 +91,7 @@ getDirectoryContents path =
       fn <- Posix.readDirStream dirStream
       if BS8.null fn
         then return []
-        else (fn :) <$> go dirStream
+        else (if isDotDir fn then id else (fn:)) <$> go dirStream
 
 getDirectoryContentsHash :: FilePath -> IO Hash
 getDirectoryContentsHash path = {-# SCC "getDirectoryContentsHash" #-}
@@ -97,7 +101,7 @@ getDirectoryContentsHash path = {-# SCC "getDirectoryContentsHash" #-}
       fn <- Posix.readDirStream dirStream
       if BS8.null fn
         then return hash
-        else go (hash <> Hash.md5 fn) dirStream
+        else go (if isDotDir fn then hash else (hash <> Hash.md5 fn)) dirStream
 
 makeAbsolutePath :: FilePath -> IO FilePath
 makeAbsolutePath path = (</> path) <$> Posix.getWorkingDirectory
