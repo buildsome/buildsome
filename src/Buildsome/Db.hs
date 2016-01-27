@@ -109,6 +109,7 @@ data ReasonOf a
   | BecauseContainerDirectoryOfOutput a
   | BecauseInput (ReasonOf a) a
   | BecauseRequested ByteString
+  | BecauseTryingToResolveCache
   deriving (Generic, Show, Ord, Eq, Functor, Foldable, Traversable)
 instance NFData a => NFData (ReasonOf a) where rnf = genericRnf
 instance Binary (ReasonOf StringKey)
@@ -144,6 +145,10 @@ data InputDescOf a
     deriving (Show, Generic, Functor, Foldable, Traversable)
 instance NFData a => NFData (InputDescOf a) where rnf = genericRnf
 instance Binary (InputDescOf StringKey)
+
+mapInputDescOfReason :: (ReasonOf a -> ReasonOf b) -> InputDescOf a -> InputDescOf b
+mapInputDescOfReason f (InputDescOfNonExisting r) = InputDescOfNonExisting (f r)
+mapInputDescOfReason f (InputDescOfExisting (t, e)) = InputDescOfExisting (t, fmap f e)
 
 type InputDesc = InputDescOf FilePath
 type FileDescInputOf a = FileDesc (ReasonOf a) (POSIXTime, ExistingInputDescOf (ReasonOf a))
@@ -417,10 +422,15 @@ executionLogNodeKey (ExecutionLogNodeKey oldKey) (ELBranchPath is) =
 executionLogNodeRootKey :: Makefile.Target -> ExecutionLogNodeKey
 executionLogNodeRootKey = ExecutionLogNodeKey . targetKey TargetLogExecutionLogNode
 
+pathDropReasons :: ELBranchPath a -> ELBranchPath a
+pathDropReasons = ELBranchPath . map (\(f, d) -> (f, mapInputDescOfReason (const BecauseTryingToResolveCache) d)) . unELBranchPath
+
 executionLogInsert :: Db -> ExecutionLogNodeKey -> ExecutionLog -> ELBranchPath StringKey -> IO ExecutionLogNodeKey
-executionLogInsert db key el path = {-# SCC "executionLogInsert" #-} do
+executionLogInsert db key el path' = {-# SCC "executionLogInsert" #-} do
+    let path = pathDropReasons path'
+        (prefix, suffix) = splitBranchPathAt pathChunkSize path
+
     debugPrint $ "executionLogInsert: inputsLeft: " <> (show $ length $ unELBranchPath path)
-    let (prefix, suffix) = splitBranchPathAt pathChunkSize path
     case unELBranchPath prefix of
         [] -> do
             eldb <- putExecutionLog db el
@@ -447,7 +457,8 @@ executionLogUpdate' iref key db el (ELBranchPath []) = do
     eldb <- putExecutionLog db el
     writeIRef iref (ExecutionLogNodeLeaf eldb)
     return key
-executionLogUpdate' iref key db el inputsLeft = {-# SCC "executionLogUpdate'_branch" #-} do
+executionLogUpdate' iref key db el inputsLeft' = {-# SCC "executionLogUpdate'_branch" #-} do
+    let inputsLeft = pathDropReasons inputsLeft'
     eln <- readIRef iref
     case eln of
         Nothing -> executionLogInsert db key el inputsLeft
