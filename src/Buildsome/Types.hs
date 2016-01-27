@@ -5,13 +5,15 @@ module Buildsome.Types where
 
 import           Buildsome.BuildId (BuildId)
 import           Buildsome.BuildMaps (BuildMaps(..), TargetRep)
-import           Buildsome.Db (Db, Reason)
+import           Buildsome.Db (Db, Reason, InputDesc)
 import           Buildsome.Opts (Opt(..))
 import           Buildsome.Slave (Slave)
 import           Buildsome.Stats (Stats)
 import qualified Control.Exception as E
 import           Data.ByteString (ByteString)
 import           Data.Set (Set)
+import           Data.Map (Map)
+import           Data.IORef (IORef)
 import           Lib.ColorText (ColorText)
 import           Lib.FSHook (FSHook)
 import           Lib.FilePath (FilePath)
@@ -45,6 +47,7 @@ data Buildsome = Buildsome
   , bsFastKillBuild :: E.SomeException -> IO ()
   , bsRender :: ColorText -> ByteString
   , bsParPool :: Parallelism.Pool
+  , bsCachedStats :: IORef (Map FilePath InputDesc)
   }
 
 data WaitOrCancel = Wait | CancelAndWait

@@ -592,8 +592,18 @@ verifyFileDesc str filePath fileDesc existingVerify = do
     (Nothing, FileDescExisting {}) -> left (str <> " file was deleted")
 
 
-getFileDescInput :: MonadIO m => Db.Db -> Reason -> FilePath -> m Db.InputDesc
-getFileDescInput db reason filePath = {-# SCC "getFileDescInput" #-} do
+getFileDescInput :: MonadIO m => Buildsome -> Db.Db -> Reason -> FilePath -> m Db.InputDesc
+getFileDescInput buildsome db reason filePath = {-# SCC "getFileDescInput" #-} do
+  cache <- liftIO $ readIORef $ bsCachedStats buildsome
+  case M.lookup filePath cache of
+      Just desc -> return desc
+      Nothing -> do
+          desc <- getFileDescInput' db reason filePath
+          liftIO $ atomicModifyIORef'_ (bsCachedStats buildsome) (M.insert filePath desc)
+          return desc
+
+getFileDescInput' :: MonadIO m => Db.Db -> Reason -> FilePath -> m Db.InputDesc
+getFileDescInput' db reason filePath = {-# SCC "getFileDescInput" #-} do
   mStat <- liftIO $ Dir.getMFileStatus filePath
   case mStat of
       Nothing -> return $ Db.InputDescOfNonExisting reason
@@ -692,12 +702,6 @@ buildManyWithParReleased mkReason bte@BuildTargetEnv{..} entity slaveRequests =
 verbosePrint :: BuildTargetEnv -> ColorText -> IO ()
 verbosePrint BuildTargetEnv{..} = whenVerbose bteBuildsome . printStrLn btePrinter . bsRender bteBuildsome
 
--- TODO: Remember the order of input files' access so can iterate here
--- in order
-findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
-findApplyExecutionLog bte entity targetDesc =
-    findApplyExecutionLog' bte entity targetDesc Nothing Nothing
-
 tryLoadLatestExecutionLog :: BuildTargetEnv -> Target -> IO (Maybe Db.ExecutionLog)
 tryLoadLatestExecutionLog BuildTargetEnv{..} target = {-# SCC "tryLoadLatestExecutionLog" #-} do
     mLatestExecutionLogKey <- readIRef $ Db.latestExecutionLog target (bsDb bteBuildsome)
@@ -710,22 +714,16 @@ tryLoadLatestExecutionLog BuildTargetEnv{..} target = {-# SCC "tryLoadLatestExec
               Just (Db.ExecutionLogNodeLeaf el) -> Just <$> Db.getExecutionLog (bsDb bteBuildsome) el
               Just _ -> error "Expected leaf!" -- TODO bah
 
-findApplyExecutionLog' :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Maybe (FilePath) -> Maybe Db.ExecutionLog -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
-findApplyExecutionLog' bte@BuildTargetEnv{..} entity targetDesc@TargetDesc{..} _retryingBecauseOfInput mLatestExecutionLog = {-# SCC "findApplyExecutionLog" #-} do
+findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
+findApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc@TargetDesc{..} = {-# SCC "findApplyExecutionLog" #-} do
   let speculativeReason = Db.BecauseSpeculative (Db.BecauseHooked FSHook.AccessDocEmpty)
-      buildInputs (Db.ELBranchPath inputs) = do
+      buildInputs inputs = do
           _ <- executionLogBuildInputsSpeculative bte entity targetDesc
-              -- AccessType is wrong here, nor we can we (rather
-              -- arbitrarily) use 'full' because it will fail on
-              -- directories that have patterns
-              $ map (fmap (Db.bimapFileDesc
-                           (const speculativeReason)
-                           (fmap . fmap $ const speculativeReason)))
-              $ map (fmap Db.toFileDesc)
+              $ M.toList . M.fromList -- remove duplicates
+              $ concatMap (map (fmap Db.toFileDesc) . Db.unELBranchPath)
               $ inputs
           return ()
-
-  mExecutionLog <- Db.executionLogLookup tdTarget db (mapM_ buildInputs) (getFileDescInput db speculativeReason)
+  mExecutionLog <- Db.executionLogLookup tdTarget db buildInputs (getFileDescInput bteBuildsome db speculativeReason)
   case mExecutionLog of
     Left Nothing -> handleCacheMiss
     Left (Just missingInput) -> do
@@ -742,10 +740,7 @@ findApplyExecutionLog' bte@BuildTargetEnv{..} entity targetDesc@TargetDesc{..} _
     describeError (SpeculativeBuildFailure exception) =
       cWarning (showFirstLine exception)
     db = bsDb bteBuildsome
-    getLatest = do
-      case mLatestExecutionLog of
-        Nothing -> tryLoadLatestExecutionLog bte tdTarget
-        Just el -> return $ Just el
+    getLatest = tryLoadLatestExecutionLog bte tdTarget
 
     applyExecutionLog executionLog = do
       verbosePrint bte . mconcat $
@@ -1354,6 +1349,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
 
     runOnce <- once
     errorRef <- newIORef Nothing
+    statsCache <- newIORef M.empty
     let
       killOnce msg exception =
         void $ E.uninterruptibleMask_ $ runOnce $ do
@@ -1379,6 +1375,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
             Opts.DieQuickly -> killOnce "Build step failed, no -k specified"
         , bsRender = Printer.render printer
         , bsParPool = pool
+        , bsCachedStats = statsCache
         }
     withInstalledSigintHandler
       (killOnce "\nBuild interrupted by Ctrl-C, shutting down."
