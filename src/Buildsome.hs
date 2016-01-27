@@ -1066,14 +1066,7 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
                 FileContentDescRegular contentHash ->
                   if Hash.null contentHash
                   then return ()
-                  else do
-                    let targetPath = ContentCache.mkTargetWithHashPath buildsome contentHash
-                    -- putStrLn $ BS8.unpack ("Caching: " <> outPath <> " -> " <> targetPath)
-                    alreadyExists <- FilePath.exists targetPath
-                    unless alreadyExists $ do
-                      removeFileOrDirectoryOrNothing targetPath
-                      Dir.createDirectories $ FilePath.takeDirectory targetPath
-                      Dir.copyFile outPath targetPath
+                  else ContentCache.addFileToCache buildsome outPath stat contentHash
                 _ -> return ()
               return $ Just chash
           let mtime = Posix.modificationTimeHiRes stat

@@ -4,14 +4,15 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.ContentCache where
 
+import qualified Buildsome.Color as Color
 import qualified Buildsome.Db as Db
 import           Buildsome.Types (Buildsome(..), BuildTargetEnv(..))
-import qualified Data.ByteString.Base16 as Base16
-import qualified Buildsome.Color as Color
 import           Control.Monad (unless, when, forM_)
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left)
+import qualified Data.ByteString.Base16 as Base16
 import           Data.List (sortOn)
+import           Data.Maybe (fromMaybe)
 
 import           Data.Monoid
 import           Data.String (IsString(..))
@@ -84,6 +85,18 @@ cleanContentCacheDir' buildsome = do
 
 mkTargetWithHashPath :: Buildsome -> Hash -> FilePath
 mkTargetWithHashPath buildsome contentHash = contentCacheDir buildsome </> Base16.encode (Hash.asByteString contentHash)-- (outPath <> "." <> Base16.encode contentHash)
+
+addFileToCache :: Buildsome -> FilePath -> Posix.FileStatus -> Hash -> IO ()
+addFileToCache buildsome outPath stat contentHash = do
+  let targetPath = mkTargetWithHashPath buildsome contentHash
+  -- putStrLn $ BS8.unpack ("Caching: " <> outPath <> " -> " <> targetPath)
+  alreadyExists <- FilePath.exists targetPath
+  unless alreadyExists $ do
+    Dir.createDirectories $ FilePath.takeDirectory targetPath
+    Dir.copyFile outPath targetPath
+    savedSize <- fromMaybe 0 <$> Db.readIRef (Db.cachedOutputsUsage $ bsDb buildsome)
+    Db.writeIRef (Db.cachedOutputsUsage (bsDb buildsome))
+        $ savedSize + (fromIntegral $ Posix.fileSize stat)
 
 refreshFromContentCache :: (IsString e, MonadIO m) =>
   BuildTargetEnv -> FilePath -> Maybe FileContentDesc -> Maybe FileStatDesc -> EitherT e m ()
