@@ -27,6 +27,7 @@ module Buildsome.Db
   , Reason, ReasonOf(..)
   , IRef(..)
   , MFileContentDesc, MakefileParseCache(..), makefileParseCache
+  , cachedOutputsUsage
   -- Exported for benchmarking / testing
   , ExecutionLogNodeKey(..), StringKey(..)
   ) where
@@ -491,3 +492,7 @@ instance Binary MakefileParseCache
 makefileParseCache :: Db -> Makefile.Vars -> IRef MakefileParseCache
 makefileParseCache db vars =
     mkIRefKey ("makefileParseCache_Schema.1:" <> Hash.asByteString (Hash.md5 $ encode vars)) db
+
+cachedOutputsUsage :: Db -> IRef Integer
+cachedOutputsUsage db = mkIRefKey "cachedOutputsUsage_Schema.1" db
+

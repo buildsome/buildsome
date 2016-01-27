@@ -1,19 +1,21 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.ContentCache where
 
+import qualified Buildsome.Db as Db
 import           Buildsome.Types (Buildsome(..), BuildTargetEnv(..))
-import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime, posixDayLength)
 import qualified Data.ByteString.Base16 as Base16
 import qualified Buildsome.Color as Color
-import           Control.Monad (unless, when, forM)
+import           Control.Monad (unless, when, forM_)
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left)
-import           Data.Maybe (catMaybes)
+import           Data.List (sortOn)
+
 import           Data.Monoid
 import           Data.String (IsString(..))
-import           Lib.Directory (getMFileStatus, removeFileOrDirectoryOrNothing)
+import           Lib.Directory (getMFileStatus)
 import qualified Lib.Directory as Dir
 import           Lib.FileDesc (FileContentDesc(..), BasicStatEssence(..), FullStatEssence(..), FileStatDesc(..))
 import           Lib.FilePath (FilePath, (</>))
@@ -29,32 +31,56 @@ import           Prelude.Compat hiding (FilePath, show)
 
 const_CACHED_OUTPUTS_DIR :: FilePath
 const_CACHED_OUTPUTS_DIR = "cached_outputs"
-const_MAX_CACHE_FILE_AGE :: POSIXTime
-const_MAX_CACHE_FILE_AGE = posixDayLength * 5
-
+const_MAX_CACHE_SIZE :: Integer
+const_MAX_CACHE_SIZE = 4 * 1024 * 1024 * 1024
 
 contentCacheDir :: Buildsome -> FilePath
 contentCacheDir buildsome = bsBuildsomePath buildsome </> const_CACHED_OUTPUTS_DIR
 
+filesToDelete :: Integral a => a -> [(FilePath, Maybe Posix.FileStatus)] -> (a, [(FilePath, a)])
+filesToDelete maxSize fs = foldr go (0, []) fs
+    where
+        go (fileName, Just stat)
+            | Posix.isRegularFile stat = addFile fileName stat
+            | otherwise                = id
+        go (_fileName, Nothing)        = id
+
+        addFile fileName stat (size, outFiles) = (newSize, newFiles)
+            where
+                fileSize = fromIntegral $ Posix.fileSize stat
+                newSize = size + fileSize
+                newFiles =
+                    if (newSize > maxSize)
+                    then (fileName, fileSize):outFiles
+                    else outFiles
+
 cleanContentCacheDir :: Buildsome -> IO ()
 cleanContentCacheDir buildsome = do
-  currentTime <- getPOSIXTime
-  files <- Dir.getDirectoryContents $ contentCacheDir buildsome
-  removed <- forM files $ \fileName -> do
-    mFileStatus <- getMFileStatus fileName
-    case mFileStatus of
-      Nothing -> return Nothing
-      Just fileStatus ->
-        if Posix.modificationTimeHiRes fileStatus - currentTime > const_MAX_CACHE_FILE_AGE
-        then do
-          removeFileOrDirectoryOrNothing fileName
-          return $ Just fileName
-        else
-          return Nothing
-  let numRemoved = length $ catMaybes removed
-  putStrLn $ concat
-    [ "Cache contains ", show (length removed)
-    , ", removed ", show numRemoved, " old cache files" ]
+  Dir.createDirectories $ contentCacheDir buildsome
+  putStr "Checking cache dir size..."
+  savedSize <- Db.readIRef $ Db.cachedOutputsUsage (bsDb buildsome)
+  case savedSize of
+      Just x | x < const_MAX_CACHE_SIZE -> putStrLn "OK."
+      _ -> cleanContentCacheDir' buildsome
+
+cleanContentCacheDir' :: Buildsome -> IO ()
+cleanContentCacheDir' buildsome = do
+  files <- Dir.getDirectoryContents (contentCacheDir buildsome)
+      >>= mapM (return . ((contentCacheDir buildsome <> "/") <>))
+      >>= mapM (\fileName -> (fileName,) <$> getMFileStatus fileName)
+  let (totalSize, filesToRemove) = filesToDelete const_MAX_CACHE_SIZE $ sortOn (fmap Posix.modificationTimeHiRes . snd) files
+      numRemoved = length $ filesToRemove
+      bytesSaved = sum (map snd filesToRemove)
+  if numRemoved > 0
+      then putStrLn $ concat
+           [ "Cache dir ", show (contentCacheDir buildsome)
+           , " contains ", show (length files)
+           , " files, totaling ", show totalSize
+           , " bytes. Going to remove ", show numRemoved, " oldest cache files"
+           , ", saving ", show bytesSaved, " bytes." ]
+      else putStr "Updating from disk..." >> putStrLn "OK."
+  forM_ filesToRemove (Posix.removeLink . fst)
+  Db.writeIRef (Db.cachedOutputsUsage (bsDb buildsome)) $ totalSize - bytesSaved
 
 mkTargetWithHashPath :: Buildsome -> Hash -> FilePath
 mkTargetWithHashPath buildsome contentHash = contentCacheDir buildsome </> Base16.encode (Hash.asByteString contentHash)-- (outPath <> "." <> Base16.encode contentHash)
@@ -90,7 +116,6 @@ refreshFromContentCache
         cachedPath = mkTargetWithHashPath bteBuildsome contentHash
         tempFile = filePath <> "._buildsome_temp"
         removeIfExists f =
-          FilePath.exists f >>= \exists -> when exists $ removeFileOrDirectoryOrNothing f
+          FilePath.exists f >>= \exists -> when exists $ Posix.removeLink f
 
 refreshFromContentCache _ _ _ _ = left "No cached info"
-
