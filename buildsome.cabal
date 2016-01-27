@@ -35,8 +35,8 @@ library
   if flag(debug) {
     ghc-options:       -threaded -Wall -O0
   } else {
-    ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g
-    ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -auto-all -caf-all
+    ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
+    ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields -auto-all -caf-all
   }
   exposed-modules:   Buildsome
                ,     Buildsome.BuildId
@@ -169,8 +169,8 @@ executable buildsome
                ,     src/Lib/SharedMemory.c
   cc-options:        -Wall -O2 -fPIC -std=gnu11
 
-  ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g
-  ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g
+  ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
+  ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
   build-depends:     base >=4.6 && <4.9
                ,     buildsome
                ,     base-compat
