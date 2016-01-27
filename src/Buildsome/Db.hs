@@ -26,6 +26,8 @@ module Buildsome.Db
   , Reason, ReasonOf(..)
   , IRef(..)
   , MFileContentDesc, MakefileParseCache(..), makefileParseCache
+  -- Exported for benchmarking / testing
+  , ExecutionLogNodeKey(..), StringKey(..)
   ) where
 
 import           Buildsome.BuildId (BuildId)
