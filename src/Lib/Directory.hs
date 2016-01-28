@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -8,6 +9,7 @@ module Lib.Directory
   , removeFileOrDirectoryOrNothing
   , createDirectories
   , getDirectoryContents
+  , getDirectoryContentsRecursive
   , getDirectoryContentsHash
   , makeAbsolutePath
   , copyFile
@@ -92,6 +94,12 @@ getDirectoryContents path =
       if BS8.null fn
         then return []
         else (if isDotDir fn then id else (fn:)) <$> go dirStream
+
+getDirectoryContentsRecursive :: FilePath -> IO [FilePath]
+getDirectoryContentsRecursive path = do
+    files <- map (path </>) <$> getDirectoryContents path
+    dirs <- map fst . filter snd <$> mapM (\f -> (f,) <$> Dir.doesDirectoryExist (BS8.unpack f)) files
+    (files ++) . concat <$> forM dirs getDirectoryContentsRecursive
 
 getDirectoryContentsHash :: FilePath -> IO Hash
 getDirectoryContentsHash path = {-# SCC "getDirectoryContentsHash" #-}
