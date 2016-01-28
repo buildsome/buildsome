@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE Rank2Types, OverloadedStrings, DeriveDataTypeable, CPP, FlexibleContexts #-}
 module Lib.Makefile.Parser
-  ( makefile, parse, interpolateCmds, metaVariable
+  ( makefile, parse, interpolateCmds
   , Vars, VarName, VarValue
   ) where
 
