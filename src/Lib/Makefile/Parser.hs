@@ -5,38 +5,38 @@ module Lib.Makefile.Parser
   , Vars, VarName, VarValue
   ) where
 
-import Prelude.Compat hiding (FilePath)
-
-import Control.Applicative ((<|>))
-import Control.Monad (when, unless, join, void)
-import Control.Monad.Trans.Class (MonadTrans(..))
-import Data.ByteString (ByteString)
-import Data.Char (isAlphaNum)
-import Data.List (partition)
-import Data.Map (Map)
-import Data.Maybe (fromMaybe, listToMaybe)
-import Data.Monoid ((<>))
-import Data.Set (Set)
-import Data.Typeable (Typeable)
-import Lib.ByteString (unprefixed)
-import Lib.Cartesian (cartesian)
-import Lib.FilePath (FilePath, (</>))
-import Lib.Makefile.CondState (CondState)
-import Lib.Makefile.MonadClass (MonadMakefileParser)
-import Lib.Makefile.Types
-import Lib.Parsec (showErr, showPos)
-import Text.Parsec ((<?>))
+import           Control.Applicative ((<|>))
 import qualified Control.Exception as E
+import           Control.Monad (when, unless, join, void)
+import           Control.Monad.Trans.Class (MonadTrans(..))
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Char (isAlphaNum)
+import           Data.List (partition)
+import           Data.Map (Map)
 import qualified Data.Map as M
+import           Data.Maybe (fromMaybe, listToMaybe)
+import           Data.Monoid ((<>))
+import           Data.Set (Set)
 import qualified Data.Set as S
+import           Data.Typeable (Typeable)
+import           Lib.ByteString (unprefixed)
+import           Lib.Cartesian (cartesian)
+import           Lib.FilePath (FilePath, (</>))
 import qualified Lib.FilePath as FilePath
+import           Lib.Makefile.CondState (CondState)
 import qualified Lib.Makefile.CondState as CondState
+import           Lib.Makefile.MonadClass (MonadMakefileParser)
 import qualified Lib.Makefile.MonadClass as MakefileMonad
+import           Lib.Makefile.Types
+import           Lib.Parsec (showErr, showPos)
 import qualified Lib.StringPattern as StringPattern
+import           Text.Parsec ((<?>))
 import qualified Text.Parsec as P
-import qualified Text.Parsec.Prim as Prim
 import qualified Text.Parsec.Pos as Pos
+import qualified Text.Parsec.Prim as Prim
+
+import           Prelude.Compat hiding (FilePath)
 
 #define RELEASE_INLINE(x)   {-# INLINE x #-}
 -- #define RELEASE_INLINE(x)
