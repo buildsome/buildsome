@@ -258,7 +258,7 @@ RELEASE_INLINE(interpolateString)
 interpolateString ::
   Monad m => ParserG u m ByteString -> String -> ParserG u m ByteString -> ParserG u m ByteString
 interpolateString escapeParser stopChars dollarHandler =
-  concatMany (literalString '\'' <|> doubleQuotes <|> interpolatedChar stopChars)
+  concatMany (interpolatedChar ('\'':'"':stopChars) <|> literalString '\'' <|> doubleQuotes)
   where
     concatMany x = BS8.concat <$> P.many x
     RELEASE_INLINE(doubleQuotes)
