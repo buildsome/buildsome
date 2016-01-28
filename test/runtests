@@ -4,6 +4,8 @@ set -e
 
 buildsome="$(stack exec -- which buildsome) $@"
 
+cd $(dirname $(realpath $0))
+
 ${buildsome} -f implicitphony
 git clean -fdx -- implicitphony
 
@@ -60,6 +62,9 @@ git clean -fdx -- speculative_error
 
 pyc/test ${buildsome}
 git clean -fdx -- pyc
+
+cache/test ${buildsome}
+git clean -fdx -- cache
 
 echo PASSED ALL TESTS
 ${buildsome} --version

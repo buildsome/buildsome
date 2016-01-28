@@ -1,0 +1,44 @@
+#!/bin/bash
+set -eu
+
+buildsome=${1:-buildsome}
+
+cd $(dirname $0)
+
+get_size() {
+    find Buildsome.mk.db/cached_outputs/ -type f | xargs du -bsc | grep total | cut -f1
+}
+
+check_cache() {
+    expected_size="$1"
+    expected_amount="$2"
+    size=$(get_size)
+    if [ "$size" -ne "$expected_size" ] ; then
+       echo "Bad size: $size"
+       exit 1
+    fi
+
+    if [ "$(find Buildsome.mk.db/cached_outputs/ -type f | wc -l)" -ne "$expected_amount" ] ; then
+        echo "Bad amount!"
+        exit 1
+    fi
+
+    test -e copy1 || echo "Missing copy1"
+    test -e copy2 || echo "Missing copy2"
+}
+
+# will populate the cache with 3 mb
+$buildsome --max-cache-size 10
+
+check_cache "$((2 * 1024 * 1024))" "2"
+
+rm copy1
+rm copy2
+
+$buildsome --max-cache-size 10
+
+check_cache "$((2 * 1024 * 1024))" "2"
+
+$buildsome --max-cache-size 1
+
+check_cache "$((1 * 1024 * 1024))" "1"
