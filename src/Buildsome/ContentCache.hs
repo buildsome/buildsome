@@ -13,7 +13,6 @@ import           Control.Monad.Trans.Either (EitherT(..), left)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Base16 as Base16
 import           Data.List (sortOn)
-import           Data.Maybe (fromMaybe)
 import           Data.Monoid
 import           Data.String (IsString(..))
 import           Lib.Directory (getMFileStatus)
@@ -116,9 +115,8 @@ addFileToCache buildsome outPath _stat contentHash = do
     Dir.createDirectories $ FilePath.takeDirectory targetPath
     placeInCache outPath targetPath
     cachedFileStat <- Posix.getFileStatus targetPath
-    savedSize <- fromMaybe 0 <$> Db.readIRef (Db.cachedOutputsUsage $ bsDb buildsome)
-    Db.writeIRef (Db.cachedOutputsUsage (bsDb buildsome))
-        $ savedSize + (fromIntegral $ Posix.fileSize cachedFileStat)
+    _ <- Db.modifyCachedSize (bsDb buildsome) (+ (fromIntegral $ Posix.fileSize cachedFileStat))
+    return ()
 
 refreshFromContentCache :: (IsString e, MonadIO m) =>
   BuildTargetEnv -> FilePath -> Maybe FileContentDesc -> Maybe FileStatDesc -> EitherT e m ()

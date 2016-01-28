@@ -12,6 +12,7 @@
 {-# LANGUAGE TupleSections      #-}
 module Buildsome.Db
   ( Db, with
+  , modifyCachedSize
   , registeredOutputsRef, leakedOutputsRef
   , ExistingInputDescOf(..)
   , ExistingInputDesc, inputDescDropReasons, toFileDesc, fromFileDesc
@@ -44,6 +45,7 @@ import           Data.ByteString            (ByteString)
 import qualified Data.ByteString.Char8      as BS8
 import           Data.Default               (def)
 import qualified Data.List                  as List
+import           Data.Maybe                 (fromMaybe)
 
 import           Data.IORef
 import           Data.Map                   (Map)
@@ -93,6 +95,7 @@ data Db = Db
   , dbRegisteredOutputs :: IORef (Set FilePath)
   , dbLeakedOutputs     :: IORef (Set FilePath)
   , dbStrings           :: IORef (Map Hash ByteString)
+  , dbCacheSize         :: IORef Integer
   }
 
 data FileContentDescCache = FileContentDescCache
@@ -230,15 +233,26 @@ withLevelDb :: FilePath -> (LevelDB.DB -> IO a) -> IO a
 withLevelDb dbPath =
   LevelDB.withDB (BS8.unpack (dbPath </> schemaVersion)) options
 
+modifyCachedSize :: Db -> (Integer -> Integer) -> IO Integer
+modifyCachedSize db f =
+    join
+    $ atomicModifyIORef' (dbCacheSize db)
+    $ \cacheSize -> let s = f cacheSize
+                    in (s, writeIRef (cachedOutputsUsage db) s >> return s)
+
 with :: FilePath -> (Db -> IO a) -> IO a
 with rawDbPath body = do
   dbPath <- makeAbsolutePath rawDbPath
   createDirectories dbPath
   strings <- newIORef Map.empty
+  savedSize <- newIORef 0
   withLevelDb dbPath $ \levelDb ->
     withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
     withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
-    body (Db levelDb registeredOutputs leakedOutputs strings)
+      do
+          let db = Db levelDb registeredOutputs leakedOutputs strings savedSize
+          fromMaybe 0 <$> readIRef (cachedOutputsUsage db) >>= writeIORef savedSize
+          body db
   where
     withIORefFile path =
       bracket (newIORef =<< decodeFileOrEmpty path) (writeBack path)
