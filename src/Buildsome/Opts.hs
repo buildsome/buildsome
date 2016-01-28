@@ -102,6 +102,7 @@ data Opt = Opt { optRequestedTargets :: [FilePath]
                , optFsOverrideLdPreloadPath :: Maybe FilePath
                , optWiths :: [ByteString]
                , optWithouts :: [ByteString]
+               , optMaxCacheSize :: Integer
 
                , optVerbosity :: Verbosity
                  -- In theory, --help-flags could be mutually
@@ -132,7 +133,7 @@ desc = intercalate "\n"
   ]
 
 #if (MIN_VERSION_optparse_applicative(0,11,0))
-opt :: Mod OptionFields Int -> Parser (Maybe Int)
+opt :: Read a => Mod OptionFields a -> Parser (Maybe a)
 opt = optional . option auto
 
 bytestr :: ReadM ByteString
@@ -144,6 +145,12 @@ opt = optional . option
 bytestr :: Monad m => String -> m ByteString
 bytestr = liftM BS8.pack . str
 #endif
+
+defaultMaxCacheSize :: Integer
+defaultMaxCacheSize = 10 * 1024 * 1024 * 1024
+
+cacheSizeUnits :: Integer
+cacheSizeUnits = 1024 * 1024
 
 get :: IO Opts
 get =
@@ -216,5 +223,12 @@ get =
                            help "Enable flags that are disabled by default"))
           <*> many (bsOpt (metavar "flag" <> long "without" <>
                            help "Disable flags that are enabled by default"))
+          <*> (maybe defaultMaxCacheSize (*cacheSizeUnits)
+               <$> opt (long "max-cache-size" <>
+                        help (mconcat
+                              [ "Maximum size (in megabytes) of cache before starting to throw away old outputs."
+                              , "\n", "Default: ", show (defaultMaxCacheSize `div` cacheSizeUnits), " MB"
+                              ]) <>
+                        metavar "size"))
           <*> parseVerbosity
           <*> switch (long "help-flags" <> help "Get all flag variables assigned with ?=")

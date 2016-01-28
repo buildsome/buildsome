@@ -10,7 +10,6 @@ import           Buildsome.Types (Buildsome(..), BuildTargetEnv(..))
 import           Control.Monad (unless, when, forM_)
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left)
-import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Base16 as Base16
 import           Data.List (sortOn)
@@ -34,9 +33,6 @@ import           Prelude.Compat hiding (FilePath, show)
 defaultCachedOutputsDir :: FilePath
 defaultCachedOutputsDir = "cached_outputs"
 
-const_MAX_CACHE_SIZE :: Integer
-const_MAX_CACHE_SIZE = 4 * 1024 * 1024 * 1024
-
 contentCacheDir :: Buildsome -> FilePath
 contentCacheDir buildsome = bsBuildsomePath buildsome </> defaultCachedOutputsDir
 
@@ -57,8 +53,14 @@ filesToDelete maxSize fs = foldr go (0, []) fs
                     then (fileName, fileSize):outFiles
                     else outFiles
 
-toKb :: Integral a => a -> a
-toKb x = x `div` 1024
+toMb :: Integral a => a -> a
+toMb x = x `div` (1024 * 1024)
+
+reportCacheUsage :: (Show a, Integral a) => a -> a -> IO ()
+reportCacheUsage used max' =
+    putStrLn $ mconcat
+    [ "OK, in use: ", show (toMb used), " MB, max: "
+    , show (toMb max'), " MB " ]
 
 cleanContentCacheDir :: Buildsome -> IO ()
 cleanContentCacheDir buildsome = do
@@ -66,27 +68,34 @@ cleanContentCacheDir buildsome = do
   putStr "Checking cache dir size..."
   savedSize <- Db.readIRef $ Db.cachedOutputsUsage (bsDb buildsome)
   case savedSize of
-      Just x | x < const_MAX_CACHE_SIZE -> putStrLn $ "OK, " <> show (toKb $ const_MAX_CACHE_SIZE - x) <> "kb left before cleanup."
+      Just x | x < maxCacheSize -> reportCacheUsage x maxCacheSize
       _ -> cleanContentCacheDir' buildsome
+
+  where
+      maxCacheSize = bsMaxCacheSize buildsome
 
 cleanContentCacheDir' :: Buildsome -> IO ()
 cleanContentCacheDir' buildsome = do
+  putStr "Updating from disk..."
   files <- Dir.getDirectoryContents (contentCacheDir buildsome)
       >>= mapM (return . (contentCacheDir buildsome </>))
       >>= mapM (\fileName -> (fileName,) <$> getMFileStatus fileName)
-  let (totalSize, filesToRemove) = filesToDelete const_MAX_CACHE_SIZE $ sortOn (fmap Posix.modificationTimeHiRes . snd) files
+  let (totalSize, filesToRemove) = filesToDelete maxCacheSize $ sortOn (fmap Posix.modificationTimeHiRes . snd) files
       numRemoved = length $ filesToRemove
       bytesSaved = sum (map snd filesToRemove)
   if numRemoved > 0
       then putStrLn $ concat
            [ "Cache dir ", show (contentCacheDir buildsome)
            , " contains ", show (length files)
-           , " files, totaling ", show (toKb totalSize)
-           , "kb. Going to remove ", show numRemoved, " oldest cache files"
-           , ", saving ", show (toKb $ bytesSaved), "kb." ]
-      else putStr "Updating from disk..." >> putStrLn "OK."
+           , " files, totaling ", show (toMb totalSize)
+           , " MB. Going to remove ", show numRemoved, " oldest cache files"
+           , ", saving ", show (toMb $ bytesSaved), " MB." ]
+      else reportCacheUsage totalSize maxCacheSize
   forM_ filesToRemove (Posix.removeLink . fst)
   Db.writeIRef (Db.cachedOutputsUsage (bsDb buildsome)) $ totalSize - bytesSaved
+
+  where
+      maxCacheSize = bsMaxCacheSize buildsome
 
 mkTargetWithHashPath :: Buildsome -> Hash -> FilePath
 mkTargetWithHashPath buildsome contentHash = contentCacheDir buildsome </> prefix </> name

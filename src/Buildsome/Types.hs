@@ -48,6 +48,7 @@ data Buildsome = Buildsome
   , bsRender :: ColorText -> ByteString
   , bsParPool :: Parallelism.Pool
   , bsCachedStats :: IORef (Map FilePath InputDesc)
+  , bsMaxCacheSize :: Integer
   }
 
 data WaitOrCancel = Wait | CancelAndWait

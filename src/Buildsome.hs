@@ -1367,6 +1367,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         , bsRender = Printer.render printer
         , bsParPool = pool
         , bsCachedStats = statsCache
+        , bsMaxCacheSize = optMaxCacheSize
         }
     withInstalledSigintHandler
       (killOnce "\nBuild interrupted by Ctrl-C, shutting down."
