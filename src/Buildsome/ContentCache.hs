@@ -31,13 +31,14 @@ import qualified System.Posix.ByteString as Posix
 import           Prelude.Compat hiding (FilePath, show)
 
 
-const_CACHED_OUTPUTS_DIR :: FilePath
-const_CACHED_OUTPUTS_DIR = "cached_outputs"
+defaultCachedOutputsDir :: FilePath
+defaultCachedOutputsDir = "cached_outputs"
+
 const_MAX_CACHE_SIZE :: Integer
 const_MAX_CACHE_SIZE = 4 * 1024 * 1024 * 1024
 
 contentCacheDir :: Buildsome -> FilePath
-contentCacheDir buildsome = bsBuildsomePath buildsome </> const_CACHED_OUTPUTS_DIR
+contentCacheDir buildsome = bsBuildsomePath buildsome </> defaultCachedOutputsDir
 
 filesToDelete :: Integral a => a -> [(FilePath, Maybe Posix.FileStatus)] -> (a, [(FilePath, a)])
 filesToDelete maxSize fs = foldr go (0, []) fs
