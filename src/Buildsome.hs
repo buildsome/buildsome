@@ -562,10 +562,10 @@ verifyDesc str getDesc oldDesc = do
 
 
 verifyOutputDescs ::
-    MonadIO m => Db -> BuildTargetEnv -> TargetDesc ->
+    MonadIO m => Db -> BuildTargetEnv ->
     [(FilePath, (FileDesc ne (POSIXTime, Db.OutputDesc)))] ->
     EitherT (ByteString, FilePath) m ()
-verifyOutputDescs db bte@BuildTargetEnv{..} TargetDesc{..} esOutputsDescs = {-# SCC "verifyOutputDescs" #-} do
+verifyOutputDescs db bte@BuildTargetEnv{..} esOutputsDescs = {-# SCC "verifyOutputDescs" #-} do
   -- For now, we don't store the output files' content
   -- anywhere besides the actual output files, so just verify
   -- the output content is still correct
@@ -609,7 +609,6 @@ getFileDescInput' db reason filePath = {-# SCC "getFileDescInput" #-} do
       Nothing -> return $ Db.InputDescOfNonExisting reason
       Just stat -> do
           contentDesc <- liftIO $ fileContentDescOfStat "wat" db filePath stat
-          let time = Posix.modificationTimeHiRes stat
           return
               $ Db.InputDescOfExisting $ Db.ExistingInputDescOf
               { idModeAccess = Just (reason, fileModeDescOfStat stat)
@@ -619,10 +618,10 @@ getFileDescInput' db reason filePath = {-# SCC "getFileDescInput" #-} do
 
 verifyInputDescs ::
   MonadIO f =>
-  Db -> BuildTargetEnv -> TargetDesc ->
+  Db ->
   [(FilePath, (FileDesc ne Db.ExistingInputDesc))] ->
   EitherT (ByteString, FilePath) f ()
-verifyInputDescs db BuildTargetEnv{..} TargetDesc{..} elInputsDescs = {-# SCC "verifyInputDescs" #-} do
+verifyInputDescs db elInputsDescs = {-# SCC "verifyInputDescs" #-} do
   forM_ elInputsDescs $ \(filePath, desc) ->
     annotateError filePath $
       verifyFileDesc "input" filePath desc $ \stat (Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) ->
@@ -635,19 +634,27 @@ verifyInputDescs db BuildTargetEnv{..} TargetDesc{..} elInputsDescs = {-# SCC "v
               (fileContentDescOfStat "When applying execution log (input)"
                db filePath stat) $ fmap snd mContentAccess
 
+
+executionLogVerifyInputOutputs ::
+  MonadIO m =>
+  BuildTargetEnv -> Db.ExecutionLog ->
+  EitherT (ByteString, FilePath) m ()
+executionLogVerifyInputOutputs bte@BuildTargetEnv{..} el@Db.ExecutionLogOf{..} = {-# SCC "executionLogVerifyFilesState" #-} do
+  verifyInputDescs db $ Db.elInputsDescs el
+  verifyOutputDescs db bte elOutputsDescs
+  where
+    db = bsDb bteBuildsome
+
 executionLogVerifyFilesState ::
   MonadIO m =>
   BuildTargetEnv -> TargetDesc -> Db.ExecutionLog ->
   EitherT (ByteString, FilePath) m ()
 executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} el@Db.ExecutionLogOf{..} = {-# SCC "executionLogVerifyFilesState" #-} do
-  verifyInputDescs db bte TargetDesc{..} $ Db.elInputsDescs el
-  verifyOutputDescs db bte TargetDesc{..} elOutputsDescs
+  executionLogVerifyInputOutputs bte el
   liftIO $
     replayExecutionLog bte tdTarget
     (S.fromList $ map fst $ Db.elInputsDescs el) (S.fromList $ map fst elOutputsDescs)
     elStdoutputs elSelfTime
-  where
-    db = bsDb bteBuildsome
 
 executionLogBuildInputs ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->
