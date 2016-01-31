@@ -15,23 +15,28 @@ import qualified System.Posix.ByteString as Posix
 
 fileContentDescOfStat :: String -> Db -> FilePath -> Posix.FileStatus -> IO FileContentDesc
 fileContentDescOfStat msgPrefix db path stat = {-# SCC "FileContentDescCache.fileContentDescOfStat" #-} do
-  mDescCache <- Db.readIRef cacheIRef
-  case mDescCache of
-    Just oldCache
-      | Posix.modificationTimeHiRes stat ==
-        Db.fcdcModificationTime oldCache ->
-        return $! Db.fcdcFileContentDesc oldCache
-    _ -> do
-      newFileContentDesc <- FileDesc.fileContentDescOfStat path stat
+    oldCache <- Db.getContentCache db path getContentDesc
+    if Posix.modificationTimeHiRes stat == Db.fcdcModificationTime oldCache
+        then return $! Db.fcdcFileContentDesc oldCache
+        else do
+          newFileContentDesc <- FileDesc.fileContentDescOfStat path stat
 
-      -- TODO: May be more optimal to delay the writeIRef until later
-      -- when we check the stat again once
-      Meddling.assertFileMTime msgPrefix path $ Just stat
+          -- TODO: May be more optimal to delay the writeIRef until later
+          -- when we check the stat again once
+          Meddling.assertFileMTime msgPrefix path $ Just stat
 
-      Db.writeIRef cacheIRef Db.FileContentDescCache
-        { Db.fcdcModificationTime = Posix.modificationTimeHiRes stat
-        , Db.fcdcFileContentDesc = newFileContentDesc
-        }
-      return $! newFileContentDesc
-  where
-    cacheIRef = Db.fileContentDescCache path db
+          Db.putContentCache db path $ Db.FileContentDescCache
+            { Db.fcdcModificationTime = Posix.modificationTimeHiRes stat
+            , Db.fcdcFileContentDesc = newFileContentDesc
+            }
+          return $! newFileContentDesc
+    where
+        getContentDesc = do
+            newFileContentDesc <- FileDesc.fileContentDescOfStat path stat
+            -- TODO: May be more optimal to delay the writeIRef until later
+            -- when we check the stat again once
+            Meddling.assertFileMTime msgPrefix path $ Just stat
+            return Db.FileContentDescCache
+                { Db.fcdcModificationTime = Posix.modificationTimeHiRes stat
+                , Db.fcdcFileContentDesc = newFileContentDesc
+                }

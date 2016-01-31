@@ -24,6 +24,7 @@ module Buildsome.Db
   , executionLogLookup
   , latestExecutionLog
   , FileDescInput, InputDescOf(..), InputDesc
+  , getContentCache, putContentCache
   , FileContentDescCache(..), fileContentDescCache, bimapFileDesc
   , Reason, ReasonOf(..)
   , IRef(..)
@@ -96,6 +97,7 @@ data Db = Db
   , dbLeakedOutputs     :: IORef (Set FilePath)
   , dbStrings           :: IORef (Map Hash ByteString)
   , dbCacheSize         :: IORef Integer
+  , dbContentCache      :: IORef (Map FilePath FileContentDescCache)
   }
 
 data FileContentDescCache = FileContentDescCache
@@ -246,11 +248,12 @@ with rawDbPath body = do
   createDirectories dbPath
   strings <- newIORef Map.empty
   savedSize <- newIORef 0
+  contentCache <- newIORef Map.empty
   withLevelDb dbPath $ \levelDb ->
     withIORefFile (dbPath </> "outputs") $ \registeredOutputs ->
     withIORefFile (dbPath </> "leaked_outputs") $ \leakedOutputs ->
       do
-          let db = Db levelDb registeredOutputs leakedOutputs strings savedSize
+          let db = Db levelDb registeredOutputs leakedOutputs strings savedSize contentCache
           fromMaybe 0 <$> readIRef (cachedOutputsUsage db) >>= writeIORef savedSize
           body db
   where
@@ -301,18 +304,22 @@ updateItem ioref k s act = join $ atomicModifyIORef' ioref $ \smap ->
       Nothing -> (Map.insert k s smap, act)
       Just _ -> (smap, return ())
 
-getItem :: Ord k => k -> IORef (Map k v) ->
-           IRef v -> IO (Maybe v)
-getItem k ioref iref = do
+getItem :: Ord k => k -> IO v -> IORef (Map k v) ->
+           IRef v -> IO v
+getItem k act ioref iref = do
     map' <- readIORef ioref
     case Map.lookup k map' of
         Nothing -> do
             mv <- readIRef iref
             case mv of
-                Just v -> updateItem ioref k v $ return ()
-                Nothing -> return ()
-            return mv
-        Just v -> return $ Just v
+                Just v -> do
+                    updateItem ioref k v $ return ()
+                    return v
+                Nothing -> do
+                    v <- act
+                    putItem k v ioref iref
+                    return v
+        Just v -> return v
 
 putItem :: Ord k => k -> v -> IORef (Map k v) -> IRef v -> IO ()
 putItem k v ioref iref = updateItem ioref k v $ writeIRef iref v
@@ -320,10 +327,9 @@ putItem k v ioref iref = updateItem ioref k v $ writeIRef iref v
 getString :: Db -> StringKey -> IO ByteString
 getString _  (StringKeyShort s) = return s
 getString db (StringKey k)      = {-# SCC "getString" #-}
-    mustExist <$> getItem k (dbStrings db) (string k db)
+    getItem k missingError (dbStrings db) (string k db)
     where
-        mustExist Nothing = error $ "Corrupt DB? Missing string for key: " <> show k
-        mustExist (Just s) = s
+        missingError = error $ "Corrupt DB? Missing string for key: " <> show k
 
 putString :: Db -> ByteString -> IO StringKey
 putString db s = {-# SCC "putString" #-}
@@ -333,6 +339,14 @@ putString db s = {-# SCC "putString" #-}
       let k = Hash.md5 s
       putItem k s (dbStrings db) (string k db)
       return $ StringKey k
+
+getContentCache :: Db -> FilePath -> IO FileContentDescCache -> IO FileContentDescCache
+getContentCache db filePath act =
+    getItem filePath act (dbContentCache db) (fileContentDescCache filePath db)
+
+putContentCache :: Db -> FilePath -> FileContentDescCache -> IO ()
+putContentCache db filePath contentDesc =
+    putItem filePath contentDesc (dbContentCache db) (fileContentDescCache filePath db)
 
 -- TODO: Canonicalize commands (whitespace/etc)
 targetKey :: TargetLogType -> Makefile.Target -> Hash
