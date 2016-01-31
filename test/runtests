@@ -66,5 +66,8 @@ git clean -fdx -- pyc
 cache/test ${buildsome}
 git clean -fdx -- cache
 
+meddling/test ${buildsome}
+git clean -fdx -- meddling
+
 echo PASSED ALL TESTS
 ${buildsome} --version

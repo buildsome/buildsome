@@ -1,0 +1,41 @@
+#!/bin/bash
+set -eu
+
+buildsome=${1:-buildsome}
+
+cd $(dirname $0)
+
+rm -f a.before a.after a.input a.meddling > /dev/null # cleanup previous run
+echo 'before' > a.input
+
+RESULT=
+{
+    set +e
+    $buildsome && (echo 'Expected meddling error!'; exit 1)
+    RESULT="$?"
+    set -e
+} &
+
+echo "waiting for 'a' to exist"
+
+while [ ! -e a.before ]
+do
+    true
+done
+
+test -e a.before || (echo "a.before should exist!"; exit 1)
+test -e a.after  && (echo "a.after  shouldn't exist!"; exit 1)
+
+echo "A exists, meddling with a.input"
+
+sleep 0.1
+
+echo 'after' >> a.input
+
+sleep 0.1
+
+touch a.meddling
+
+wait
+
+(exit $RESULT) && echo "Done." || (echo "ERROR"; exit 1)
