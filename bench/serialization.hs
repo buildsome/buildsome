@@ -40,7 +40,7 @@ getFileDescInput reason filePath = {-# SCC "getFileDescInput" #-} do
 
 main :: IO ()
 main = do
-    let dummyKey = Db.StringKeyShort "dummy"
+    let dummyKey = Db.StringKey "dummy"
 
     testValue <- fmap (const dummyKey) <$> getFileDescInput (Db.BecauseHintFrom []) "/tmp"
 

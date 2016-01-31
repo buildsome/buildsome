@@ -286,14 +286,13 @@ mkIRefKey key db = IRef
   , delIRef = deleteKey db key
   }
 
-data StringKey = StringKey Hash | StringKeyShort ByteString
+newtype StringKey = StringKey ByteString
   deriving (Generic, Show, Eq, Ord)
 instance Binary StringKey
 instance NFData StringKey where rnf = genericRnf
 
 fromStringKey :: StringKey -> Hash
-fromStringKey (StringKey h) = h
-fromStringKey (StringKeyShort s) = Hash.Hash s
+fromStringKey (StringKey s) = Hash.Hash s
 
 string :: Hash -> Db -> IRef ByteString
 string k = mkIRefKey $ "s:" <> Hash.asByteString k
@@ -324,21 +323,33 @@ getItem k act ioref iref = do
 putItem :: Ord k => k -> v -> IORef (Map k v) -> IRef v -> IO ()
 putItem k v ioref iref = updateItem ioref k v $ writeIRef iref v
 
+md5LengthInBytes :: Int
+md5LengthInBytes = 16
+
+stringKeyMinLength :: Int
+stringKeyMinLength = 16
+
+stringShouldSkipHash :: ByteString -> Bool
+stringShouldSkipHash s = len < stringKeyMinLength && len /= md5LengthInBytes
+    where len = BS8.length s
+
 getString :: Db -> StringKey -> IO ByteString
-getString _  (StringKeyShort s) = return s
-getString db (StringKey k)      = {-# SCC "getString" #-}
-    getItem k missingError (dbStrings db) (string k db)
+getString db (StringKey s)      = {-# SCC "getString" #-}
+    if stringShouldSkipHash s
+    then return s
+    else getItem k missingError (dbStrings db) (string k db)
     where
+        k = Hash.Hash s
         missingError = error $ "Corrupt DB? Missing string for key: " <> show k
 
 putString :: Db -> ByteString -> IO StringKey
 putString db s = {-# SCC "putString" #-}
-  if BS8.length s <= 16
-  then return $ StringKeyShort s
-  else do
-      let k = Hash.md5 s
-      putItem k s (dbStrings db) (string k db)
-      return $ StringKey k
+    if stringShouldSkipHash s
+    then return $ StringKey s
+    else do
+        let k = Hash.md5 s
+        putItem k s (dbStrings db) (string k db)
+        return $ StringKey $ Hash.asByteString k
 
 getContentCache :: Db -> FilePath -> IO FileContentDescCache -> IO FileContentDescCache
 getContentCache db filePath act =
