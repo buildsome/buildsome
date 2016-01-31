@@ -295,22 +295,32 @@ fromStringKey (StringKeyShort s) = Hash.Hash s
 string :: Hash -> Db -> IRef ByteString
 string k = mkIRefKey $ "s:" <> Hash.asByteString k
 
-updateString :: Db -> Hash -> ByteString -> IO () -> IO ()
-updateString db k s act = join $ atomicModifyIORef' (dbStrings db) $ \smap ->
+updateItem :: Ord k => IORef (Map k v) -> k -> v -> IO () -> IO ()
+updateItem ioref k s act = join $ atomicModifyIORef' ioref $ \smap ->
   case Map.lookup k smap of
       Nothing -> (Map.insert k s smap, act)
       Just _ -> (smap, return ())
 
+getItem :: Ord k => k -> IORef (Map k v) ->
+           IRef v -> IO (Maybe v)
+getItem k ioref iref = do
+    map' <- readIORef ioref
+    case Map.lookup k map' of
+        Nothing -> do
+            mv <- readIRef iref
+            case mv of
+                Just v -> updateItem ioref k v $ return ()
+                Nothing -> return ()
+            return mv
+        Just v -> return $ Just v
+
+putItem :: Ord k => k -> v -> IORef (Map k v) -> IRef v -> IO ()
+putItem k v ioref iref = updateItem ioref k v $ writeIRef iref v
+
 getString :: Db -> StringKey -> IO ByteString
 getString _  (StringKeyShort s) = return s
-getString db (StringKey k)      = {-# SCC "getString" #-} do
-    smap <- readIORef $ dbStrings db
-    case Map.lookup k smap of
-        Nothing -> do
-            s <- mustExist <$> readIRef (string k db)
-            _ <- updateString db k s $ return ()
-            return s
-        Just s -> return s
+getString db (StringKey k)      = {-# SCC "getString" #-}
+    mustExist <$> getItem k (dbStrings db) (string k db)
     where
         mustExist Nothing = error $ "Corrupt DB? Missing string for key: " <> show k
         mustExist (Just s) = s
@@ -321,7 +331,7 @@ putString db s = {-# SCC "putString" #-}
   then return $ StringKeyShort s
   else do
       let k = Hash.md5 s
-      _ <- updateString db k s $ writeIRef (string k db) s
+      putItem k s (dbStrings db) (string k db)
       return $ StringKey k
 
 -- TODO: Canonicalize commands (whitespace/etc)
