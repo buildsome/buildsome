@@ -58,6 +58,7 @@ import           Lib.FSHook (OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
 import qualified Lib.Fresh as Fresh
 import           Lib.FileDesc (FileDesc(..), fileModeDescOfStat, fileStatDescOfStat, FileContentDesc(..))
+import qualified Lib.FileDesc as FileDesc
 import           Lib.FilePath (FilePath, (</>), (<.>))
 import qualified Lib.FilePath as FilePath
 import qualified Lib.Hash as Hash
@@ -618,7 +619,7 @@ verifyInputDescs buildsome elInputsDescs = {-# SCC "verifyInputDescs" #-} do
   forM_ elInputsDescs $ \(filePath, desc) ->
     annotateError filePath $
       verifyFileDesc buildsome"input" filePath desc $ \stat (Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) ->
-      do
+      unless (mtimeSame stat mStatAccess) $ do
           let verify str getDesc mPair =
                   verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
           verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
@@ -628,6 +629,9 @@ verifyInputDescs buildsome elInputsDescs = {-# SCC "verifyInputDescs" #-} do
                db filePath stat) $ fmap snd mContentAccess
   where
     db = bsDb buildsome
+    mtimeSame stat (Just (_, FileDesc.FileStatOther fullStatEssence)) =
+        (Posix.modificationTimeHiRes stat) == (FileDesc.modificationTimeHiRes fullStatEssence)
+    mtimeSame _ _ = False
 
 executionLogVerifyInputOutputs ::
   MonadIO m =>
