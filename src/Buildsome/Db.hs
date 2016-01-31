@@ -39,7 +39,7 @@ import           Control.DeepSeq            (NFData (..))
 import           Control.DeepSeq.Generics   (genericRnf)
 import           Control.Monad              (join, liftM)
 import           Control.Monad.IO.Class     (MonadIO, liftIO)
-import           Control.Monad.Trans.Either (EitherT (..), left, runEitherT)
+import           Control.Monad.Trans.Either (EitherT (..), left, runEitherT, bimapEitherT)
 import           Data.Binary                (Binary (..))
 import           Data.ByteString            (ByteString)
 import qualified Data.ByteString.Char8      as BS8
@@ -332,14 +332,14 @@ executionLogNode :: ExecutionLogNodeKey -> Db -> IRef ExecutionLogNode
 executionLogNode (ExecutionLogNodeKey k) = mkIRefKey $ "n:" <> Hash.asByteString k
 
 executionLogLookup :: Makefile.Target -> Db -> ([ELBranchPath FilePath] -> EitherT e IO ())
-                   -> (FilePath -> IO InputDesc) -> IO (Either (Maybe FilePath) ExecutionLog)
-executionLogLookup target db prepareInputs getCurFileDesc = {-# SCC "executionLogLookup" #-} do
+                   -> InputVerifier IO -> IO (Either (Maybe FilePath) ExecutionLog)
+executionLogLookup target db prepareInputs inputVerifier = {-# SCC "executionLogLookup" #-} do
     let targetName =
             show $ case Makefile.targetOutputs target of
                    [] -> error "empty target?!"
                    (x:_) -> x
     debugPrint $ "executionLogLookup: looking up " <> targetName
-    res <- runEitherT $ executionLogLookup' (executionLogNode (executionLogNodeRootKey target) db) db prepareInputs getCurFileDesc
+    res <- runEitherT $ executionLogLookup' (executionLogNode (executionLogNodeRootKey target) db) db prepareInputs inputVerifier
     case res of
         Left f -> debugPrint $ "not found, missing: " <> show f
         Right _ -> debugPrint "FOUND"
@@ -382,16 +382,17 @@ firstRightAlt (EitherT m) (EitherT n) =
 firstRight :: (Monad m, Foldable t) => t (EitherT (Maybe e) m a) -> EitherT (Maybe e) m a
 firstRight = foldr firstRightAlt (left Nothing)
 
+type InputVerifier m = [(FilePath, FileDescInput)] -> EitherT (ByteString, FilePath) m ()
+
 executionLogPathCheck ::
     (MonadIO m) =>
-    (ByteString -> IO InputDesc) -> ELBranchPath FilePath
-    -> EitherT (Maybe FilePath) m ()
-executionLogPathCheck getCurFileDesc (ELBranchPath path) = {-# SCC "executionLogPathCheck" #-}
-    allRight $ flip map path $ \(filePath, expectedFileDesc) -> do
-        curFileDesc <- liftIO $ getCurFileDesc filePath
-        if cmpFileDescInput curFileDesc expectedFileDesc
-            then return $ Right ()
-            else return $ Left (Just filePath)
+    InputVerifier m -> ELBranchPath FilePath
+    -> EitherT (ByteString, FilePath) m ()
+executionLogPathCheck inputVerifier (ELBranchPath path) = {-# SCC "executionLogPathCheck" #-}
+    inputVerifier $ map (\(f,i) -> (f, toFileDesc i)) path
+
+mapLeftT :: Monad m => (e -> f) -> EitherT e m a -> EitherT f m a
+mapLeftT f = bimapEitherT f id
 
 executionLogPathCmp :: ELBranchPath StringKey -> ELBranchPath StringKey -> Bool
 executionLogPathCmp (ELBranchPath x) (ELBranchPath y) =
@@ -409,9 +410,9 @@ putPathStrings db = traverse (putString db)
 executionLogLookup' ::
     IRef ExecutionLogNode -> Db ->
     ([ELBranchPath FilePath] -> EitherT e IO ()) ->
-    (FilePath -> IO InputDesc) ->
+    InputVerifier IO ->
     EitherT (Maybe FilePath) IO ExecutionLog
-executionLogLookup' iref db prepareInputs getCurFileDesc = {-# SCC "executionLogLookup'" #-} do
+executionLogLookup' iref db prepareInputs inputVerifier = {-# SCC "executionLogLookup'" #-} do
     eln <- liftIO $ readIRef iref
     case eln of
         Nothing -> left Nothing
@@ -427,8 +428,8 @@ executionLogLookup' iref db prepareInputs getCurFileDesc = {-# SCC "executionLog
                 Left _ -> left Nothing
             firstRight
                 $ flip map resolvedPaths $ \(path, target) ->
-                    (executionLogPathCheck getCurFileDesc path
-                     >> executionLogLookup' (executionLogNode target db) db prepareInputs getCurFileDesc)
+                    ((mapLeftT (Just . snd) $ executionLogPathCheck inputVerifier path)
+                     >> executionLogLookup' (executionLogNode target db) db prepareInputs inputVerifier)
 
 executionLogNodeKey :: ExecutionLogNodeKey -> ELBranchPath StringKey -> ExecutionLogNodeKey
 executionLogNodeKey (ExecutionLogNodeKey oldKey) (ELBranchPath is) =

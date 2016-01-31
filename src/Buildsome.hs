@@ -423,7 +423,7 @@ verifyOutputDesc bte@BuildTargetEnv{..} filePath fileDesc existingVerify = do
   let restore (Db.OutputDesc oldStatDesc oldMContentDesc) =
         ContentCache.refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
       remove = liftIO . removeFileOrDirectoryOrNothing
-  mStat <- liftIO $ Dir.getMFileStatus filePath
+  mStat <- liftIO $ getCachedStat bteBuildsome filePath
   case (mStat, fileDesc) of
     (Nothing, FileDescNonExisting _) -> return ()
     (Just stat, FileDescExisting (mtime, desc))
@@ -432,6 +432,7 @@ verifyOutputDesc bte@BuildTargetEnv{..} filePath fileDesc existingVerify = do
           case res of
             Left reason -> do
               restore desc
+              invalidateCachedStat bteBuildsome filePath
               explain $ mconcat
                 [ "File exists but is wrong ("
                 , ColorText.simple reason
@@ -441,9 +442,12 @@ verifyOutputDesc bte@BuildTargetEnv{..} filePath fileDesc existingVerify = do
       | otherwise -> return ()
     (Just _, FileDescNonExisting _)  -> do
       remove filePath
+      invalidateCachedStat bteBuildsome filePath
       explain "File exists, but shouldn't: removed "
     (Nothing, FileDescExisting (_, desc)) -> do
       restore desc
+      invalidateCachedStat bteBuildsome filePath
+      -- TODO register new version of this output to prevent need for --overwrite
       explain "File doesn't exist, but should: restored from cache "
   where
     explain msg = liftIO $ printStrLn btePrinter
@@ -580,11 +584,11 @@ verifyOutputDescs db bte@BuildTargetEnv{..} esOutputsDescs = {-# SCC "verifyOutp
 
 verifyFileDesc ::
   (IsString str, Monoid str, MonadIO m) =>
-  str -> FilePath -> FileDesc ne desc ->
+  Buildsome -> str -> FilePath -> FileDesc ne desc ->
   (Posix.FileStatus -> desc -> EitherT str m ()) ->
   EitherT str m ()
-verifyFileDesc str filePath fileDesc existingVerify = do
-  mStat <- liftIO $ Dir.getMFileStatus filePath
+verifyFileDesc buildsome str filePath fileDesc existingVerify = do
+  mStat <- liftIO $ getCachedStat buildsome filePath
   case (mStat, fileDesc) of
     (Nothing, FileDescNonExisting _) -> return ()
     (Just stat, FileDescExisting desc) -> existingVerify stat desc
@@ -592,39 +596,28 @@ verifyFileDesc str filePath fileDesc existingVerify = do
     (Nothing, FileDescExisting {}) -> left (str <> " file was deleted")
 
 
-getFileDescInput :: MonadIO m => Buildsome -> Db.Db -> Reason -> FilePath -> m Db.InputDesc
-getFileDescInput buildsome db reason filePath = {-# SCC "getFileDescInput" #-} do
+getCachedStat :: MonadIO m => Buildsome -> FilePath -> m (Maybe Posix.FileStatus)
+getCachedStat buildsome filePath = {-# SCC "getCachedStat" #-} do
   cache <- liftIO $ readIORef $ bsCachedStats buildsome
   case M.lookup filePath cache of
       Just desc -> return desc
       Nothing -> do
-          desc <- getFileDescInput' db reason filePath
-          liftIO $ atomicModifyIORef'_ (bsCachedStats buildsome) (M.insert filePath desc)
-          return desc
+          mStat <- liftIO $ Dir.getMFileStatus filePath
+          liftIO $ atomicModifyIORef'_ (bsCachedStats buildsome) (M.insert filePath mStat)
+          return mStat
 
-getFileDescInput' :: MonadIO m => Db.Db -> Reason -> FilePath -> m Db.InputDesc
-getFileDescInput' db reason filePath = {-# SCC "getFileDescInput" #-} do
-  mStat <- liftIO $ Dir.getMFileStatus filePath
-  case mStat of
-      Nothing -> return $ Db.InputDescOfNonExisting reason
-      Just stat -> do
-          contentDesc <- liftIO $ fileContentDescOfStat "wat" db filePath stat
-          return
-              $ Db.InputDescOfExisting $ Db.ExistingInputDescOf
-              { idModeAccess = Just (reason, fileModeDescOfStat stat)
-              , idStatAccess = Just (reason, fileStatDescOfStat stat)
-              , idContentAccess = Just (reason, contentDesc)
-              }
+invalidateCachedStat :: MonadIO m => Buildsome -> FilePath -> m ()
+invalidateCachedStat buildsome filePath = liftIO $ atomicModifyIORef'_ (bsCachedStats buildsome) (M.delete filePath)
 
 verifyInputDescs ::
   MonadIO f =>
-  Db ->
+  Buildsome ->
   [(FilePath, (FileDesc ne Db.ExistingInputDesc))] ->
   EitherT (ByteString, FilePath) f ()
-verifyInputDescs db elInputsDescs = {-# SCC "verifyInputDescs" #-} do
+verifyInputDescs buildsome elInputsDescs = {-# SCC "verifyInputDescs" #-} do
   forM_ elInputsDescs $ \(filePath, desc) ->
     annotateError filePath $
-      verifyFileDesc "input" filePath desc $ \stat (Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) ->
+      verifyFileDesc buildsome"input" filePath desc $ \stat (Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) ->
       do
           let verify str getDesc mPair =
                   verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
@@ -633,14 +626,15 @@ verifyInputDescs db elInputsDescs = {-# SCC "verifyInputDescs" #-} do
           verifyMDesc "content"
               (fileContentDescOfStat "When applying execution log (input)"
                db filePath stat) $ fmap snd mContentAccess
-
+  where
+    db = bsDb buildsome
 
 executionLogVerifyInputOutputs ::
   MonadIO m =>
   BuildTargetEnv -> Db.ExecutionLog ->
   EitherT (ByteString, FilePath) m ()
 executionLogVerifyInputOutputs bte@BuildTargetEnv{..} el@Db.ExecutionLogOf{..} = {-# SCC "executionLogVerifyFilesState" #-} do
-  verifyInputDescs db $ Db.elInputsDescs el
+  verifyInputDescs bteBuildsome $ Db.elInputsDescs el
   verifyOutputDescs db bte elOutputsDescs
   where
     db = bsDb bteBuildsome
@@ -730,7 +724,7 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc@TargetDesc{..} = 
               $ concatMap (map (fmap Db.toFileDesc) . Db.unELBranchPath)
               $ inputs
           return ()
-  mExecutionLog <- Db.executionLogLookup tdTarget db buildInputs (getFileDescInput bteBuildsome db speculativeReason)
+  mExecutionLog <- Db.executionLogLookup tdTarget db buildInputs (verifyInputDescs bteBuildsome)
   case mExecutionLog of
     Left Nothing -> handleCacheMiss
     Left (Just missingInput) -> do
@@ -873,7 +867,7 @@ removeOldUnregisteredOutput printer buildsome path =
 
 removeOldOutput :: Printer -> Buildsome -> Set FilePath -> FilePath -> IO ()
 removeOldOutput printer buildsome registeredOutputs path = do
-  mStat <- getMFileStatus path
+  mStat <- getCachedStat buildsome path
   case mStat of
     Nothing -> return () -- Nothing to do
     Just _
@@ -929,6 +923,7 @@ recordOutputs ::
   IORef (Map FilePath Reason) -> Reason ->
   Set FilePath -> Set FilePath -> IO ()
 recordOutputs buildsome outputsRef accessDoc targetOutputsSet paths = {-# SCC "recordOutputs" #-} do
+  mapM_ (invalidateCachedStat buildsome) paths
   atomicModifyIORef'_ outputsRef $ mappend $ M.fromSet (const accessDoc) paths
   registerOutputs buildsome $ paths `S.intersection` targetOutputsSet
 
@@ -1058,7 +1053,7 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
   inputsDescs <- M.traverseWithKey inputAccess inputs
   outputDescPairs <-
     forM outputs $ \outPath -> do
-      mStat <- Dir.getMFileStatus outPath
+      mStat <- getCachedStat buildsome outPath
       fileDesc <-
         case mStat of
         Nothing -> return $ FileDescNonExisting ()

@@ -5,7 +5,7 @@ module Buildsome.Types where
 
 import           Buildsome.BuildId (BuildId)
 import           Buildsome.BuildMaps (BuildMaps(..), TargetRep)
-import           Buildsome.Db (Db, Reason, InputDesc)
+import           Buildsome.Db (Db, Reason)
 import           Buildsome.Opts (Opt(..))
 import           Buildsome.Slave (Slave)
 import           Buildsome.Stats (Stats)
@@ -24,6 +24,7 @@ import           Lib.Printer (Printer)
 import qualified Lib.Printer as Printer
 import           Lib.SharedMemory (SharedMemory)
 import           Lib.SyncMap (SyncMap)
+import qualified System.Posix.ByteString as Posix
 
 import           Prelude.Compat hiding (FilePath)
 
@@ -47,7 +48,7 @@ data Buildsome = Buildsome
   , bsFastKillBuild :: E.SomeException -> IO ()
   , bsRender :: ColorText -> ByteString
   , bsParPool :: Parallelism.Pool
-  , bsCachedStats :: IORef (Map FilePath InputDesc)
+  , bsCachedStats :: IORef (Map FilePath (Maybe Posix.FileStatus))
   , bsMaxCacheSize :: Integer
   }
 
