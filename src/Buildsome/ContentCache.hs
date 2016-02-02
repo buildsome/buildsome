@@ -78,7 +78,7 @@ cleanContentCacheDir' buildsome = do
   putStr "Updating from disk..."
   files <- Dir.getDirectoryContentsRecursive (contentCacheDir buildsome)
       >>= mapM (\fileName -> (fileName,) <$> getMFileStatus fileName)
-  let (totalSize, filesToRemove) = filesToDelete maxCacheSize $ sortOn (fmap Posix.modificationTimeHiRes . snd) files
+  let (totalSize, filesToRemove) = filesToDelete (9 * maxCacheSize `div` 10) $ sortOn (fmap Posix.modificationTimeHiRes . snd) files
       numRemoved = length $ filesToRemove
       bytesSaved = sum (map snd filesToRemove)
   if numRemoved > 0
