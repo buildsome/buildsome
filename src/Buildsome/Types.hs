@@ -12,8 +12,6 @@ import           Buildsome.Stats (Stats)
 import qualified Control.Exception as E
 import           Data.ByteString (ByteString)
 import           Data.Set (Set)
-import           Data.Map (Map)
-import           Data.IORef (IORef)
 import           Lib.ColorText (ColorText)
 import           Lib.FSHook (FSHook)
 import           Lib.Hash (Hash)
@@ -49,8 +47,8 @@ data Buildsome = Buildsome
   , bsFastKillBuild :: E.SomeException -> IO ()
   , bsRender :: ColorText -> ByteString
   , bsParPool :: Parallelism.Pool
-  , bsCachedStats :: IORef (Map FilePath (Maybe Posix.FileStatus))
-  , bsCachedSubDirHashes :: IORef (Map FilePath (Maybe (Hash, Hash)))
+  , bsCachedStats :: SyncMap FilePath (Maybe Posix.FileStatus)
+  , bsCachedSubDirHashes :: SyncMap FilePath (Maybe (Hash, Hash))
   , bsMaxCacheSize :: Integer
   }
 

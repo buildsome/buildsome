@@ -601,13 +601,10 @@ verifyFileDesc buildsome str filePath fileDesc existingVerify = do
 
 getCachedSubDirHashes :: MonadIO m => Buildsome -> FilePath -> m (Maybe (Hash.Hash, Hash.Hash))
 getCachedSubDirHashes buildsome filePath = {-# SCC "getCachedSubDirHashes" #-} do
-  cache <- liftIO $ readIORef $ bsCachedSubDirHashes buildsome
-  case M.lookup filePath cache of
-      Just desc -> return desc
-      Nothing -> do
-          case filter ((`BS8.isPrefixOf` filePath) . fst) $ M.toList cache of
-              ((_,x):_) -> return x
-              _ -> updateCache
+  liftIO $ SyncMap.insert (bsCachedSubDirHashes buildsome) filePath updateCache
+          -- case filter ((`BS8.isPrefixOf` filePath) . fst) $ M.toList cache of
+          --     ((_,x):_) -> return x
+          --     _ -> updateCache
   where
       updateCache = do
           isDir <- liftIO $ Dir.doesDirectoryExist filePath
@@ -621,21 +618,15 @@ getCachedSubDirHashes buildsome filePath = {-# SCC "getCachedSubDirHashes" #-} d
                   let listingHash = mconcat $ map Hash.md5 files
                   statHash <- calcDirectoryStatsHash buildsome files
                   return $ Just (listingHash, statHash)
-          liftIO $ atomicModifyIORef'_ (bsCachedSubDirHashes buildsome) (M.insert filePath res)
           return res
 
 
 getCachedStat :: MonadIO m => Buildsome -> FilePath -> m (Maybe Posix.FileStatus)
 getCachedStat buildsome filePath = {-# SCC "getCachedStat" #-} do
-  cache <- liftIO $ readIORef $ bsCachedStats buildsome
-  case M.lookup filePath cache of
-      Just desc -> return desc
-      Nothing -> do
-          mStat <- liftIO $ Dir.getMFileStatus filePath
-          liftIO $ atomicModifyIORef'_ (bsCachedStats buildsome) (M.insert filePath mStat)
-          return mStat
+  liftIO $ SyncMap.insert (bsCachedStats buildsome) filePath (Dir.getMFileStatus filePath)
+
 invalidateCachedStat :: MonadIO m => Buildsome -> FilePath -> m ()
-invalidateCachedStat buildsome filePath = liftIO $ atomicModifyIORef'_ (bsCachedStats buildsome) (M.delete filePath)
+invalidateCachedStat buildsome filePath = liftIO $ SyncMap.delete (bsCachedStats buildsome) filePath
 
 calcDirectoryStatsHash :: MonadIO m => Buildsome -> [FilePath] -> m Hash.Hash
 calcDirectoryStatsHash buildsome files =
@@ -1423,8 +1414,8 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     deleteRemovedOutputs printer db phoniesSet buildMaps
     runOnce <- once
     errorRef <- newIORef Nothing
-    statsCache <- newIORef M.empty
-    subDirCache <- newIORef M.empty
+    statsCache <- SyncMap.new
+    subDirCache <- SyncMap.new
     let
       killOnce msg exception =
         void $ E.uninterruptibleMask_ $ runOnce $ do

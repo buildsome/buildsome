@@ -8,6 +8,7 @@ module Lib.SyncMap
     , tryInsert
     , insert
     , new
+    , delete
     ) where
 
 import Prelude.Compat
@@ -68,3 +69,6 @@ insert syncMap key action =
 
 new :: IO (SyncMap k v)
 new = SyncMap <$> newIORef M.empty
+
+delete :: Ord k => SyncMap k a -> k -> IO ()
+delete (SyncMap refMap) key = atomicModifyIORef' refMap $ (,()) <$> M.delete key
