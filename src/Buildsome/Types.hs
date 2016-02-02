@@ -16,6 +16,7 @@ import           Data.Map (Map)
 import           Data.IORef (IORef)
 import           Lib.ColorText (ColorText)
 import           Lib.FSHook (FSHook)
+import           Lib.Hash (Hash)
 import           Lib.FilePath (FilePath)
 import           Lib.Fresh (Fresh)
 import           Lib.Makefile (Makefile(..), Target)
@@ -49,6 +50,7 @@ data Buildsome = Buildsome
   , bsRender :: ColorText -> ByteString
   , bsParPool :: Parallelism.Pool
   , bsCachedStats :: IORef (Map FilePath (Maybe Posix.FileStatus))
+  , bsCachedSubDirHashes :: IORef (Map FilePath (Maybe (Hash, Hash)))
   , bsMaxCacheSize :: Integer
   }
 

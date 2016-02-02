@@ -116,17 +116,23 @@ data ReasonOf a
   | BecauseInput (ReasonOf a) a
   | BecauseRequested ByteString
   | BecauseTryingToResolveCache
+  | BecauseOutOfProjectSubTree
   deriving (Generic, Show, Ord, Eq, Functor, Foldable, Traversable)
 instance NFData a => NFData (ReasonOf a) where rnf = genericRnf
 instance Binary (ReasonOf StringKey)
 
 type Reason = ReasonOf FilePath
 
-data ExistingInputDescOf a = ExistingInputDescOf
-  { idModeAccess    :: Maybe (a, FileModeDesc)
-  , idStatAccess    :: Maybe (a, FileStatDesc)
-  , idContentAccess :: Maybe (a, FileContentDesc)
-  } deriving (Generic, Show, Ord, Eq, Functor, Foldable, Traversable)
+data ExistingInputDescOf a
+  = ExistingInputDescOfSubTree
+    { idSubTreeListingHash  :: Hash
+    , idSubTreeStatHash :: Hash
+    }
+  | ExistingInputDescOf
+    { idModeAccess    :: Maybe (a, FileModeDesc)
+    , idStatAccess    :: Maybe (a, FileStatDesc)
+    , idContentAccess :: Maybe (a, FileContentDesc)
+    } deriving (Generic, Show, Ord, Eq, Functor, Foldable, Traversable)
 instance NFData a => NFData (ExistingInputDescOf a) where rnf = genericRnf
 instance Binary (ExistingInputDescOf (ReasonOf StringKey))
 
@@ -384,14 +390,15 @@ maybeCmp :: Cmp a => Maybe a -> Maybe a -> Bool
 maybeCmp (Just x) (Just y) = Cmp.Equals == (x `cmp` y)
 maybeCmp _        _        = True
 
-cmpFileDescInput :: InputDescOf r -> InputDescOf r -> Bool
-cmpFileDescInput (InputDescOfExisting a) (InputDescOfExisting b)   =
+cmpFileDescInput :: Eq r => InputDescOf r -> InputDescOf r -> Bool
+cmpFileDescInput (InputDescOfExisting (a@ExistingInputDescOf{})) (InputDescOfExisting (b@ExistingInputDescOf{}))   =
   maybeCmp' (idModeAccess a) (idModeAccess b)
   && maybeCmp' (idStatAccess a) (idStatAccess b)
   && maybeCmp' (idContentAccess a) (idContentAccess b)
   where
     maybeCmp' x y = maybeCmp (snd <$> x) (snd <$> y)
 
+cmpFileDescInput (InputDescOfExisting a) (InputDescOfExisting b)   = a == b
 cmpFileDescInput InputDescOfNonExisting{} InputDescOfNonExisting{} = True
 cmpFileDescInput _                        _                        = False
 
@@ -400,9 +407,6 @@ getExecutionLog = traverse . getString
 
 putExecutionLog :: Db -> ExecutionLog -> IO ExecutionLogForDb
 putExecutionLog = traverse . putString
-
-allRight :: Monad m => [m (Either e a)] -> EitherT e m ()
-allRight = foldr (>>) (return ()) . map EitherT
 
 -- like <|> for Either where lefts are not monoids, but alternatives.
 firstRightAlt :: (Monad m, Alternative f) => EitherT (f e) m a -> EitherT (f e) m a -> EitherT (f e) m a

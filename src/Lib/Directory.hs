@@ -8,6 +8,7 @@ module Lib.Directory
   , removeFileOrDirectory
   , removeFileOrDirectoryOrNothing
   , createDirectories
+  , doesDirectoryExist
   , getDirectoryContents
   , getDirectoryContentsRecursive
   , getDirectoryContentsHash
@@ -85,6 +86,9 @@ removeFileOrDirectory path =
 isDotDir :: FilePath -> Bool
 isDotDir fn = fn == "." || fn == ".."
 
+doesDirectoryExist :: FilePath -> IO Bool
+doesDirectoryExist = Dir.doesDirectoryExist . BS8.unpack
+
 getDirectoryContents :: FilePath -> IO [FilePath]
 getDirectoryContents path =
   bracket (Posix.openDirStream path) Posix.closeDirStream go
@@ -97,8 +101,14 @@ getDirectoryContents path =
 
 getDirectoryContentsRecursive :: FilePath -> IO [FilePath]
 getDirectoryContentsRecursive path = do
-    files <- map (path </>) <$> getDirectoryContents path
-    dirs <- map fst . filter snd <$> mapM (\f -> (f,) <$> Dir.doesDirectoryExist (BS8.unpack f)) files
+    let
+      tryGetDirectoryContents path' =
+        (getDirectoryContents path') `E.catch` \e ->
+        if isPermissionError e
+        then return [] -- TODO return something else
+        else E.throwIO e
+    files <- map (path </>) <$> tryGetDirectoryContents path
+    dirs <- map fst . filter snd <$> mapM (\f -> (f,) <$> doesDirectoryExist f) files
     (files ++) . concat <$> forM dirs getDirectoryContentsRecursive
 
 getDirectoryContentsHash :: FilePath -> IO Hash

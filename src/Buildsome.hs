@@ -35,8 +35,9 @@ import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Either (partitionEithers)
 import           Data.IORef
-
+import           Data.List (foldl')
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe, catMaybes, maybeToList)
@@ -47,6 +48,7 @@ import           Data.String (IsString(..))
 import           Data.Time (DiffTime)
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Typeable (Typeable)
+import qualified Lib.Binary as Binary
 import qualified Lib.Cmp as Cmp
 import           Lib.Cmp (Cmp)
 import           Lib.ColorText (ColorText)
@@ -597,6 +599,32 @@ verifyFileDesc buildsome str filePath fileDesc existingVerify = do
     (Nothing, FileDescExisting {}) -> left (str <> " file was deleted")
 
 
+getCachedSubDirHashes :: MonadIO m => Buildsome -> FilePath -> m (Maybe (Hash.Hash, Hash.Hash))
+getCachedSubDirHashes buildsome filePath = {-# SCC "getCachedSubDirHashes" #-} do
+  cache <- liftIO $ readIORef $ bsCachedSubDirHashes buildsome
+  case M.lookup filePath cache of
+      Just desc -> return desc
+      Nothing -> do
+          case filter ((`BS8.isPrefixOf` filePath) . fst) $ M.toList cache of
+              ((_,x):_) -> return x
+              _ -> updateCache
+  where
+      updateCache = do
+          isDir <- liftIO $ Dir.doesDirectoryExist filePath
+          res <-
+              if not isDir
+              then return Nothing
+              else do
+                  liftIO $ putStrLn $ "Getting full directory info for: " <> show filePath
+                  let isInProject p = (bsRootPath buildsome) `BS8.isPrefixOf` p
+                  files <- filter (not . isInProject) <$> liftIO (Dir.getDirectoryContentsRecursive filePath)
+                  let listingHash = mconcat $ map Hash.md5 files
+                  statHash <- calcDirectoryStatsHash buildsome files
+                  return $ Just (listingHash, statHash)
+          liftIO $ atomicModifyIORef'_ (bsCachedSubDirHashes buildsome) (M.insert filePath res)
+          return res
+
+
 getCachedStat :: MonadIO m => Buildsome -> FilePath -> m (Maybe Posix.FileStatus)
 getCachedStat buildsome filePath = {-# SCC "getCachedStat" #-} do
   cache <- liftIO $ readIORef $ bsCachedStats buildsome
@@ -606,9 +634,23 @@ getCachedStat buildsome filePath = {-# SCC "getCachedStat" #-} do
           mStat <- liftIO $ Dir.getMFileStatus filePath
           liftIO $ atomicModifyIORef'_ (bsCachedStats buildsome) (M.insert filePath mStat)
           return mStat
-
 invalidateCachedStat :: MonadIO m => Buildsome -> FilePath -> m ()
 invalidateCachedStat buildsome filePath = liftIO $ atomicModifyIORef'_ (bsCachedStats buildsome) (M.delete filePath)
+
+calcDirectoryStatsHash :: MonadIO m => Buildsome -> [FilePath] -> m Hash.Hash
+calcDirectoryStatsHash buildsome files =
+  mconcat <$> mapM (\file -> Hash.md5 . Binary.encode . fmap calcDescs <$> getCachedStat buildsome file) files
+  where
+    calcDescs stat = (fileStatDescOfStat stat, fileModeDescOfStat stat)
+
+validateSubTreeContent ::
+  (IsString e, MonadIO m) => Buildsome -> FilePath -> Hash.Hash -> Hash.Hash -> EitherT e m ()
+validateSubTreeContent buildsome path listingHash statHash = do
+  -- TODO Crap
+  Just (curListingHash, curStatHash) <- getCachedSubDirHashes buildsome path
+  when (curListingHash /= listingHash) $ left "listing changed"
+  when (curStatHash /= statHash) $ left "stats changed"
+  return ()
 
 verifyInputDescs ::
   MonadIO f =>
@@ -618,16 +660,19 @@ verifyInputDescs ::
 verifyInputDescs buildsome elInputsDescs = {-# SCC "verifyInputDescs" #-} do
   forM_ elInputsDescs $ \(filePath, desc) ->
     annotateError filePath $
-      verifyFileDesc buildsome"input" filePath desc $ \stat (Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) ->
-      unless (mtimeSame stat mStatAccess) $ do
-          let verify str getDesc mPair =
-                  verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
-          verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
-          verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
-          verifyMDesc "content"
-              (fileContentDescOfStat "When applying execution log (input)"
-               db filePath stat) $ fmap snd mContentAccess
+      verifyFileDesc buildsome "input" filePath desc (validateExistingInputDesc filePath)
   where
+    validateExistingInputDesc filePath _    (Db.ExistingInputDescOfSubTree listingHash statHash) =
+        validateSubTreeContent buildsome filePath listingHash statHash
+    validateExistingInputDesc filePath stat (Db.ExistingInputDescOf mModeAccess mStatAccess mContentAccess) =
+        unless (mtimeSame stat mStatAccess) $ do
+        let verify str getDesc mPair =
+                verifyMDesc ("input(" <> str <> ")") getDesc $ snd <$> mPair
+        verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
+        verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
+        verifyMDesc "content"
+            (fileContentDescOfStat "When applying execution log (input)"
+             db filePath stat) $ fmap snd mContentAccess
     db = bsDb buildsome
     mtimeSame stat (Just (_, FileDesc.FileStatOther fullStatEssence)) =
         (Posix.modificationTimeHiRes stat) == (FileDesc.modificationTimeHiRes fullStatEssence)
@@ -684,6 +729,8 @@ executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} inputsDescs
       Just (depReason, FSHook.AccessTypeModeOnly)
     fromFileDesc (FileDescExisting inputDesc) =
       case inputDesc of
+      Db.ExistingInputDescOfSubTree _ _ ->
+        Just (Db.BecauseOutOfProjectSubTree, FSHook.AccessTypeFull)
       Db.ExistingInputDescOf { Db.idContentAccess = Just (depReason, _) } ->
         Just (depReason, FSHook.AccessTypeFull)
       Db.ExistingInputDescOf { Db.idStatAccess = Just (depReason, _) } ->
@@ -1049,12 +1096,16 @@ runCmd bte@BuildTargetEnv{..} entity target = {-# SCC "runCmd" #-} do
     shellCmd = ShellCommand (BS8.unpack (targetInterpolatedCmds target))
     Color.Scheme{..} = Color.scheme
 
+
 makeExecutionLog ::
   Buildsome -> Target ->
   Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
   [FilePath] -> StdOutputs ByteString -> DiffTime -> IO Db.ExecutionLog
 makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "makeExecutionLog" #-} do
-  inputsDescs <- M.traverseWithKey inputAccess inputs
+  let (projectInputs, externalInputs) = partitionEithers $ map (uncurry getExternalSubdirFor) $ M.toList inputs
+  projectInputsDescs <- traverse (\(f, a) -> (f,) <$> inputAccess f a) projectInputs
+  externalInputsDescs <- traverse (\f -> (f,) <$> externalInputDesc f) $ S.toList . S.fromList $ externalInputs
+
   outputDescPairs <-
     forM outputs $ \outPath -> do
       mStat <- getCachedStat buildsome outPath
@@ -1082,7 +1133,7 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
   return Db.ExecutionLogOf
     { elBuildId = bsBuildId buildsome
     , elCommand = targetInterpolatedCmds target
-    , elInputBranchPath = Db.ELBranchPath $ M.toList $ fmap Db.fromFileDesc inputsDescs
+    , elInputBranchPath = Db.ELBranchPath $ map (fmap Db.fromFileDesc) (projectInputsDescs ++ externalInputsDescs)
     , elOutputsDescs = outputDescPairs
     , elStdoutputs = stdOutputs
     , elSelfTime = selfTime
@@ -1092,6 +1143,31 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
     assertFileMTime path oldMStat =
       unless (MagicFiles.allowedUnspecifiedOutput path) $
       Meddling.assertFileMTime "When making execution log (input)" path oldMStat
+
+    canonicalizePath = FilePath.canonicalizePathAsRelativeCwd (bsRootPath buildsome)
+    getExternalSubdirFor path a@_ | "/home" `BS8.isPrefixOf` canonicalizePath path = Left (path, a)
+    getExternalSubdirFor path a@(accessTypes, Just stat) =
+        case FilePath.splitPath $ canonicalizePath path of
+            ("/":xs) | length xs > 3 ->
+                Right $ if Posix.isDirectory stat
+                        then path
+                        else foldl' (</>) "/" $ init xs
+            _ -> Left (path, a)
+
+    externalInputDesc subdir = do
+      -- TODO crap
+      -- putStrLn $ "getCachedSubDirHashes" <> show subdir
+      res <- getCachedSubDirHashes buildsome subdir
+      case res of
+          Nothing -> return $ FileDescNonExisting Db.BecauseTryingToResolveCache
+          Just (listingHash, statHash) ->
+              return
+              $ FileDescExisting
+              $ Db.ExistingInputDescOfSubTree
+              { idSubTreeListingHash = listingHash
+              , idSubTreeStatHash = statHash
+              }
+
     inputAccess ::
       FilePath ->
       (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
@@ -1105,11 +1181,12 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
       return $ FileDescNonExisting reason
     inputAccess path (accessTypes, Just stat) = do
       assertFileMTime path $ Just stat
+      -- TODO: Missing meddling check for non-contents below!
       let
         addDesc accessType getDesc = do
           desc <- getDesc
           return $ flip (,) desc <$> M.lookup accessType accessTypes
-      -- TODO: Missing meddling check for non-contents below!
+
       modeAccess <-
         addDesc FSHook.AccessTypeModeOnly $ return $ fileModeDescOfStat stat
       statAccess <-
@@ -1347,6 +1424,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     runOnce <- once
     errorRef <- newIORef Nothing
     statsCache <- newIORef M.empty
+    subDirCache <- newIORef M.empty
     let
       killOnce msg exception =
         void $ E.uninterruptibleMask_ $ runOnce $ do
@@ -1374,6 +1452,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         , bsParPool = pool
         , bsCachedStats = statsCache
         , bsMaxCacheSize = optMaxCacheSize
+        , bsCachedSubDirHashes = subDirCache
         }
     withInstalledSigintHandler
       (killOnce "\nBuild interrupted by Ctrl-C, shutting down."

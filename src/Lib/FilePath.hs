@@ -4,6 +4,7 @@ module Lib.FilePath
   ( FilePath
   , isAbsolute
   , splitFileName
+  , splitPath
   , canonicalizePath
   , canonicalizePathCwd
   , canonicalizePathAsRelative
