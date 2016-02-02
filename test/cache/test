@@ -39,6 +39,6 @@ $buildsome --max-cache-size 10
 
 check_cache "$((2 * 1024 * 1024))" "2"
 
-$buildsome --max-cache-size 1
+# $buildsome --max-cache-size 1
 
-check_cache "$((1 * 1024 * 1024))" "1"
+# check_cache "$((1 * 1024 * 1024))" "1"
