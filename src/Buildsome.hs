@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE CPP, ScopedTypeVariables, DeriveDataTypeable, RecordWildCards, OverloadedStrings #-}
@@ -37,7 +38,7 @@ import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.Either (partitionEithers)
 import           Data.IORef
-import           Data.List (foldl')
+import           Data.List (foldl', sort)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe, catMaybes, maybeToList)
@@ -77,7 +78,7 @@ import           Lib.ShowBytes (showBytes)
 import           Lib.Sigint (withInstalledSigintHandler)
 import           Lib.StdOutputs (StdOutputs(..))
 import qualified Lib.SyncMap as SyncMap
-import           Lib.TimeIt (timeIt)
+import           Lib.TimeIt (timeIt, printTimeIt)
 import qualified Lib.Timeout as Timeout
 import qualified Lib.SharedMemory as SharedMemory
 import           System.Exit (ExitCode(..))
@@ -601,38 +602,38 @@ verifyFileDesc buildsome str filePath fileDesc existingVerify = do
 
 getCachedSubDirHashes :: MonadIO m => Buildsome -> FilePath -> m (Maybe (Hash.Hash, Hash.Hash))
 getCachedSubDirHashes buildsome filePath = {-# SCC "getCachedSubDirHashes" #-} do
-  liftIO $ SyncMap.insert (bsCachedSubDirHashes buildsome) filePath updateCache
-          -- case filter ((`BS8.isPrefixOf` filePath) . fst) $ M.toList cache of
-          --     ((_,x):_) -> return x
-          --     _ -> updateCache
+  mHashes <- liftIO $ SyncMap.lookup (bsCachedSubDirHashes buildsome) filePath
+  case mHashes of
+      Nothing -> liftIO $ SyncMap.insert (bsCachedSubDirHashes buildsome) filePath updateCache
+      Just hashes -> return hashes
   where
-      updateCache = do
+      updateCache = {-# SCC "getCachedSubDirHashes.updateCache" #-} do
           isDir <- liftIO $ Dir.doesDirectoryExist filePath
           res <-
               if not isDir
               then return Nothing
               else do
-                  liftIO $ putStrLn $ "Getting full directory info for: " <> show filePath
                   let isInProject p = (bsRootPath buildsome) `BS8.isPrefixOf` p
-                  files <- filter (not . isInProject) <$> liftIO (Dir.getDirectoryContentsRecursive filePath)
-                  let listingHash = mconcat $ map Hash.md5 files
-                  statHash <- calcDirectoryStatsHash buildsome files
-                  return $ Just (listingHash, statHash)
+                  files <- sort . filter (not . isInProject) <$> liftIO (Dir.getDirectoryContents filePath)
+                  let !listingHash = Hash.md5 $! mconcat files
+                  !statHash <- calcDirectoryStatsHash buildsome files
+                  return $! Just (listingHash, statHash)
           return res
 
 
 getCachedStat :: MonadIO m => Buildsome -> FilePath -> m (Maybe Posix.FileStatus)
 getCachedStat buildsome filePath = {-# SCC "getCachedStat" #-} do
-  liftIO $ SyncMap.insert (bsCachedStats buildsome) filePath (Dir.getMFileStatus filePath)
+  liftIO $ Dir.getMFileStatus filePath
+  -- liftIO $ SyncMap.insert (bsCachedStats buildsome) filePath (Dir.getMFileStatus filePath)
 
 invalidateCachedStat :: MonadIO m => Buildsome -> FilePath -> m ()
 invalidateCachedStat buildsome filePath = liftIO $ SyncMap.delete (bsCachedStats buildsome) filePath
 
 calcDirectoryStatsHash :: MonadIO m => Buildsome -> [FilePath] -> m Hash.Hash
 calcDirectoryStatsHash buildsome files =
-  mconcat <$> mapM (\file -> Hash.md5 . Binary.encode . fmap calcDescs <$> getCachedStat buildsome file) files
+  Hash.md5 . Binary.encode . sum . catMaybes <$> mapM (\file -> fmap calcDescs <$> getCachedStat buildsome file) files
   where
-    calcDescs stat = (fileStatDescOfStat stat, fileModeDescOfStat stat)
+    calcDescs stat = (Posix.modificationTimeHiRes stat)
 
 validateSubTreeContent ::
   (IsString e, MonadIO m) => Buildsome -> FilePath -> Hash.Hash -> Hash.Hash -> EitherT e m ()
@@ -775,7 +776,9 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc@TargetDesc{..} = 
         , cPath (show missingInput)
         ]
       handleCacheMiss
-    Right executionLog -> applyExecutionLog executionLog
+    Right executionLog -> do
+      verbosePrint bte $ mconcat [ "Loaded execution log:\n\t", cTarget (show executionLog) ]
+      applyExecutionLog executionLog
   where
     Color.Scheme{..} = Color.scheme
     describeError (MismatchedFiles (str, filePath)) =
@@ -1087,15 +1090,31 @@ runCmd bte@BuildTargetEnv{..} entity target = {-# SCC "runCmd" #-} do
     shellCmd = ShellCommand (BS8.unpack (targetInterpolatedCmds target))
     Color.Scheme{..} = Color.scheme
 
+-- filterOn :: (a -> a -> Bool) -> [a] -> [a]
+-- filterOn f xs = filterOn' f [] xs
+
+-- filterOn' :: (a -> a -> Bool) -> [a] -> [a] -> [a]
+-- filterOn' _ pre [] = pre
+-- filterOn' f pre (x:xs) = filterOn' f (add pre) xs
+--     where add = if all (f x) xs && all (f x) pre then (x:) else id
 
 makeExecutionLog ::
   Buildsome -> Target ->
   Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
   [FilePath] -> StdOutputs ByteString -> DiffTime -> IO Db.ExecutionLog
 makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "makeExecutionLog" #-} do
-  let (projectInputs, externalInputs) = partitionEithers $ map (uncurry getExternalSubdirFor) $ M.toList inputs
+  let (projectInputs, externalInputs) =
+          partitionEithers
+          $ map (uncurry getExternalSubdirFor)
+          $ filter (not . BS8.null . fst)
+          $ map (\(f,d) -> (canonicalizePath f, d))
+          $ M.toList inputs
   projectInputsDescs <- traverse (\(f, a) -> (f,) <$> inputAccess f a) projectInputs
-  externalInputsDescs <- traverse (\f -> (f,) <$> externalInputDesc f) $ S.toList . S.fromList $ externalInputs
+  -- mapM (putStrLn . show) externalInputs
+  externalInputsDescs <- traverse (\f -> (f,) <$> externalInputDesc f)
+      -- $ filterOn (\test other -> not $ other `BS8.isPrefixOf` test)
+      $ S.toList . S.fromList
+      $ externalInputs
 
   outputDescPairs <-
     forM outputs $ \outPath -> do
@@ -1136,14 +1155,11 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
       Meddling.assertFileMTime "When making execution log (input)" path oldMStat
 
     canonicalizePath = FilePath.canonicalizePathAsRelativeCwd (bsRootPath buildsome)
-    getExternalSubdirFor path a@_ | "/home" `BS8.isPrefixOf` canonicalizePath path = Left (path, a)
-    getExternalSubdirFor path a@(accessTypes, Just stat) =
-        case FilePath.splitPath $ canonicalizePath path of
-            ("/":xs) | length xs > 3 ->
-                Right $ if Posix.isDirectory stat
-                        then path
-                        else foldl' (</>) "/" $ init xs
-            _ -> Left (path, a)
+    getExternalSubdirFor path a@_ | "/home" `BS8.isPrefixOf` path = Left (path, a)
+    getExternalSubdirFor path a =
+          case FilePath.splitPath path of
+              ("/":xs) | length xs > 2 -> Right $ foldl' (</>) "/" $ init xs
+              _ -> Left (path, a)
 
     externalInputDesc subdir = do
       -- TODO crap
