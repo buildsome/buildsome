@@ -304,14 +304,14 @@ string :: Hash -> Db -> IRef ByteString
 string k = mkIRefKey $ "s:" <> Hash.asByteString k
 
 updateItem :: Ord k => IORef (Map k v) -> k -> v -> IO () -> IO ()
-updateItem ioref k s act = join $ atomicModifyIORef' ioref $ \smap ->
+updateItem ioref k s act = {-# SCC "updateItem" #-} join $ atomicModifyIORef' ioref $ \smap ->
   case Map.lookup k smap of
       Nothing -> (Map.insert k s smap, act)
       Just _ -> (smap, return ())
 
 getItem :: Ord k => k -> IO v -> IORef (Map k v) ->
            IRef v -> IO v
-getItem k act ioref iref = do
+getItem k act ioref iref = {-# SCC "getItem" #-} do
     map' <- readIORef ioref
     case Map.lookup k map' of
         Nothing -> do
@@ -327,7 +327,7 @@ getItem k act ioref iref = do
         Just v -> return v
 
 putItem :: Ord k => k -> v -> IORef (Map k v) -> IRef v -> IO ()
-putItem k v ioref iref = updateItem ioref k v $ writeIRef iref v
+putItem k v ioref iref = {-# SCC "putItem" #-} updateItem ioref k v $ writeIRef iref v
 
 md5LengthInBytes :: Int
 md5LengthInBytes = 16

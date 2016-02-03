@@ -35,11 +35,11 @@ instantiatePatternByMatch match (Target outputs inputs ooInputs cmds pos) =
     mPluggedOOInputs = mapM plugInputMatch ooInputs
 
 instantiatePatternByOutput :: FilePath -> Pattern -> Maybe Target
-instantiatePatternByOutput outputPath target =
+instantiatePatternByOutput outputPath target = {-# SCC "instantiatePatternByOutput" #-}
   msum $ map tryMatchOutput (targetOutputs target)
   where
     (outputDir, outputFile) = splitFileName outputPath
-    tryMatchOutput (FilePattern patDir patFile) = do
+    tryMatchOutput (FilePattern patDir patFile) = {-# SCC "instantiatePatternByOutput.tryMatchOutput" #-} do
       guard (patDir == outputDir)
       outputMatch <- StringPattern.match patFile outputFile
       instantiatePatternByMatch outputMatch target

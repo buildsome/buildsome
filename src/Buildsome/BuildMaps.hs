@@ -33,7 +33,7 @@ newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimu
                                                             -- can't overlap
   deriving (Eq, Ord, Show)
 computeTargetRep :: Target -> TargetRep
-computeTargetRep = TargetRep . minimum . targetOutputs
+computeTargetRep = {-# SCC "computeTargetRep" #-} (TargetRep . minimum . targetOutputs)
 
 data TargetDesc = TargetDesc
   { tdRep :: TargetRep
@@ -61,15 +61,15 @@ data TargetKind = TargetPattern | TargetSimple
   deriving (Eq)
 
 find :: BuildMaps -> FilePath -> Maybe (TargetKind, TargetDesc)
-find (BuildMaps buildMap childrenMap) path =
+find (BuildMaps buildMap childrenMap) path = {-# SCC "find" #-}
   -- Allow specific/simple matches to override pattern matches
   ((,) TargetSimple <$> simpleMatch) `mplus`
   ((,) TargetPattern <$> patternMatch)
   where
-    simpleMatch = path `M.lookup` buildMap
-    patterns = dbmPatterns $ M.findWithDefault mempty (takeDirectory path) childrenMap
-    instantiate pattern = (,) pattern <$> Makefile.instantiatePatternByOutput path pattern
-    patternMatch =
+    simpleMatch = {-# SCC "simpleMatch" #-} (path `M.lookup` buildMap)
+    patterns = {-# SCC "find.patterns" #-} dbmPatterns $ M.findWithDefault mempty (takeDirectory path) childrenMap
+    instantiate pattern = {-# SCC "find.instantiate" #-} (,) pattern <$> Makefile.instantiatePatternByOutput path pattern
+    patternMatch = {-# SCC "find.patternMatch" #-}
       case mapMaybe instantiate patterns of
       [] -> Nothing
       [(_, target)] -> Just $ descOfTarget target

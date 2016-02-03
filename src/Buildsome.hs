@@ -247,7 +247,7 @@ slaveForDirectPath bte@BuildTargetEnv{..} path
     -- Only project-relative paths may have output rules:
     return Nothing
   | not bteExplicitlyDemanded && isPhony bteBuildsome path = return Nothing
-  | otherwise =
+  | otherwise = {-# SCC "slaveForDirectPath" #-}
   case BuildMaps.find (bsBuildMaps bteBuildsome) path of
   Nothing -> return Nothing
   Just (targetKind, targetDesc) ->
@@ -262,7 +262,7 @@ slavesForChildrenOf bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | not (null childPatterns) =
     fail $ "UNSUPPORTED: Read directory on directory with patterns. Path: '" ++ show path ++ "' (" ++ BS8.unpack (bsRender bteBuildsome $ show bteReason) ++ ") Patterns: " ++ show childPatterns
-  | otherwise =
+  | otherwise = {-# SCC "slavesForChildrenOf" #-}
     -- Non-pattern targets here, so they're explicitly demanded
     traverse (getSlaveForTarget bte { bteExplicitlyDemanded = True }) $
     -- TODO: targetIsPhony is the wrong question, the right question
@@ -618,6 +618,7 @@ getCachedSubDirHashes buildsome filePath = {-# SCC "getCachedSubDirHashes" #-} d
                   let !listingHash = Hash.md5 $! mconcat files
                   !statHash <- calcDirectoryStatsHash buildsome files
                   return $! Just (listingHash, statHash)
+
           return res
 
 
@@ -843,7 +844,7 @@ getSlaveForTarget :: BuildTargetEnv -> TargetDesc -> IO (Parallelism.Entity, Sla
 getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
   | any ((== tdRep) . fst3) bteParents =
     E.throwIO $ TargetDependencyLoop (bsRender bteBuildsome) newParents
-  | otherwise =
+  | otherwise = {-# SCC "getSlaveForTarget" #-}
     -- SyncMap.insert action should be fully masked (non-blocking or
     -- uninterruptibleMask). The code here is non-blocking, so we
     -- don't need uninterruptibleMask. We cannot use
@@ -856,7 +857,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
     panicOnError $
     E.uninterruptibleMask $ \restoreUninterruptible ->
     withTimeout $
-    do
+    {-# SCC "getSlaveForTarget.do" #-} do
       -- SyncMap runs this uninterruptible, so should not block
       -- indefinitely.
       depPrinterId <- Fresh.next $ bsFreshPrinterIds bteBuildsome
