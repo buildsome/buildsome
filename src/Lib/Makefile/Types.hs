@@ -5,6 +5,9 @@ module Lib.Makefile.Types
   , FilePattern(..), onFilePatternPaths
   , InputPat(..), onInputPatPaths
   , Target, onTargetPaths, targetInterpolatedCmds
+  , TargetRep(..), computeTargetRep
+  , TargetDesc(..), descOfTarget
+  , TargetKind(..)
   , Pattern, onPatternPaths
   , VarName, VarValue, Vars
   , Makefile(..), onMakefilePaths
@@ -39,6 +42,33 @@ instance (NFData output, NFData input) => NFData (TargetType output input) where
   rnf = genericRnf
 
 type Target = TargetType FilePath FilePath
+
+-- | Unique identifier of the target.
+newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimum output path as the
+                                                            -- target key/representative. It's ok to
+                                                            -- do this because each target outputs
+                                                            -- can't overlap
+  deriving (Eq, Ord, Show, Generic)
+instance Binary TargetRep
+instance NFData TargetRep where rnf = genericRnf
+
+data TargetDesc = TargetDesc
+  { tdRep :: TargetRep
+  , tdTarget :: Target
+  } deriving (Show, Generic)
+instance Binary TargetDesc
+instance NFData TargetDesc where rnf = genericRnf
+
+computeTargetRep :: Target -> TargetRep
+computeTargetRep = {-# SCC "computeTargetRep" #-} (TargetRep . minimum . targetOutputs)
+
+descOfTarget :: Target -> TargetDesc
+descOfTarget target = TargetDesc (computeTargetRep target) target
+
+data TargetKind = TargetPattern | TargetSimple
+  deriving (Eq, Show, Generic)
+instance Binary TargetKind
+instance NFData TargetKind where rnf = genericRnf
 
 data FilePattern = FilePattern
   { filePatternDirectory :: FilePath

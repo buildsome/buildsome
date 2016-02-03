@@ -20,28 +20,13 @@ import qualified Data.Map.Strict as M
 import           Data.Maybe (mapMaybe)
 import           Data.Monoid ((<>))
 import           Lib.FilePath (FilePath, takeDirectory)
-import           Lib.Makefile (Makefile(..), TargetType(..), Target, Pattern)
+import           Lib.Makefile (Makefile(..), TargetType(..), Pattern
+                              , TargetRep(..), TargetDesc(..), descOfTarget, computeTargetRep
+                              , TargetKind(..))
 import qualified Lib.Makefile as Makefile
 import qualified Lib.StringPattern as StringPattern
 
 import           Prelude.Compat hiding (FilePath)
-
--- | Unique identifier of the target.
-newtype TargetRep = TargetRep { targetRepPath :: FilePath } -- We use the minimum output path as the
-                                                            -- target key/representative. It's ok to
-                                                            -- do this because each target outputs
-                                                            -- can't overlap
-  deriving (Eq, Ord, Show)
-computeTargetRep :: Target -> TargetRep
-computeTargetRep = {-# SCC "computeTargetRep" #-} (TargetRep . minimum . targetOutputs)
-
-data TargetDesc = TargetDesc
-  { tdRep :: TargetRep
-  , tdTarget :: Target
-  } deriving (Show)
-
-descOfTarget :: Target -> TargetDesc
-descOfTarget target = TargetDesc (computeTargetRep target) target
 
 data DirectoryBuildMap = DirectoryBuildMap
   { dbmTargets :: [TargetDesc]
@@ -56,9 +41,6 @@ data BuildMaps = BuildMaps
   { _bmBuildMap :: Map FilePath TargetDesc -- output paths -> min(representative) path and original spec
   , _bmChildrenMap :: Map FilePath DirectoryBuildMap
   }
-
-data TargetKind = TargetPattern | TargetSimple
-  deriving (Eq)
 
 find :: BuildMaps -> FilePath -> Maybe (TargetKind, TargetDesc)
 find (BuildMaps buildMap childrenMap) path = {-# SCC "find" #-}

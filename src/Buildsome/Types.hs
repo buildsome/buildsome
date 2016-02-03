@@ -17,7 +17,7 @@ import           Lib.FSHook (FSHook)
 import           Lib.Hash (Hash)
 import           Lib.FilePath (FilePath)
 import           Lib.Fresh (Fresh)
-import           Lib.Makefile (Makefile(..), Target)
+import           Lib.Makefile (Makefile(..), Target, TargetKind, TargetDesc)
 import qualified Lib.Parallelism as Parallelism
 import           Lib.Printer (Printer)
 import qualified Lib.Printer as Printer
@@ -50,6 +50,7 @@ data Buildsome = Buildsome
   , bsCachedStats :: SyncMap FilePath (Maybe Posix.FileStatus)
   , bsCachedSubDirHashes :: SyncMap FilePath (Maybe (Hash, Hash))
   , bsMaxCacheSize :: Integer
+  , bsCachedBuildMapResults :: SyncMap FilePath (Maybe (TargetKind, TargetDesc))
   }
 
 data WaitOrCancel = Wait | CancelAndWait

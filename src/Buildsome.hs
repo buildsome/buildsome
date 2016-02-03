@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -67,7 +68,7 @@ import qualified Lib.FilePath as FilePath
 import qualified Lib.Hash as Hash
 import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs,
-                               targetInterpolatedCmds)
+                               targetInterpolatedCmds, TargetDesc, TargetKind)
 import           Lib.Once (once)
 import qualified Lib.Parallelism as Parallelism
 import           Lib.Printer (Printer, printStrLn)
@@ -248,7 +249,7 @@ slaveForDirectPath bte@BuildTargetEnv{..} path
     return Nothing
   | not bteExplicitlyDemanded && isPhony bteBuildsome path = return Nothing
   | otherwise = {-# SCC "slaveForDirectPath" #-}
-  case BuildMaps.find (bsBuildMaps bteBuildsome) path of
+  cachedBuildMapFind bteBuildsome path >>= \case
   Nothing -> return Nothing
   Just (targetKind, targetDesc) ->
     Just <$>
@@ -621,6 +622,15 @@ getCachedSubDirHashes buildsome filePath = {-# SCC "getCachedSubDirHashes" #-} d
 
           return res
 
+
+cachedBuildMapFind :: Buildsome -> FilePath -> IO (Maybe (TargetKind, TargetDesc))
+cachedBuildMapFind buildsome filePath = do
+  mHashes <- liftIO $ SyncMap.lookup (bsCachedBuildMapResults buildsome) filePath
+  case mHashes of
+      Nothing -> liftIO $ SyncMap.insert (bsCachedBuildMapResults buildsome) filePath updateCache
+      Just hashes -> return hashes
+  where
+      updateCache = return $ BuildMaps.find (bsBuildMaps buildsome) filePath
 
 getCachedStat :: MonadIO m => Buildsome -> FilePath -> m (Maybe Posix.FileStatus)
 getCachedStat buildsome filePath = {-# SCC "getCachedStat" #-} do
@@ -1350,13 +1360,13 @@ data FileBuildRule
   | ValidBuildRule
   | InvalidPatternBuildRule {- transitively missing inputs -}
   deriving (Eq)
-getFileBuildRule :: Set FilePath -> Set FilePath -> BuildMaps -> FilePath -> IO FileBuildRule
-getFileBuildRule registeredOutputs phonies buildMaps = go
+getFileBuildRule :: Buildsome -> Set FilePath -> Set FilePath -> FilePath -> IO FileBuildRule
+getFileBuildRule buildsome registeredOutputs phonies = go
   where
     go path
       | path `S.member` phonies = return PhonyBuildRule
-      | otherwise =
-        case BuildMaps.find buildMaps path of
+      | otherwise = cachedBuildMapFind buildsome path >>= \res ->
+        case res of
         Nothing -> return NoBuildRule
         Just (BuildMaps.TargetSimple, _) -> return ValidBuildRule
         Just (BuildMaps.TargetPattern, targetDesc) ->
@@ -1376,15 +1386,15 @@ getFileBuildRule registeredOutputs phonies buildMaps = go
           | path `S.member` registeredOutputs -> return False -- a has-been
           | otherwise -> FilePath.exists path
 
-deleteRemovedOutputs :: Printer -> Db -> Set FilePath -> BuildMaps -> IO ()
-deleteRemovedOutputs printer db phonies buildMaps = do
+deleteRemovedOutputs :: Buildsome -> Printer -> Db -> Set FilePath -> IO ()
+deleteRemovedOutputs buildsome printer db phonies = do
   -- No need for IORef atomicity here, this happens strictly before
   -- anything else, without parallelism
   oldRegisteredOutputs <- readIORef (Db.registeredOutputsRef db)
   (newRegisteredOutputs, toDelete) <-
     LibSet.partitionA
     (fmap (== ValidBuildRule) .
-     getFileBuildRule oldRegisteredOutputs phonies buildMaps)
+     getFileBuildRule buildsome oldRegisteredOutputs phonies)
     oldRegisteredOutputs
   writeIORef (Db.registeredOutputsRef db) newRegisteredOutputs
   forM_ (S.toList toDelete) $ \path -> do
@@ -1428,11 +1438,11 @@ with printer db makefilePath makefile opt@Opt{..} body = do
     rootPath <- FilePath.canonicalizePath $ FilePath.takeDirectory makefilePath
     let buildMaps = BuildMaps.make makefile
     let phoniesSet = S.fromList . map snd $ makefilePhonies makefile
-    deleteRemovedOutputs printer db phoniesSet buildMaps
     runOnce <- once
     errorRef <- newIORef Nothing
     statsCache <- SyncMap.new
     subDirCache <- SyncMap.new
+    buildMapsCache <- SyncMap.new
     let
       killOnce msg exception =
         void $ E.uninterruptibleMask_ $ runOnce $ do
@@ -1461,7 +1471,9 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         , bsCachedStats = statsCache
         , bsMaxCacheSize = optMaxCacheSize
         , bsCachedSubDirHashes = subDirCache
+        , bsCachedBuildMapResults = buildMapsCache
         }
+    deleteRemovedOutputs buildsome printer db phoniesSet
     withInstalledSigintHandler
       (killOnce "\nBuild interrupted by Ctrl-C, shutting down."
        (E.SomeException E.UserInterrupt)) $ do

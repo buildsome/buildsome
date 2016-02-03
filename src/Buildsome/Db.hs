@@ -76,6 +76,7 @@ import qualified Lib.Hash                   as Hash
 import           Lib.Makefile               (Makefile)
 import qualified Lib.Makefile               as Makefile
 import           Lib.Makefile.Monad         (PutStrLn)
+import           Lib.Makefile.Types         (TargetKind, TargetDesc)
 import           Lib.StdOutputs             (StdOutputs (..))
 import           Lib.TimeInstances          ()
 import           Prelude.Compat             hiding (FilePath)
@@ -542,6 +543,10 @@ data MakefileParseCache = MakefileParseCache
   , mpcOutput :: (Makefile, [PutStrLn])
   } deriving (Generic, Show)
 instance Binary MakefileParseCache
+
+makefileTargetDescCache :: Db -> Makefile.Vars -> IRef (Map FilePath (Maybe (TargetKind, TargetDesc)))
+makefileTargetDescCache db vars =
+    mkIRefKey ("makefileParseCache_Schema.1.targetDescs:" <> Hash.asByteString (Hash.md5 $ encode vars)) db
 
 makefileParseCache :: Db -> Makefile.Vars -> IRef MakefileParseCache
 makefileParseCache db vars =
