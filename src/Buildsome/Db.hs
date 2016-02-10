@@ -40,7 +40,10 @@ import           Control.DeepSeq            (NFData (..))
 import           Control.DeepSeq.Generics   (genericRnf)
 import           Control.Monad              (join, liftM)
 import           Control.Monad.IO.Class     (MonadIO, liftIO)
-import           Control.Monad.Trans.Either (EitherT (..), left, runEitherT, bimapEitherT)
+import           Control.Monad.Trans.Class  (MonadTrans (..))
+import           Control.Monad.Trans.Either (EitherT (..), bimapEitherT, left,
+                                             runEitherT)
+import           Control.Monad.Trans.Identity (runIdentityT)
 import           Data.Binary                (Binary (..))
 import           Data.ByteString            (ByteString)
 import qualified Data.ByteString.Char8      as BS8
@@ -76,7 +79,7 @@ import qualified Lib.Hash                   as Hash
 import           Lib.Makefile               (Makefile)
 import qualified Lib.Makefile               as Makefile
 import           Lib.Makefile.Monad         (PutStrLn)
-import           Lib.Makefile.Types         (TargetKind, TargetDesc)
+import           Lib.Makefile.Types         (TargetDesc, TargetKind)
 import           Lib.StdOutputs             (StdOutputs (..))
 import           Lib.TimeInstances          ()
 import           Prelude.Compat             hiding (FilePath)
@@ -126,8 +129,8 @@ type Reason = ReasonOf FilePath
 
 data ExistingInputDescOf a
   = ExistingInputDescOfSubTree
-    { idSubTreeListingHash  :: Hash
-    , idSubTreeStatHash :: Hash
+    { idSubTreeListingHash :: Hash
+    , idSubTreeStatHash    :: Hash
     }
   | ExistingInputDescOf
     { idModeAccess    :: Maybe (a, FileModeDesc)
@@ -310,20 +313,20 @@ updateItem ioref k s act = {-# SCC "updateItem" #-} join $ atomicModifyIORef' io
       Nothing -> (Map.insert k s smap, act)
       Just _ -> (smap, return ())
 
-getItem :: Ord k => k -> IO v -> IORef (Map k v) ->
-           IRef v -> IO v
+getItem :: (MonadTrans mt, MonadIO (mt m), Ord k) => k -> mt m v -> IORef (Map k v) ->
+           IRef v -> mt m v
 getItem k act ioref iref = {-# SCC "getItem" #-} do
-    map' <- readIORef ioref
+    map' <- liftIO $ readIORef ioref
     case Map.lookup k map' of
         Nothing -> do
-            mv <- readIRef iref
+            mv <- liftIO $ readIRef iref
             case mv of
                 Just v -> do
-                    updateItem ioref k v $ return ()
+                    liftIO $ updateItem ioref k v $ return ()
                     return v
                 Nothing -> do
                     v <- act
-                    putItem k v ioref iref
+                    liftIO $ putItem k v ioref iref
                     return v
         Just v -> return v
 
@@ -340,14 +343,14 @@ stringShouldSkipHash :: ByteString -> Bool
 stringShouldSkipHash s = len < stringKeyMinLength && len /= md5LengthInBytes
     where len = BS8.length s
 
-getString :: Db -> StringKey -> IO ByteString
+getString :: MonadIO m => Db -> StringKey -> EitherT String m ByteString
 getString db (StringKey s)      = {-# SCC "getString" #-}
     if stringShouldSkipHash s
     then return s
     else getItem k missingError (dbStrings db) (string k db)
     where
         k = Hash.Hash s
-        missingError = error $ "Corrupt DB? Missing string for key: " <> show k
+        missingError = left $ "Corrupt DB? Missing string for key: " <> show k
 
 putString :: Db -> ByteString -> IO StringKey
 putString db s = {-# SCC "putString" #-}
@@ -360,7 +363,7 @@ putString db s = {-# SCC "putString" #-}
 
 getContentCache :: Db -> FilePath -> IO FileContentDescCache -> IO FileContentDescCache
 getContentCache db filePath act =
-    getItem filePath act (dbContentCache db) (fileContentDescCache filePath db)
+    runIdentityT $ getItem filePath (liftIO act) (dbContentCache db) (fileContentDescCache filePath db)
 
 putContentCache :: Db -> FilePath -> FileContentDescCache -> IO ()
 putContentCache db filePath contentDesc =
@@ -403,7 +406,7 @@ cmpFileDescInput (InputDescOfExisting a) (InputDescOfExisting b)   = a == b
 cmpFileDescInput InputDescOfNonExisting{} InputDescOfNonExisting{} = True
 cmpFileDescInput _                        _                        = False
 
-getExecutionLog :: Db -> ExecutionLogForDb -> IO ExecutionLog
+getExecutionLog :: MonadIO m => Db -> ExecutionLogForDb -> EitherT String m ExecutionLog
 getExecutionLog = traverse . getString
 
 putExecutionLog :: Db -> ExecutionLog -> IO ExecutionLogForDb
@@ -441,7 +444,7 @@ executionLogPathCmp (ELBranchPath x) (ELBranchPath y) =
 pathChunkSize :: Int
 pathChunkSize = 500
 
-getPathStrings :: Db -> ELBranchPath StringKey -> IO (ELBranchPath FilePath)
+getPathStrings :: MonadIO m => Db -> ELBranchPath StringKey -> EitherT String m (ELBranchPath FilePath)
 getPathStrings db = traverse (getString db)
 
 putPathStrings :: Db -> ELBranchPath FilePath -> IO (ELBranchPath StringKey)
@@ -458,9 +461,9 @@ executionLogLookup' iref db prepareInputs inputVerifier = {-# SCC "executionLogL
         Nothing -> left Nothing
         Just (ExecutionLogNodeLeaf el) -> do
             debugPrint $ "executionLogLookup': found: " <> take 50 (show $ elCommand el)
-            liftIO $ getExecutionLog db el
+            dropErrorString $ getExecutionLog db el
         Just (ExecutionLogNodeBranch mapOfMaps) -> do
-            resolvedPaths <- liftIO $ mapM (\(p, t) -> (,t) <$> getPathStrings db p) mapOfMaps
+            resolvedPaths <- dropErrorString $ mapM (\(p, t) -> (,t) <$> getPathStrings db p) mapOfMaps
             buildInputsRes <- liftIO $ runEitherT $ do
                 prepareInputs $ map fst resolvedPaths
             case buildInputsRes of
@@ -470,6 +473,8 @@ executionLogLookup' iref db prepareInputs inputVerifier = {-# SCC "executionLogL
                 $ flip map resolvedPaths $ \(path, target) ->
                     ((mapLeftT (Just . snd) $ executionLogPathCheck inputVerifier path)
                      >> executionLogLookup' (executionLogNode target db) db prepareInputs inputVerifier)
+    where
+        dropErrorString = bimapEitherT (const Nothing) id
 
 executionLogNodeKey :: ExecutionLogNodeKey -> ELBranchPath StringKey -> ExecutionLogNodeKey
 executionLogNodeKey (ExecutionLogNodeKey oldKey) (ELBranchPath is) =

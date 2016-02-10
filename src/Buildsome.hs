@@ -34,7 +34,7 @@ import           Control.Concurrent (forkIO, threadDelay)
 import qualified Control.Exception as E
 import           Control.Monad (void, unless, when, filterM, forM, forM_)
 import           Control.Monad.IO.Class (MonadIO(..))
-import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
+import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT, eitherT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.Either (partitionEithers)
@@ -766,7 +766,8 @@ tryLoadLatestExecutionLog BuildTargetEnv{..} target = {-# SCC "tryLoadLatestExec
           elNode <- readIRef $ Db.executionLogNode latestExecutionLogKey (bsDb bteBuildsome)
           case elNode of
               Nothing -> return Nothing
-              Just (Db.ExecutionLogNodeLeaf el) -> Just <$> Db.getExecutionLog (bsDb bteBuildsome) el
+              Just (Db.ExecutionLogNodeLeaf el) ->
+                  eitherT (return . const Nothing) (return . Just) $ Db.getExecutionLog (bsDb bteBuildsome) el
               Just _ -> error "Expected leaf!" -- TODO bah
 
 findApplyExecutionLog :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO (Maybe (Db.ExecutionLog, BuiltTargets))
