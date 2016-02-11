@@ -617,7 +617,7 @@ getCachedSubDirHashes buildsome filePath = {-# SCC "getCachedSubDirHashes" #-} d
                   let isInProject p = (bsRootPath buildsome) `BS8.isPrefixOf` p
                   files <- sort . filter (not . isInProject) <$> liftIO (Dir.getDirectoryContents filePath)
                   let !listingHash = Hash.md5 $! mconcat files
-                  !statHash <- calcDirectoryStatsHash buildsome files
+                  !statHash <- calcDirectoryStatsHash buildsome $ map (filePath </>) files
                   return $! Just (listingHash, statHash)
 
           return res
