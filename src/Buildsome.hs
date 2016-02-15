@@ -1171,10 +1171,10 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = {-# SCC "
       Meddling.assertFileMTime "When making execution log (input)" path oldMStat
 
     canonicalizePath = FilePath.canonicalizePathAsRelativeCwd (bsRootPath buildsome)
-    getExternalSubdirFor path a@_ | "/home" `BS8.isPrefixOf` path = Left (path, a)
+    getExternalSubdirFor path a@_ | "/usr/bin" `BS8.isPrefixOf` path = Left (path, a)
     getExternalSubdirFor path a =
           case FilePath.splitPath path of
-              ("/":xs) | length xs > 2 -> Right $ foldl' (</>) "/" $ init xs
+              ("/":xs@(top:_)) | length xs > 2 && top == "usr" -> Right $ foldl' (</>) "/" $ init xs
               _ -> Left (path, a)
 
     externalInputDesc subdir = do
