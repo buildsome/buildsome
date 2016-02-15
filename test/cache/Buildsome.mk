@@ -1,4 +1,6 @@
 
+FLAG_random ?= enable
+
 .PHONY: default
 
 default: copy1 copy2
@@ -9,8 +11,17 @@ copy1:
 copy2:
 	cp origB copy2
 
+
+ifeq (${FLAG_random},enable)
 origA:
-	dd if=/dev/urandom of="$@" bs=1024 count=1024
+	cp random1 "$@"
 
 origB:
-	dd if=/dev/urandom of="$@" bs=1024 count=1024
+	cp random2 "$@"
+else
+origA:
+	echo '123456' > "$@"
+
+origB:
+	echo 'ABCDEF' > "$@"
+endif

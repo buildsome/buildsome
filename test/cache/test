@@ -27,18 +27,45 @@ check_cache() {
     test -e copy2 || echo "Missing copy2"
 }
 
+dummy_files_size="14"
+
+dd if=/dev/urandom of=random1 bs=1024 count=1024
+dd if=/dev/urandom of=random2 bs=1024 count=1024
+
+$buildsome --with random
+
+cp copy1 copy1-expected-with-random
+
+$buildsome --without random
+
+cp copy1 copy1-expected-without-random
+
+$buildsome --with random
+
+diff copy1 copy1-expected-without-random && echo 'Expecting output NOT same as --without random from before'
+diff copy1 copy1-expected-with-random || echo 'Expecting output same as --with random from before'
+
+$buildsome --without random
+
+diff copy1 copy1-expected-without-random || echo 'Expecting output same as --without random from before'
+diff copy1 copy1-expected-with-random && echo 'Expecting output same NOT as --with random from before'
+
+
+
 # will populate the cache with 3 mb
 $buildsome --max-cache-size 10
 
-check_cache "$((2 * 1024 * 1024))" "2"
+check_cache "$((2 * 1024 * 1024 + $dummy_files_size))" "4"
 
 rm copy1
 rm copy2
 
 $buildsome --max-cache-size 10
 
-check_cache "$((2 * 1024 * 1024))" "2"
+check_cache "$((2 * 1024 * 1024 + $dummy_files_size))" "4"
 
-# $buildsome --max-cache-size 1
+$buildsome --max-cache-size 2
 
-# check_cache "$((1 * 1024 * 1024))" "1"
+check_cache "$((1 * 1024 * 1024 + $dummy_files_size))" "3"
+
+echo "OK"
