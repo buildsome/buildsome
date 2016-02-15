@@ -1071,7 +1071,7 @@ runCmd bte@BuildTargetEnv{..} entity target = {-# SCC "runCmd" #-} do
   (time, (exitCode, stdOutputs)) <-
     -- TODO we should record what the values of these env vars were,
     -- and if they change - rebuild
-    FSHook.timedRunCommand hook rootPath ["HOME", "PATH"] shellCmd
+    FSHook.timedRunCommand hook rootPath ["HOME", "PATH", "BASH_CMDS"] shellCmd
     (targetOutputs target)
     (cTarget (show (targetOutputs target))) accessHandlers
   case exitCode of
