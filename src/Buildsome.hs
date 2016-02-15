@@ -425,9 +425,13 @@ verifyOutputDesc :: (IsString str, MonadIO m) =>
   (Posix.FileStatus -> Db.OutputDesc -> (EitherT ByteString IO ())) ->
   EitherT str m ()
 verifyOutputDesc bte@BuildTargetEnv{..} filePath fileDesc existingVerify = do
-  let restore (Db.OutputDesc oldStatDesc oldMContentDesc) =
+  let restore (Db.OutputDesc oldStatDesc oldMContentDesc) = do
         ContentCache.refreshFromContentCache bte filePath oldMContentDesc (Just oldStatDesc)
+        liftIO $ registerOutputs bteBuildsome $ S.singleton filePath
       remove = liftIO . removeFileOrDirectoryOrNothing
+  unless (bsRootPath bteBuildsome `BS8.isPrefixOf` (FilePath.canonicalizePathCwd (bsRootPath bteBuildsome) filePath)) $ do
+      explain "Output of not in project: "
+      error "ASSERTION FAILED"
   mStat <- liftIO $ getCachedStat bteBuildsome filePath
   case (mStat, fileDesc) of
     (Nothing, FileDescNonExisting _) -> return ()
