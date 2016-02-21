@@ -40,6 +40,7 @@ import           Lib.ScanFileUpwards (scanFileUpwards)
 import           Lib.Show (show)
 import           Lib.TimeIt (timeIt)
 import qualified Lib.Version as Version
+import           System.Exit (exitWith, ExitCode(..))
 import qualified System.IO as IO
 import qualified System.Posix.ByteString as Posix
 import           System.Posix.IO (stdOutput)
@@ -291,6 +292,14 @@ handleRequested
             -> (CollectStats Don'tPutInputsInStats, const (return ()))
           | otherwise -> (Don'tCollectStats, const (return ()))
 
+mainError :: Printer -> E.SomeException -> IO ()
+mainError printer err =
+    do
+        Printer.printStrLn printer $ cError $ show err
+        exitWith (ExitFailure 1)
+    where
+        Color.Scheme{..} = Color.scheme
+
 main :: IO ()
 main = do
   setBuffering
@@ -298,7 +307,8 @@ main = do
   opts <- Opts.get
   render <- getColorRender opts
   printer <- Printer.new render $ Printer.Id 0
-  handleOpts printer opts $
+  E.handle (mainError printer) $
+    handleOpts printer opts $
     \db opt@Opt{..} requested finalMakefilePath makefile -> do
       Print.buildsomeCreation printer Version.version optWiths optWithouts optVerbosity
       Buildsome.with printer db finalMakefilePath makefile opt $ \buildsome ->
