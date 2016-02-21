@@ -51,12 +51,17 @@ import           Prelude.Compat hiding (FilePath, show)
 standardMakeFilename :: FilePath
 standardMakeFilename = "Buildsome.mk"
 
+errorShowConcat :: (ColorText -> ByteString) -> [ColorText] -> [Char]
+errorShowConcat render = BS8.unpack . render . cError . mconcat
+    where
+      Color.Scheme{..} = Color.scheme
+
 data SpecifiedInexistentMakefilePath =
   SpecifiedInexistentMakefilePath (ColorText -> ByteString) FilePath
   deriving (Typeable)
 instance Show SpecifiedInexistentMakefilePath where
   show (SpecifiedInexistentMakefilePath render path) =
-    BS8.unpack $ render $ cError $ mconcat
+    errorShowConcat render
     ["Specified makefile path: ", cPath (show path), " does not exist"]
     where
       Color.Scheme{..} = Color.scheme
@@ -99,9 +104,7 @@ data BadCommandLine = BadCommandLine (ColorText -> ByteString) String deriving (
 instance E.Exception BadCommandLine
 instance Show BadCommandLine where
   show (BadCommandLine render msg) =
-    BS8.unpack $ render $ cError $ "Invalid command line options: " <> fromString msg
-    where
-      Color.Scheme{..} = Color.scheme
+    errorShowConcat render ["Invalid command line options: ", fromString msg]
 
 getRequestedTargets :: Printer -> Opts.ExtraOutputs -> [ByteString] -> IO Requested
 getRequestedTargets _ _ ["clean"] = return RequestedClean
@@ -162,7 +165,7 @@ data MakefileScanFailed = MakefileScanFailed (ColorText -> ByteString) deriving 
 instance E.Exception MakefileScanFailed
 instance Show MakefileScanFailed where
   show (MakefileScanFailed render) =
-    BS8.unpack $ render $ cError $ mconcat
+    errorShowConcat render
     [ "ERROR: Cannot find a file named "
     , cPath (show standardMakeFilename)
     , " in this directory or any of its parents"
