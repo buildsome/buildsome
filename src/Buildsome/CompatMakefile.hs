@@ -21,7 +21,7 @@ import qualified Data.Set as Set
 import qualified Lib.Directory as Directory
 import           Lib.FilePath (FilePath, (</>))
 import           Lib.List (partitionA)
-import           Lib.Makefile (TargetType(..), Target)
+import           Lib.Makefile (TargetType(..), Target, targetInterpolatedCmds)
 import           Lib.Parsec (showPos)
 import qualified Lib.Revisit as Revisit
 import qualified System.Posix.ByteString as Posix
@@ -72,7 +72,7 @@ trimLeadingSpaces = BS8.dropWhile Char.isSpace
 targetCmdLines :: MakefileTarget -> Target -> [ByteString]
 targetCmdLines tgt target = concat
   [ prependAll "rm -rf " $ makefileTargetDirs tgt
-  , map trimLeadingSpaces . BS8.lines $ targetCmds target
+  , map trimLeadingSpaces . BS8.lines $ targetInterpolatedCmds target
   , [ "touch " <> path | isDirectory tgt, path <- makefileTargetPaths tgt ]
   ]
 

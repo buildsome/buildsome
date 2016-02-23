@@ -13,7 +13,7 @@ import Data.Aeson.Encode.Pretty (encodePretty)
 import Data.Functor.Identity (Identity(..))
 import Data.Maybe (fromMaybe)
 import Lib.FilePath (FilePath, (</>))
-import Lib.Makefile (TargetType(..), Target)
+import Lib.Makefile (TargetType(..), Target, targetInterpolatedCmds)
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Stats as Stats
 import qualified Data.Aeson as Aeson
@@ -34,10 +34,10 @@ buildCommands cwd stats target =
     myBuildCommands =
       case targetInputs target of
         [file]
-          | not (BS8.null (targetCmds target)) ->
+          | not (BS8.null (targetInterpolatedCmds target)) ->
             [ Aeson.object
               [ "directory" .= BS8.unpack cwd
-              , "command" .= BS8.unpack (targetCmds target)
+              , "command" .= BS8.unpack (targetInterpolatedCmds target)
               , "file" .= BS8.unpack file
               ]
             ]

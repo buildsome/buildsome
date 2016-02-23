@@ -160,7 +160,7 @@ mkIRefKey key db = IRef
 executionLog :: Makefile.Target -> Db -> IRef ExecutionLog
 executionLog target = mkIRefKey targetKey
   where
-    targetKey = MD5.hash $ Makefile.targetCmds target -- TODO: Canonicalize commands (whitespace/etc)
+    targetKey = MD5.hash $ Makefile.targetInterpolatedCmds target
 
 fileContentDescCache :: FilePath -> Db -> IRef FileContentDescCache
 fileContentDescCache = mkIRefKey

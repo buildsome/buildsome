@@ -36,6 +36,7 @@ import qualified Text.Parsec as P
 import qualified Text.Parsec.Pos as Pos
 import qualified Text.Parsec.Prim as Prim
 
+import qualified BMake.Interpreter as BMake
 import           Prelude.Compat hiding (FilePath)
 
 #define RELEASE_INLINE(x)   {-# INLINE x #-}
@@ -388,7 +389,7 @@ targetPattern pos outputPaths inputPaths orderOnlyInputs = do
     { targetOutputs = map mkOutputPattern outputPaths
     , targetInputs = inputPats
     , targetOrderOnlyInputs = orderOnlyInputPats
-    , targetCmds = cmdLines
+    , targetCmds = Left cmdLines
     , targetPos = pos
     }
   where
@@ -400,9 +401,10 @@ targetPattern pos outputPaths inputPaths orderOnlyInputs = do
     tryMakePattern path = maybe (InputPath path) InputPattern $ mkFilePattern path
 
 interpolateCmds :: Maybe ByteString -> Target -> Target
-interpolateCmds mStem tgt@(Target outputs inputs ooInputs cmds pos) =
+interpolateCmds mStem@_ tgt@(Target _ _ _ (Right _) _) = BMake.interpolateCmds mStem tgt
+interpolateCmds mStem tgt@(Target outputs inputs ooInputs (Left cmds) pos) =
   tgt
-  { targetCmds = either (error . show) id $ interpolateMetavars cmds
+  { targetCmds = Left $ either (error . show) id $ interpolateMetavars cmds
   }
   where
     interpolateMetavars =
@@ -425,7 +427,7 @@ targetSimple pos outputPaths inputPaths orderOnlyInputs = do
     { targetOutputs = outputPaths
     , targetInputs = inputPaths
     , targetOrderOnlyInputs = orderOnlyInputs
-    , targetCmds = BS8.intercalate "\n" cmdLines
+    , targetCmds = Left $ BS8.intercalate "\n" cmdLines
     , targetPos = pos
     }
 
@@ -468,7 +470,7 @@ mkMakefile (Writer targets targetPatterns weakVars) =
       }
   where
     badPhony t str = Left $ PosError (targetPos t) $ ".PHONY target " <> str
-    getPhonyInputs t@(Target [".PHONY"] inputs [] cmd _)
+    getPhonyInputs t@(Target [".PHONY"] inputs [] (Left cmd) _)
       | not (BS8.null cmd) = badPhony t "may not specify commands"
       | otherwise = return $ map ((,) (targetPos t)) inputs
     getPhonyInputs t = badPhony t "invalid"

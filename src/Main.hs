@@ -14,6 +14,7 @@ import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
 import           Buildsome.Opts (Opts(..), Opt(..))
 import qualified Buildsome.Opts as Opts
 import qualified Buildsome.Print as Print
+import qualified BMake.User as BMake
 import qualified Control.Exception as E
 import           Control.Monad (forM_)
 import           Data.ByteString (ByteString)
@@ -145,10 +146,11 @@ switchDirectory makefilePath = do
     (cwd, file) = FilePath.splitFileName makefilePath
 
 parseMakefile :: Printer -> Db -> FilePath -> FilePath -> Makefile.Vars -> FilePath -> IO Makefile
-parseMakefile printer db origMakefilePath finalMakefilePath vars cwd = do
+parseMakefile printer _ origMakefilePath finalMakefilePath vars cwd = do
   let absFinalMakefilePath = cwd </> finalMakefilePath
   (parseTime, (isHit, makefile)) <- timeIt $ do
-    (isHit, rawMakefile) <- MemoParseMakefile.memoParse db absFinalMakefilePath vars
+    let isHit = MemoParseMakefile.Miss
+    rawMakefile <- BMake.parse absFinalMakefilePath vars
     let makefile = runIdentity $ Makefile.onMakefilePaths (Identity . FilePath.canonicalizePathAsRelativeCwd cwd) rawMakefile
     Makefile.verifyPhonies makefile
     return (isHit, makefile)

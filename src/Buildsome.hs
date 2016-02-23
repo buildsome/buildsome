@@ -57,7 +57,8 @@ import qualified Lib.FilePath as FilePath
 import           Lib.Fresh (Fresh)
 import qualified Lib.Fresh as Fresh
 import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
-import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs)
+import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs,
+                               targetInterpolatedCmds)
 import           Lib.Once (once)
 import qualified Lib.Parallelism as Parallelism
 import           Lib.Printer (Printer, printStrLn)
@@ -930,7 +931,7 @@ runCmd bte@BuildTargetEnv{..} entity target = do
   where
     rootPath = bsRootPath bteBuildsome
     hook = bsFsHook bteBuildsome
-    shellCmd = ShellCommand (BS8.unpack (targetCmds target))
+    shellCmd = ShellCommand (BS8.unpack (targetInterpolatedCmds target))
     Color.Scheme{..} = Color.scheme
 
 makeExecutionLog ::
@@ -956,7 +957,7 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
       return (outPath, fileDesc)
   return Db.ExecutionLog
     { elBuildId = bsBuildId buildsome
-    , elCommand = targetCmds target
+    , elCommand = targetInterpolatedCmds target
     , elInputsDescs = inputsDescs
     , elOutputsDescs = M.fromList outputDescPairs
     , elStdoutputs = stdOutputs
@@ -1173,7 +1174,7 @@ instance Show TargetCommandFailed where
     , maybe "" ("\n" <>) $ Print.outputsStr stdOutputs ]
     where
       Color.Scheme{..} = Color.scheme
-      cmd = targetCmds target
+      cmd = targetInterpolatedCmds target
 
 buildDbFilename :: FilePath -> FilePath
 buildDbFilename = (<.> "db")

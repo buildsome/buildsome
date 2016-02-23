@@ -4,7 +4,7 @@ module Lib.Makefile.Types
   ( TargetType(..), targetAllInputs
   , FilePattern(..), onFilePatternPaths
   , InputPat(..), onInputPatPaths
-  , Target, onTargetPaths
+  , Target, onTargetPaths, targetInterpolatedCmds
   , Pattern, onPatternPaths
   , VarName, VarValue, Vars
   , Makefile(..), onMakefilePaths
@@ -18,6 +18,7 @@ import Control.DeepSeq.Generics (genericRnf)
 import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Map (Map)
+import BMake.Data
 
 import GHC.Generics (Generic)
 import Lib.FilePath (FilePath)
@@ -29,7 +30,8 @@ data TargetType output input = Target
   { targetOutputs :: [output]
   , targetInputs :: [input]
   , targetOrderOnlyInputs :: [input]
-  , targetCmds :: ByteString
+  , targetCmds :: Either ByteString [[Expr3]] -- ToDo: Should be [Expr3] only
+                                              -- it's transitory.
   , targetPos :: ParsecPos.SourcePos
   } deriving (Show, Generic)
 instance (Binary output, Binary input) => Binary (TargetType output input)
@@ -68,6 +70,12 @@ instance NFData Makefile where rnf = genericRnf
 targetAllInputs :: Target -> [FilePath]
 targetAllInputs target =
   targetInputs target ++ targetOrderOnlyInputs target
+
+targetInterpolatedCmds :: Target -> ByteString
+targetInterpolatedCmds target =
+    case targetCmds target of
+        Left x -> x
+        Right _ -> error "target was not interpolated"
 
 -- Filepath lens boilerplate:
 

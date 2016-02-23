@@ -25,7 +25,7 @@ import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
 import           Lib.Exception (onExceptionWith)
 import           Lib.FSHook (Severity(..))
-import           Lib.Makefile (TargetType(..), Target)
+import           Lib.Makefile (TargetType(..), Target, targetInterpolatedCmds)
 import           Lib.Parsec (showPos)
 import           Lib.Printer (Printer, printStrLn)
 import qualified Lib.Printer as Printer
@@ -88,7 +88,7 @@ cmd printer target =
   unless (BS8.null cmds) $ printStrLn printer $ cCommand $ fromBytestring8 $
   delimitMultiline cmds
   where
-    cmds = targetCmds target
+    cmds = targetInterpolatedCmds target
     Color.Scheme{..} = Color.scheme
 
 replayCmd :: PrintCommands -> Printer -> Target -> IO ()
