@@ -21,6 +21,10 @@ cabal-version:       >=1.10
 data-files:          cbits/fs_override.so
 extra-source-files:  cbits/*.[ch]
 
+flag Debug
+  Description: Enable debug support
+  Default:     False
+
 flag Charts
   description: Enable Cairo charts support
   default: False
@@ -28,8 +32,12 @@ flag Charts
 executable buildsome
   hs-source-dirs:    src/
   main-is:           Main.hs
-  ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns
-  ghc-prof-options:  -threaded -Wall -O2 -auto-all -caf-all -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns
+  if flag(debug) {
+    ghc-options:       -threaded -Wall -O0
+  } else {
+    ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns
+    ghc-prof-options:  -threaded -Wall -O2 -auto-all -caf-all -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns
+  }
   other-modules:     Buildsome
                ,     Buildsome.BuildId
                ,     Buildsome.BuildMaps
