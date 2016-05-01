@@ -311,14 +311,14 @@ interpolateCmds mStem tgt@(MT.Target outputPaths inputsPaths ooInputs (Right exp
         modfn ModDir  f = FilePath.takeDirectory f
 interpolateCmds _ tgt = tgt
 
-target :: [Expr] -> [Expr] -> [[Expr]] -> M ()
-target outputs inputs {-orderOnly-} script =
+target :: [Expr] -> [Expr] -> [Expr] -> [[Expr]] -> M ()
+target outputs inputs orderOnlyInputs script =
     do
         vars <- Reader.asks envVars >>= liftIO . readIORef
         let norm = normalize vars
-        let orderOnlyInputs = [] -- ToDo
         outs  <- liftIO $ evaluate $ force $ compress WithoutSpace $ norm outputs
         ins   <- liftIO $ evaluate $ force $ compress WithoutSpace $ norm inputs
+        inso  <- liftIO $ evaluate $ force $ compress WithoutSpace $ norm orderOnlyInputs
         scrps <- liftIO $ evaluate $ force $ map (compress WithSpace . norm) script
 
         let put = liftIO . putStrLn
@@ -338,7 +338,7 @@ target outputs inputs {-orderOnly-} script =
         Env{..} <- Reader.ask
         let inputPaths = toFileNames ins
         let outputPaths = toFileNames outs
-        let orderOnlyInputsPaths = toFileNames orderOnlyInputs
+        let orderOnlyInputsPaths = toFileNames inso
         let pos = ParsecPos.newPos "" 0 0 -- ToDo
 
         case hasPatterns outs of
@@ -405,7 +405,7 @@ statement =
     \case
     Assign name assignType exprL -> assign name assignType exprL
     Local stmts -> local stmts
-    Target outputs inputs script -> target outputs inputs script
+    Target outputs inputs orderOnlyInputs script -> target outputs inputs orderOnlyInputs script
     IfCmp cmpType exprA exprB thenStmts elseStmts ->
         ifCmp cmpType exprA exprB thenStmts elseStmts
     Include {} -> error "Include should have been expanded"

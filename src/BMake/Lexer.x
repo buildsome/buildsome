@@ -50,12 +50,13 @@ state:-
   <0>      else                    { tok         TokenElse    	  }
   <0>      endif                   { tok         TokenEndif   	  }
 
-  <0>      [^ \% \$ \\ \n \# \* \( \) \{ \} \, \: \= \? \ \t]+
+  <0>      [^ \% \$ \\ \n \# \* \( \) \{ \} \, \: \= \? \ \t \|]+
                                    { tokStr      TokenOther             }
   <0>      [ \ ]+                  { tokStr      TokenWhitespace       }
   <0>      \? \=                   { tok         TokenEqualMaybe       }
   <0>      \=                      { tok         TokenEqual            }
   <0>      \:                      { tok         TokenColon            }
+  <0>      \|                      { tok         TokenPipe             }
   <0>      \(                      { tok         TokenParenOpen        }
   <0>      \)                      { tok         TokenParenClose       }
   <0>      \{                      { tok         TokenCurlyOpen        }
@@ -63,9 +64,9 @@ state:-
   <0>      \,                      { tok         TokenComma            }
   <0>      \%                      { tok         TokenPercent          }
   <0>      \*                      { tok         TokenAsterik          }
-  <0>      \$ [\. \@ \^ \< \| \*]
+  <0>      \$ [\. \@ \^ \< \* \|]
                                    { tokDC       1 Nothing             }
-  <0>      \$ \( [\@ \^ \< \| \*] (D|F) \)
+  <0>      \$ \( [\@ \^ \< \* \|] (D|F) \)
                                    { tokDC       2 (Just 3)            }
   <0>      \$                      { tok         TokenDollar           }
   <0>      [ \n ]+ [ \t ]          { tok         TokenNewLineAndTab    }
@@ -129,6 +130,7 @@ data TokenClass
  | TokenEqual
  | TokenEqualMaybe
  | TokenColon
+ | TokenPipe
  | TokenParenOpen
  | TokenParenClose
  | TokenCurlyOpen

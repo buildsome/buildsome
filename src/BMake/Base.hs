@@ -19,10 +19,9 @@ module BMake.Base
   , IfCmpType(..)
   , MetaVar(..)
   , MetaVarModifier(..)
-  , MakefileF(..)
-  , Makefile
-  , StatementF(..), substmts
-  , Statement
+  , Makefile(..)
+  , substmts
+  , Statement(..)
   , Expr
   , ExprF(..)
   , module BMake.Lexer
@@ -100,33 +99,35 @@ data IfCmpType = IfEquals | IfNotEquals
 instance NFData IfCmpType where
 instance ToJSON IfCmpType where
 
-data StatementF text
-  = Assign text AssignType [ExprF text]
-  | Local [StatementF text]
-  | Target [ExprF text] [ExprF text] [[ExprF text]]
-  | Include text
-  | IfCmp IfCmpType [ExprF text] [ExprF text] [StatementF text] [StatementF text]
-  deriving (Show, Generic, Functor)
-type Statement = StatementF ByteString
+data Statement
+  = Assign ByteString AssignType [ExprF ByteString]
+  | Local [Statement]
+  | Target
+    [ExprF ByteString]
+    [ExprF ByteString]
+    [ExprF ByteString]
+    [[ExprF ByteString]]
+  | Include ByteString
+  | IfCmp IfCmpType [ExprF ByteString] [ExprF ByteString] [Statement] [Statement]
+  deriving (Show, Generic)
 
 -- | Traversal of direct children of statement
 substmts ::
     Applicative f =>
-    ([StatementF text] -> f [StatementF text]) ->
-    StatementF text -> f (StatementF text)
+    ([Statement] -> f [Statement]) ->
+    Statement -> f (Statement)
 substmts f (Local dl) = Local <$> f dl
 substmts f (IfCmp a b c dla dlb) = IfCmp a b c <$> f dla <*> f dlb
 substmts _ x = pure x
 
-instance NFData text => NFData (StatementF text) where
+instance NFData (Statement) where
     rnf = genericRnf
 
-data MakefileF text = Makefile
-    { unit :: [StatementF text]
-    } deriving (Show, Generic, Functor)
-type Makefile = MakefileF ByteString
+data Makefile = Makefile
+    { unit :: [Statement]
+    } deriving (Show, Generic)
 
-instance NFData text => NFData (MakefileF text) where
+instance NFData Makefile where
 
 getPrevTokens :: Alex (Maybe Token, Maybe Token)
 getPrevTokens = prevTokens <$> getUserState

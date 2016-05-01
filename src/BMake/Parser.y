@@ -6,6 +6,7 @@ import BMake.Base
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
 import qualified Data.DList as DList
+import Data.Either
 import           Data.DList (DList)
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Lazy (ByteString)
@@ -32,6 +33,7 @@ import Data.ByteString.Lazy (ByteString)
         "="             { Token _ TokenEqual           }
         "?="            { Token _ TokenEqualMaybe      }
         ":"             { Token _ TokenColon           }
+        "|"             { Token _ TokenPipe            }
         "("             { Token _ TokenParenOpen       }
         ")"             { Token _ TokenParenClose      }
         "{"             { Token _ TokenCurlyOpen       }
@@ -66,8 +68,12 @@ Statement :: {Maybe Statement}
       : local MW "{" StatementsDList local MW "}" { Just $ Local (DList.toList $4) }
       | OTHER MW "=" MW TgtExprListE   { Just $ Assign $1 AssignNormal $5 }
       | OTHER MW "?=" MW TgtExprListE  { Just $ Assign $1 AssignConditional $5 }
-      | ExprList MW ":" MW TgtExprListE TgtScriptE
-                                       { Just $ Target $1 $5 $6 }
+      | ExprList MW ":" MW TgtExprListInputE TgtScriptE
+                                       { let regularInputs = $5
+                                          in Just $ Target $1 regularInputs [] $6 }
+      | ExprList MW ":" MW TgtExprListInputE "|" TgtExprListE TgtScriptE
+                                       { let regularInputs = $5
+                                          in Just $ Target $1 regularInputs $7 $8 }
       | include MW OTHER               { Just $ Include $3 }
       | SPACES                         { Nothing }
       | ifeq IfStmt                    { Just $ ($2) $ IfCmp IfEquals }
@@ -107,6 +113,7 @@ Expr :: {Expr}
       | "}"                           { CloseBrace }
       | SPACES                        { Spaces }
       | ","                           { Comma }
+      | "|"                           { Str "|" }
       | "%"                           { Str "%" }
       | "*"                           { Str "*" }
       | "$"                           { Str "$" }
@@ -131,6 +138,7 @@ NoCommaExpr :: {Expr}
       | "{"                           { OpenBrace }
       | "}"                           { CloseBrace }
       | SPACES                        { Spaces }
+      | "|"                           { Str "|" }
       | "%"                           { Str "%" }
       | "*"                           { Str "*" }
       | "$"                           { Str "$" }
@@ -147,6 +155,38 @@ TgtExprList :: {DList Expr}
       | TgtExpr                    { DList.singleton $1 }
 
 TgtExpr :: {Expr}
+      : OTHER                         { Str $1 }
+      | SPACES                        { Spaces }
+      | DC                            { parseDCToken $1 }
+      | "$" "{" OTHER "}"             { VarSimple $3 }
+      | "$"                           { Str "$" }
+      | "{"                           { OpenBrace }
+      | "}"                           { CloseBrace }
+      | else                          { Str "else" }
+      | ifeq                          { Str "ifeq" }
+      | ifneq                         { Str "ifneq" }
+      | include                       { Str "include" }
+      | local                         { Str "local" }
+      | endif                         { Str "endif" }
+      | "="                           { Str "=" }
+      | ","                           { Comma }
+      | "?="                          { Str "?="}
+      | "|"                           { Str "|" }
+      | ":"                           { Str ":" }
+      | "%"                           { Str "%" }
+      | "*"                           { Str "*" }
+      | "("                           { Str "(" }
+      | ")"                           { Str ")" }
+
+TgtExprListInputE :: {[Expr]}
+      :                               { [] }
+      | TgtExprListInput              { DList.toList $1 }
+
+TgtExprListInput :: {DList (Expr)}
+      : TgtExprListInput TgtInputExpr { $1 `DList.snoc` ($2) }
+      | TgtInputExpr                  { DList.singleton ($1) }
+
+TgtInputExpr :: {Expr}
       : OTHER                         { Str $1 }
       | SPACES                        { Spaces }
       | DC                            { parseDCToken $1 }
