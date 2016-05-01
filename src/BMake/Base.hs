@@ -1,8 +1,10 @@
-{-# LANGUAGE DeriveFunctor     #-}
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveFunctor      #-}
+{-# LANGUAGE DeriveGeneric      #-}
+{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE NoImplicitPrelude  #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 {-# OPTIONS -fno-warn-orphans #-}
 
@@ -26,6 +28,7 @@ module BMake.Base
   , Statement(..)
   , Expr
   , ExprF(..)
+  , FilePos
   , module BMake.Lexer
   )
   where
@@ -35,12 +38,14 @@ import           Control.DeepSeq          (NFData (..))
 import           Control.DeepSeq.Generics (genericRnf)
 import           Data.Aeson
 import           Data.ByteString.Lazy     (ByteString)
+import           Data.List                (intersperse)
 import           Data.String              (IsString)
 import           GHC.Generics
-import           Data.List                (intersperse)
+import           Lib.FilePath             (FilePath)
 ----
-import           BMake.Lexer
 import           BMake.Data
+import           BMake.Lexer
+import           Prelude.Compat           hiding (FilePath)
 --------------------------------------------------------------------------------
 
 type Parser a = Alex a
@@ -67,14 +72,17 @@ handleErrorExpList (Token _ cls, opts) = do
     alexStructError (line, col,
                      "syntax error: got " ++ tokenDesc cls ++ expected opts)
 
+type FilePos = (FilePath, AlexPosn)
+deriving instance Ord AlexPosn
+
 data ExprF text
   = Str text
-  | OpenBrace
-  | CloseBrace
+  | OpenBrace FilePos
+  | CloseBrace FilePos
   | Comma
   | Spaces
   | VarSpecial MetaVar MetaVarModifier
-  | VarSimple text
+  | VarSimple FilePos text
   deriving (Eq, Ord, Show, Generic, Functor)
 
 type Expr = ExprF ByteString
@@ -94,7 +102,7 @@ parseModifier (Just 'D') = ModDir
 parseModifier (Just other) = error $ "unknown meta-variable modifier: $(," ++ [other] ++ ")"
 
 parseDCToken :: IsString text => (Char, Maybe Char) -> ExprF text
-parseDCToken ('.', Nothing) = VarSimple "."
+parseDCToken ('.', Nothing) = VarSimple ("", AlexPn 0 0 0) "."
 parseDCToken (other, modifier) = VarSpecial (parseMetaVarChar other) (parseModifier modifier)
 
 instance NFData text => NFData (ExprF text) where
@@ -110,10 +118,14 @@ data IfCmpType = IfEquals | IfNotEquals
 instance NFData IfCmpType where
 instance ToJSON IfCmpType where
 
+deriving instance Generic AlexPosn
+instance NFData AlexPosn where
+
 data Statement
   = Assign ByteString AssignType [ExprF ByteString]
   | Local [Statement]
   | Target
+    FilePos
     [ExprF ByteString]
     [ExprF ByteString]
     [ExprF ByteString]

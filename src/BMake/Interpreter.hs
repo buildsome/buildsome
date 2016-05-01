@@ -70,8 +70,8 @@ interpret bmakefile vars = (run vars) . makefile $ bmakefile
 -- | Expr after variable substitution
 data Expr1
   = Expr1'Str ByteString
-  | Expr1'OpenBrace
-  | Expr1'CloseBrace
+  | Expr1'OpenBrace FilePos
+  | Expr1'CloseBrace FilePos
   | Expr1'Comma
   | Expr1'Spaces
   | Expr1'VarSpecial MetaVar MetaVarModifier
@@ -111,25 +111,35 @@ makefile (Makefile stmts) =
           , MT.makefileWeakVars = weakVars
           }
 
+errWithParsecPos :: ParsecPos.SourcePos -> String -> a
+errWithParsecPos parsecPos str =
+    error $ ParsecPos.sourceName parsecPos ++ ":" ++
+            show (ParsecPos.sourceLine parsecPos) ++ ":"
+            ++ show (ParsecPos.sourceColumn parsecPos) ++ ": " ++ str
+
+errWithFilePos :: FilePos -> String -> a
+errWithFilePos (filename, AlexPn _ line col) str =
+    error $ BS8.unpack filename ++ ":" ++ show line ++ ":" ++ show col ++ ": " ++ str
+
 -- TODO: Take the data ctors so it can generate an ExprTopLevel
 subst :: Vars -> [Expr] -> [Expr1]
 subst vars =
     concatMap go
     where
-        go OpenBrace = [Expr1'OpenBrace]
-        go CloseBrace = [Expr1'CloseBrace]
+        go (OpenBrace filepos) = [Expr1'OpenBrace filepos]
+        go (CloseBrace filepos) = [Expr1'CloseBrace filepos]
         go Comma = [Expr1'Comma]
         go (Str text) = [Expr1'Str text]
         go Spaces = [Expr1'Spaces]
         go (VarSpecial flag modifier) =
             [Expr1'VarSpecial flag modifier]
-        go (VarSimple var) =
+        go (VarSimple filepos var) =
             concatMap go val
             where
                 val =
                     Map.lookup var vars
                     & fromMaybe
-                    (error ("Invalid var-ref: " ++ show var))
+                    (errWithFilePos filepos ("Invalid var-ref: " ++ show var))
 
 {-# INLINE first #-}
 first :: (a -> a') -> (a, b) -> (a', b)
@@ -138,31 +148,32 @@ first f (x, y) = (f x, y)
 parseGroups :: [Expr1] -> [Expr2]
 parseGroups = \case
     Expr1'Str str:xs -> Expr2'Str str : parseGroups xs
-    Expr1'OpenBrace:xs ->
-        let (groups, ys) = commaSplit xs
+    Expr1'OpenBrace filepos:xs ->
+        let (groups, ys) = commaSplit filepos xs
         in Expr2'Group groups : parseGroups ys
-    Expr1'CloseBrace:_ -> error "Close brace without open brace!"
+    Expr1'CloseBrace filepos:_ -> errWithFilePos filepos "Close brace without open brace!"
     Expr1'Comma:xs -> Expr2'Str "," : parseGroups xs
     Expr1'Spaces:xs -> Expr2'Spaces : parseGroups xs
     Expr1'VarSpecial mv m:xs -> Expr2'VarSpecial mv m : parseGroups xs
     [] -> []
     where
-        prependFirstGroup :: Expr2 -> [[Expr2]] -> [[Expr2]]
-        prependFirstGroup _ [] = error "Result with no options!"
-        prependFirstGroup x (alt:alts) = (x:alt) : alts
-        prepend = first . prependFirstGroup
-        commaSplit :: [Expr1] -> ([[Expr2]], [Expr1])
-        commaSplit = \case
-            Expr1'CloseBrace:xs -> ([[]], xs)
-            Expr1'OpenBrace:xs ->
-                let (childGroups, ys) = commaSplit xs
-                in commaSplit ys & prepend (Expr2'Group childGroups)
-            Expr1'Comma:xs -> commaSplit xs & first ([] :)
+        commaSplit :: FilePos -> [Expr1] -> ([[Expr2]], [Expr1])
+        commaSplit filepos = \case
+            Expr1'CloseBrace _:xs -> ([[]], xs)
+            Expr1'OpenBrace filepos':xs ->
+                let (childGroups, ys) = commaSplit filepos' xs
+                in commaSplit filepos ys & prepend (Expr2'Group childGroups)
+            Expr1'Comma:xs -> commaSplit filepos xs & first ([] :)
             Expr1'Str str:xs ->
-                commaSplit xs & prepend (Expr2'Str str)
-            Expr1'Spaces:xs -> commaSplit xs & prepend Expr2'Spaces
-            Expr1'VarSpecial mv m:xs -> commaSplit xs & prepend (Expr2'VarSpecial mv m)
-            [] -> error "Missing close brace!"
+                commaSplit filepos xs & prepend (Expr2'Str str)
+            Expr1'Spaces:xs -> commaSplit filepos xs & prepend Expr2'Spaces
+            Expr1'VarSpecial mv m:xs -> commaSplit filepos xs & prepend (Expr2'VarSpecial mv m)
+            [] -> errWithFilePos filepos "Missing close brace!"
+          where
+              prependFirstGroup :: Expr2 -> [[Expr2]] -> [[Expr2]]
+              prependFirstGroup _ [] = errWithFilePos filepos  "Result with no options!"
+              prependFirstGroup x (alt:alts) = (x:alt) : alts
+              prepend = first . prependFirstGroup
 
 data CompressDetails = WithSpace | WithoutSpace
     deriving Eq
@@ -261,15 +272,6 @@ showExpr (Expr3'VarSpecial specialFlag specialModifier) =
 statements :: [Statement] -> M ()
 statements = mapM_ statement
 
-mkFilePattern :: FilePath.FilePath -> Maybe MT.FilePattern
-mkFilePattern path
-  | "%" `BS8.isInfixOf` dir =
-    -- ToDo: improve error reporting here, don't use 'error'.
-    error $ "Directory component may not be a pattern: " ++ show path
-  | otherwise = MT.FilePattern dir <$> StringPattern.fromString file
-  where
-    (dir, file) = FilePath.splitFileName path
-
 hasPatterns :: [Expr3] -> Bool
 hasPatterns ((Expr3'Str text):xs) =
     case any ("%" `BS8.isInfixOf`) (BSL8.toChunks text) of
@@ -284,10 +286,10 @@ toFileNames (_:xs)                = toFileNames xs
 toFileNames []                    = []
 
 interpolateCmds :: Maybe BS8.ByteString -> MT.Target -> MT.Target
-interpolateCmds mStem tgt@(MT.Target outputPaths inputsPaths ooInputs (Right exprL) _) =
+interpolateCmds mStem tgt@(MT.Target outputPaths inputsPaths ooInputs (Right exprL) parsecPos) =
     tgt { MT.targetCmds = cmds }
     where
-        getFirst err paths = fromMaybe (error err) $ listToMaybe paths
+        getFirst err paths = fromMaybe (errWithParsecPos parsecPos err) $ listToMaybe paths
 
         cmds = Left $ BS8.concat $ concat $ concat $ intersperse [["\n"]] $ map (map perItem) exprL
 
@@ -311,8 +313,8 @@ interpolateCmds mStem tgt@(MT.Target outputPaths inputsPaths ooInputs (Right exp
         modfn ModDir  f = FilePath.takeDirectory f
 interpolateCmds _ tgt = tgt
 
-target :: [Expr] -> [Expr] -> [Expr] -> [[Expr]] -> M ()
-target outputs inputs orderOnlyInputs script =
+target :: FilePos -> [Expr] -> [Expr] -> [Expr] -> [[Expr]] -> M ()
+target (filename, AlexPn _ line col) outputs inputs orderOnlyInputs script =
     do
         vars <- Reader.asks envVars >>= liftIO . readIORef
         let norm = normalize vars
@@ -339,12 +341,24 @@ target outputs inputs orderOnlyInputs script =
         let inputPaths = toFileNames ins
         let outputPaths = toFileNames outs
         let orderOnlyInputsPaths = toFileNames inso
-        let pos = ParsecPos.newPos "" 0 0 -- ToDo
+        let pos = ParsecPos.newPos (BS8.unpack filename) line col
+
+        let errWithInfo str =
+                error $ BS8.unpack filename ++ ":" ++ show line ++ ":" ++ show col ++ ": " ++ str
+
+        let mkFilePattern :: FilePath.FilePath -> Maybe MT.FilePattern
+            mkFilePattern path
+              | "%" `BS8.isInfixOf` dir =
+                -- ToDo: improve error reporting here, don't use 'error'.
+                error $ "Directory component may not be a pattern: " ++ show path
+              | otherwise = MT.FilePattern dir <$> StringPattern.fromString file
+              where
+                (dir, file) = FilePath.splitFileName path
 
         case hasPatterns outs of
             True -> do
                 let mkOutputPattern outputPath =
-                      fromMaybe (error ("Outputs must all be patterns (contain %) in pattern rules: " ++ show outputPath)) $
+                      fromMaybe (errWithInfo ("Outputs must all be patterns (contain %) in pattern rules: " ++ show outputPath)) $
                       mkFilePattern outputPath
                 let tryMakePattern path =
                           maybe (MT.InputPath path) MT.InputPattern $ mkFilePattern path
@@ -363,9 +377,9 @@ target outputs inputs orderOnlyInputs script =
                 case outputPaths of
                     [".PHONY"] -> do
                         when (orderOnlyInputsPaths /= []) $ do
-                            error "Unexpected order only inputs for phony target" -- ToDo: improve EH
+                            errWithInfo "Unexpected order only inputs for phony target"
                         when (scrps /= []) $ do
-                            error "Phony target may not specify commands" -- ToDo: improve EH
+                            errWithInfo "Phony target may not specify commands"
                         forM_ inputPaths $ \path -> do
                             liftIO $ modifyIORef' envPhonies ((:) (pos, path))
                         return ()
@@ -405,7 +419,8 @@ statement =
     \case
     Assign name assignType exprL -> assign name assignType exprL
     Local stmts -> local stmts
-    Target outputs inputs orderOnlyInputs script -> target outputs inputs orderOnlyInputs script
+    Target filepos outputs inputs orderOnlyInputs script ->
+        target filepos outputs inputs orderOnlyInputs script
     IfCmp cmpType exprA exprB thenStmts elseStmts ->
         ifCmp cmpType exprA exprB thenStmts elseStmts
     Include {} -> error "Include should have been expanded"

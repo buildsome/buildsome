@@ -28,6 +28,7 @@ import qualified Lib.FilePath               as FilePath
 import           Prelude.Compat             hiding (FilePath)
 
 import           BMake.Base
+import qualified BMake.Lexer                as Lexer
 import           BMake.Interpreter          (interpret)
 import           BMake.Parser               (happyParser)
 import qualified Lib.Makefile.Types         as MT
@@ -50,9 +51,9 @@ parseWithAlex startState bs = root
                       _ -> loop $ s' `DList.snoc` token
 
 
-parseMakefile :: BL.ByteString -> Either Error Makefile
-parseMakefile s =
-  case runAlex s $ happyParser of
+parseMakefile :: FilePath -> BL.ByteString -> Either Error Makefile
+parseMakefile fp s =
+  case runAlex s $ Lexer.setFileName fp >> happyParser of
     Right x -> Right x
     Left ('l':'e':'x':xs) ->
       Left (Error 0 0 xs) -- TODO
@@ -92,8 +93,8 @@ handleInclude cache dirs other =
 handleIncludes :: ParseCache -> Dirs -> [Statement] -> IO [Statement]
 handleIncludes cache dirs = fmap concat . mapM (handleInclude cache dirs)
 
-parseSingle :: BL8.ByteString -> IO (Either Error Makefile)
-parseSingle = evaluate . force . parseMakefile
+parseSingle :: FilePath -> BL8.ByteString -> IO (Either Error Makefile)
+parseSingle fp = evaluate . force . parseMakefile fp
 
 memoIO :: Ord k => Cache k v -> (k -> IO v) -> k -> IO v
 memoIO cache action k =
@@ -112,7 +113,7 @@ newParse cache rootDir =
     memoIO cache $ \makefile -> do
         content <- BL.readFile $ B8.unpack makefile
         let dirs = Dirs rootDir (FilePath.takeDirectory makefile)
-        res <- parseSingle content
+        res <- parseSingle makefile content
         case res of
             Left (Error line col str) -> do
                 fail $ B8.unpack makefile ++ ":" ++ show line ++ ":" ++ show col ++ ": " ++ str

@@ -25,6 +25,8 @@ module BMake.Lexer
   , modifyUserState
   , alexSetStartCode
   , alexStructError
+  , setFileName
+  , getFileName
   )
 where
 
@@ -32,6 +34,7 @@ import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Lazy (ByteString)
 import qualified Control.Monad as Control.Monad
+import qualified Lib.FilePath as FilePath
 
 }
 
@@ -85,6 +88,12 @@ getUserState = Alex $ \s -> Right (s, alex_ust s)
 
 modifyUserState :: (AlexUserState -> AlexUserState) -> Alex ()
 modifyUserState f = Alex $ \s -> Right (s{alex_ust=f (alex_ust s)}, ())
+
+setFileName :: FilePath.FilePath -> Alex ()
+setFileName fp = modifyUserState (\x -> x { filePath = fp })
+
+getFileName :: Alex FilePath.FilePath
+getFileName = fmap filePath getUserState
 
 -- Some action helpers:
 tok' r f (p, _, input) len = do
@@ -180,8 +189,9 @@ alexEOF = do
 
 data AlexUserState = AlexUserState
     { prevTokens :: (Maybe Token, Maybe Token)
+    , filePath   :: FilePath.FilePath
     }
-alexInitUserState = AlexUserState (Nothing, Nothing)
+alexInitUserState = AlexUserState (Nothing, Nothing) ""
 
 instance Functor Alex where
   fmap f m = do x <- m; return (f x)
