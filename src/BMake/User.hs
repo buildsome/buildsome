@@ -14,7 +14,6 @@ module BMake.User
 import           Control.DeepSeq            (NFData)
 import           Control.DeepSeq            (force)
 import           Control.Exception          (evaluate)
-import           Control.Monad              (forM_)
 import qualified Data.ByteString.Char8      as B8
 import qualified Data.ByteString.Lazy       as BL
 import qualified Data.ByteString.Lazy.Char8 as BL8
@@ -116,10 +115,6 @@ newParse cache rootDir =
         res <- parseSingle content
         case res of
             Left (Error line col str) -> do
-                case parseWithAlex stateBase content of
-                    Right tokens -> do
-                        forM_ tokens print
-                    Left _ -> return ()
                 fail $ B8.unpack makefile ++ ":" ++ show line ++ ":" ++ show col ++ ": " ++ str
             Right ast -> do
                 ast' <- Makefile <$> handleIncludes cache dirs (unit ast)

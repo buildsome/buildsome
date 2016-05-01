@@ -18,6 +18,8 @@ import Data.ByteString.Lazy (ByteString)
 
 %monad { Parser } { thenP } { returnP }
 %lexer { lexer } { Token _ TokenEOF }
+%errorhandlertype explist
+%error { handleErrorExpList }
 
 %token
         include         { Token _ TokenInclude         }

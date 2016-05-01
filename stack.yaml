@@ -2,7 +2,9 @@ flags:
   buildsome:
     Charts: False
 packages:
-- '.'
+- location: https://github.com/da-x/happy/archive/cd790d3ca7cc5816bb3a02227ac31699c35712c0.zip
+  extra-dep: true
+- .
 extra-deps:
 - leveldb-haskell-0.6.3
 resolver: lts-3.0

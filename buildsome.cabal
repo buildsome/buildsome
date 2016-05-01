@@ -145,6 +145,7 @@ executable buildsome
                    , time >=1.4 && <1.6
                    , transformers >=0.3 && <=0.5
                    , unix >=2.6 && <2.8
+                   , happy
 
   if flag(Charts)
     cpp-options:       -DWITH_CHARTS_SUPPORT

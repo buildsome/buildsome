@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveFunctor     #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {-# OPTIONS -fno-warn-orphans #-}
@@ -9,6 +10,7 @@ module BMake.Base
   ( thenP
   , returnP
   , happyError
+  , handleErrorExpList
   , Parser
   , Token(..)
   , TokenClass(..)
@@ -35,6 +37,7 @@ import           Data.Aeson
 import           Data.ByteString.Lazy     (ByteString)
 import           Data.String              (IsString)
 import           GHC.Generics
+import           Data.List                (intersperse)
 ----
 import           BMake.Lexer
 import           BMake.Data
@@ -55,6 +58,14 @@ happyError :: Parser a
 happyError = do
   (AlexPn _ line col) <- alexGetPosition
   alexStructError (line, col, "syntax error" :: String)
+
+handleErrorExpList :: (Token, [String]) -> Parser a
+handleErrorExpList (Token _ cls, opts) = do
+    (AlexPn _ line col) <- alexGetPosition
+    let expected [x] = ", expected: " ++ x
+        expected xs =  ", expected one of: " ++ (concat $ intersperse " " xs)
+    alexStructError (line, col,
+                     "syntax error: got " ++ tokenDesc cls ++ expected opts)
 
 data ExprF text
   = Str text

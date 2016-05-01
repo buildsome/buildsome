@@ -21,6 +21,7 @@ module BMake.Lexer
   , tokenToLineN
   , runAlex
   , getUserState
+  , tokenDesc
   , modifyUserState
   , alexSetStartCode
   , alexStructError
@@ -124,7 +125,6 @@ data TokenClass
  | TokenOther ByteString
  | TokenLineCont
  | TokenNewLine
- | TokenComment
  | TokenEOF
  | TokenNewLineAndTab
  | TokenEqual
@@ -145,6 +145,33 @@ data TokenClass
  | TokenElse
  | TokenEndif
  deriving (Eq, Show)
+
+tokenDesc :: TokenClass -> String
+tokenDesc TokenInclude               = "include"
+tokenDesc TokenLocal                 = "local"
+tokenDesc (TokenWhitespace _)        = "<whitespace>"
+tokenDesc (TokenOther s)             = show s
+tokenDesc TokenLineCont              = "<line continuation>"
+tokenDesc TokenNewLine               = "<newline>"
+tokenDesc TokenEOF                   = "<end-of-input>"
+tokenDesc TokenNewLineAndTab         = "<newline-and-tab>"
+tokenDesc TokenEqual                 = show ("=" :: String)
+tokenDesc TokenEqualMaybe            = show ("?=" :: String)
+tokenDesc TokenColon                 = show (":" :: String)
+tokenDesc TokenPipe                  = show ("|" :: String)
+tokenDesc TokenParenOpen             = show ("(" :: String)
+tokenDesc TokenParenClose            = show (")" :: String)
+tokenDesc TokenCurlyOpen             = show ("{" :: String)
+tokenDesc TokenCurlyClose            = show ("}" :: String)
+tokenDesc TokenComma                 = show ("," :: String)
+tokenDesc TokenPercent               = show ("%" :: String)
+tokenDesc TokenAsterik               = show ("*" :: String)
+tokenDesc TokenDollar                = show ("$" :: String)
+tokenDesc (TokenDollarChar (c, _))   = show ['$', c]
+tokenDesc TokenIfNEq                 = "ifnew"
+tokenDesc TokenIfEq                  = "ifew"
+tokenDesc TokenElse                  = "else"
+tokenDesc TokenEndif                 = "endif"
 
 alexEOF :: Alex Token
 alexEOF = do
