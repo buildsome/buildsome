@@ -318,10 +318,10 @@ target (filename, AlexPn _ line col) outputs inputs orderOnlyInputs script =
     do
         vars <- Reader.asks envVars >>= liftIO . readIORef
         let norm = normalize vars
-        outs  <- liftIO $ evaluate $ force $ compress WithoutSpace $ norm outputs
-        ins   <- liftIO $ evaluate $ force $ compress WithoutSpace $ norm inputs
-        inso  <- liftIO $ evaluate $ force $ compress WithoutSpace $ norm orderOnlyInputs
-        scrps <- liftIO $ evaluate $ force $ map (compress WithSpace . norm) script
+        let outs = compress WithoutSpace $ norm outputs
+        let ins  = compress WithoutSpace $ norm inputs
+        let inso = compress WithoutSpace $ norm orderOnlyInputs
+        let scrps = map (compress WithSpace . norm) script
 
         let put = liftIO . putStrLn
         let _dump =
