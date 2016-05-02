@@ -18,6 +18,7 @@ BuildRequires:  snappy-devel
 #BuildRequires: happy
 BuildRequires:  gmp-devel
 BuildRequires:  python
+BuildRequires:  chrpath
 
 Requires:       gmp
 
@@ -87,6 +88,9 @@ open(f, \"w\").write(content)
 """
 
 chmod a+x ${buildsome_exe}
+
+# Remove RPATH absolute references to build dir.
+chrpath -d ${buildsome_exe}
 
 %files
 %{_prefix}/bin/buildsome
