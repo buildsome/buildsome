@@ -2,7 +2,7 @@ flags:
   buildsome:
     Charts: False
 packages:
-- location: https://github.com/da-x/happy/archive/cd790d3ca7cc5816bb3a02227ac31699c35712c0.zip
+- location: https://github.com/da-x/happy/archive/8ab3b312c38ff9ac222d96fc4df36ce10cf8f639.zip
   extra-dep: true
 - .
 extra-deps:
