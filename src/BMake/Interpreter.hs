@@ -11,8 +11,6 @@ module BMake.Interpreter
 
 import           BMake.Base
 import           BMake.Data
-import           Control.DeepSeq (NFData(..), force)
-import           Control.Exception (evaluate)
 import           Control.Monad (when, forM_)
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Reader (ReaderT(..))
@@ -76,7 +74,6 @@ data Expr1
   | Expr1'Spaces
   | Expr1'VarSpecial MetaVar MetaVarModifier
   deriving (Eq, Ord, Show, Generic)
-instance NFData Expr1
 
 -- | Expr1 after Group parsing
 data Expr2
@@ -85,7 +82,6 @@ data Expr2
   | Expr2'Spaces
   | Expr2'VarSpecial MetaVar MetaVarModifier
   deriving (Eq, Ord, Show, Generic)
-instance NFData Expr2
 
 
 {- TODO:
@@ -223,11 +219,7 @@ assign name assignType exprL =
         let set = Map.insert name exprL
                & modifyIORef' envVars
                & liftIO
-
-        case (assignType, Map.lookup name vars) of
-            (AssignConditional, (Just _)) ->
-                return ()
-            (AssignConditional, Nothing) -> do
+            addWeak = do
                 let exprLNorm = compress WithSpace $ normalize vars exprL
                 let val = case exprLNorm of
                               (Expr3'Str text:_) ->
@@ -235,7 +227,10 @@ assign name assignType exprL =
                               _ -> ""
                 let modf = Map.insert (BS8.concat $ BSL8.toChunks name) val
                 liftIO $ modifyIORef' envWeakVars modf
-                set
+
+        case (assignType, Map.lookup name vars) of
+            (AssignConditional, (Just _)) -> addWeak
+            (AssignConditional, Nothing) -> addWeak >> set
             _ -> set
 
 local :: [Statement] -> M ()
