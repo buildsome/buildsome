@@ -152,33 +152,5 @@ data Makefile = Makefile
 
 instance NFData Makefile where
 
-getPrevTokens :: Alex (Maybe Token, Maybe Token)
-getPrevTokens = prevTokens <$> getUserState
-
-modifyPrevTokens :: ((Maybe Token, Maybe Token) -> (Maybe Token, Maybe Token)) -> Alex ()
-modifyPrevTokens f = modifyUserState $ \us -> us { prevTokens = f (prevTokens us) }
-
-setPrevTokens :: (Maybe Token, Maybe Token) -> Alex ()
-setPrevTokens = modifyPrevTokens . const
-
 lexer :: (Token -> Parser a) -> Parser a
-lexer f = do
-    mPrevTokens <- getPrevTokens
-    case mPrevTokens of
-        (jx, Just token) ->
-            setPrevTokens (jx, Nothing) >> f token
-        (jx, Nothing) -> do
-            token <- alexMonadScan
-            case token of
-                Token _ TokenNewLine ->
-                    setPrevTokens (Just token, Nothing) >> lexer f
-                _ -> case jx of
-                            Just prevToken@(Token _ TokenNewLine) -> do
-                                case token of
-                                    Token _ TokenNewLineAndTab -> do
-                                        setPrevTokens (Nothing, Nothing)
-                                        f token
-                                    _ -> do
-                                        setPrevTokens (Nothing, Just token)
-                                        f prevToken
-                            _ -> f token
+lexer f = alexMonadScan >>= f
