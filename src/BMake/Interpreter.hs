@@ -20,7 +20,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy.Char8 as BSL8
 import           Data.Function ((&))
 import           Data.IORef
-import           Data.List (intercalate, intersperse)
+import           Data.List (intercalate, intersperse, dropWhileEnd)
 import           Data.List.Split (splitOn)
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -405,7 +405,7 @@ ifCmp ifCmpType exprA exprB thenStmts elseStmts =
         vars <- Reader.asks envVars >>= liftIO . readIORef
         let norm = normalize vars
         statements $
-            if cmp ifCmpType (norm exprA) (norm exprB)
+            if cmp ifCmpType (dropWhileEnd (== Expr3'Spaces) $ norm exprA) (norm exprB)
             then thenStmts
             else elseStmts
 

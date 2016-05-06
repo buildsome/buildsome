@@ -93,10 +93,10 @@ TgtScript :: {DList [Expr]}
       | TgtExprListE                  { DList.singleton $1 }
 
 IfStmt -- TODO: Is this it? :: { [Expr] -> [Expr] -> [Statement] -> [Statement] -> Statement }
-      : MW "(" NoCommaExprListE "," NoCommaExprListE ")" NEWLINE StatementsDList else StatementsDList endif
-                                      { \x -> x $3 $5 (DList.toList $8) (DList.toList $10) }
-      | MW "(" NoCommaExprListE "," NoCommaExprListE ")" NEWLINE StatementsDList endif
-                                      { \x -> x $3 $5 (DList.toList $8) [] }
+      : MW "(" NoCommaExprListE "," MW NoCommaExprListE ")" NEWLINE StatementsDList else StatementsDList endif
+                                      { \x -> x $3 $6 (DList.toList $9) (DList.toList $11) }
+      | MW "(" NoCommaExprListE "," MW NoCommaExprListE ")" NEWLINE StatementsDList endif
+                                      { \x -> x $3 $6 (DList.toList $9) [] }
 
 ExprListE :: {[Expr]}
       :                               { [] }
