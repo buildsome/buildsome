@@ -97,7 +97,7 @@ getFileName :: Alex FilePath.FilePath
 getFileName = fmap filePath getUserState
 
 -- Some action helpers:
-tok' r f (p, _, input) len = do
+tok' r f (p, _, input, _) len = do
    case r of
       Just i -> alexSetStartCode i
       Nothing -> return ()
@@ -185,19 +185,12 @@ tokenDesc TokenEndif                 = "endif"
 
 alexEOF :: Alex Token
 alexEOF = do
-  (p, _, _) <- alexGetInput
+  (p, _, _, _) <- alexGetInput
   return $ Token p TokenEOF
 
 newtype AlexUserState = AlexUserState
     { filePath   :: FilePath.FilePath
     }
 alexInitUserState = AlexUserState ""
-
-instance Functor Alex where
-  fmap f m = do x <- m; return (f x)
-
-instance Applicative Alex where
-  pure = return
-  (<*>) = Control.Monad.ap
 
 }
