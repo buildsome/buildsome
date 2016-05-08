@@ -10,7 +10,6 @@ import qualified Buildsome.Color as Color
 import qualified Buildsome.CompatMakefile as CompatMakefile
 import           Buildsome.Db (Db, Reason)
 import qualified Buildsome.Db as Db
-import qualified Buildsome.MemoParseMakefile as MemoParseMakefile
 import           Buildsome.Opts (Opts(..), Opt(..))
 import qualified Buildsome.Opts as Opts
 import qualified Buildsome.Print as Print
@@ -148,16 +147,12 @@ switchDirectory makefilePath = do
 parseMakefile :: Printer -> Db -> FilePath -> FilePath -> Makefile.Vars -> FilePath -> IO Makefile
 parseMakefile printer _ origMakefilePath finalMakefilePath vars cwd = do
   let absFinalMakefilePath = cwd </> finalMakefilePath
-  (parseTime, (isHit, makefile)) <- timeIt $ do
-    let isHit = MemoParseMakefile.Miss
+  (parseTime,  makefile) <- timeIt $ do
     rawMakefile <- BMake.parse absFinalMakefilePath vars
     let makefile = runIdentity $ Makefile.onMakefilePaths (Identity . FilePath.canonicalizePathAsRelativeCwd cwd) rawMakefile
     Makefile.verifyPhonies makefile
-    return (isHit, makefile)
-  let msg =
-        case isHit of
-        MemoParseMakefile.Hit -> "Got makefile from cache: "
-        MemoParseMakefile.Miss -> "Parsed makefile: "
+    return makefile
+  let msg = "Parsed makefile: "
   Printer.rawPrintStrLn printer $ mconcat
     [ msg, cPath (show origMakefilePath)
     , " (took ", cTiming (show parseTime <> "sec"), ")"]

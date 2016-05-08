@@ -49,7 +49,6 @@ executable buildsome
                ,     Buildsome.FileContentDescCache
                ,     Buildsome.MagicFiles
                ,     Buildsome.Meddling
-               ,     Buildsome.MemoParseMakefile
                ,     Buildsome.Opts
                ,     Buildsome.Print
                ,     Buildsome.Slave
@@ -85,7 +84,6 @@ executable buildsome
                ,     Lib.Makefile.InstantiatePattern
                ,     Lib.Makefile.Monad
                ,     Lib.Makefile.MonadClass
-               ,     Lib.Makefile.Parser
                ,     Lib.Makefile.Types
                ,     Lib.Makefile.VerifyPhonies
                ,     Lib.Map

@@ -9,7 +9,7 @@ import Prelude.Compat hiding (FilePath)
 
 import Control.Monad (guard, msum)
 import Lib.FilePath ((</>), FilePath, splitFileName)
-import Lib.Makefile.Parser (interpolateCmds)
+import BMake.Interpreter (interpolateCmds)
 import Lib.Makefile.Types
 import qualified Lib.StringPattern as StringPattern
 
