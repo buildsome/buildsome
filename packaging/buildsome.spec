@@ -20,6 +20,12 @@ BuildRequires:  gmp-devel
 BuildRequires:  python
 BuildRequires:  chrpath
 
+%if 0%{?fedora} >= 24
+# GHC builds need tinfo.so.5
+BuildRequires:  ncurses-compat-libs
+BuildRequires:  glibc-langpack-en
+%endif
+
 Requires:       gmp
 
 %description
