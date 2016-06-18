@@ -822,7 +822,27 @@ DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
     bool needs_await = false;
     DEFINE_MSG(msg, realpath);
     IN_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(needs_await, msg, realpath, path, resolved_path);
+
+    bool allocated = false;
+    if (!resolved_path) {
+        /*
+         * The version of realpath received by dlsym is the older
+         * version that does not support resolved_path == NULL.
+         */
+        resolved_path = malloc(PATH_MAX + 1);
+        allocated = true;
+    }
+
+    char *const rptr =
+        AWAIT_CALL_REAL(needs_await, msg, realpath, path, resolved_path);
+
+    if (!rptr && allocated) {
+        const int errno_save = errno;
+        free(resolved_path);
+        errno = errno_save;
+    }
+
+    return rptr;
 }
 
 /*************************************/
