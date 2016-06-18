@@ -122,6 +122,12 @@ Expr :: {Expr}
       | "%"                           { Str "%" }
       | "*"                           { Str "*" }
       | "$"                           { Str "$" }
+      | else                          { Str "else" }
+      | ifeq                          { Str "ifeq" }
+      | ifneq                         { Str "ifneq" }
+      | include                       { Str "include" }
+      | local                         { Str "local" }
+      | endif                         { Str "endif" }
 
 
 NoCommaExprListE :: {[Expr]}
@@ -147,6 +153,12 @@ NoCommaExpr :: {Expr}
       | "%"                           { Str "%" }
       | "*"                           { Str "*" }
       | "$"                           { Str "$" }
+      | else                          { Str "else" }
+      | ifeq                          { Str "ifeq" }
+      | ifneq                         { Str "ifneq" }
+      | include                       { Str "include" }
+      | local                         { Str "local" }
+      | endif                         { Str "endif" }
 
 -- "TgtExpr" is a simple string as expr
 
