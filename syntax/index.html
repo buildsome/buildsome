@@ -373,15 +373,17 @@ inside target definitions.</p>
 </ul>
 <h3 id="phony-targets">Phony targets<a class="headerlink" href="#phony-targets" title="Permanent link">&para;</a></h3>
 <p>Similarly to <code>make</code>, phony targets can be specified, using the pseudo <code>.PHONY</code>
-output target:</p>
-<pre><code>.PHONY: default
+output target. These are targets that don't actually generate files, but serve
+only as 'always fall-through' nodes in the dependency graph, to link groups
+of targets together.</p>
+<pre><code class="no-highlight">.PHONY: default
 </code></pre>
 
 <h3 id="order-only-inputs">Order-only inputs<a class="headerlink" href="#order-only-inputs" title="Permanent link">&para;</a></h3>
 <p>Some target inputs can be specified in the target definition line in a way that
 does not affect the expansion of <code>$^</code>.</p>
 <p>For example:</p>
-<pre><code>output: input | order-only
+<pre><code class="no-highlight">output: input | order-only
         cat $|
         cat $^
         echo $^ &gt; $@
