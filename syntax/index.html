@@ -130,13 +130,13 @@
                 
                     <li><a class="toctree-l4" href="#simple-patterns">Simple patterns</a></li>
                 
-                    <li><a class="toctree-l4" href="#order-only-inputs">Order only inputs</a></li>
-                
                     <li><a class="toctree-l4" href="#wildcard-patterns">Wildcard patterns</a></li>
+                
+                    <li><a class="toctree-l4" href="#special-macros">Special macros</a></li>
                 
                     <li><a class="toctree-l4" href="#phony-targets">Phony targets</a></li>
                 
-                    <li><a class="toctree-l4" href="#special-macros">Special macros</a></li>
+                    <li><a class="toctree-l4" href="#order-only-inputs">Order only inputs</a></li>
                 
             
             </ul>
@@ -207,10 +207,17 @@
 is implemented, and a few constructs are added. The differences are
 described here.</p>
 <h2 id="directory-structure">Directory structure<a class="headerlink" href="#directory-structure" title="Permanent link">&para;</a></h2>
-<p>Unlike <code>make</code>, Buildsome is designed for a directory structures from the get-go. Therefore, when executing in any directory, it looks up
-the directory structure to find the top-mEost <code>Buildsome.mk</code> file. It starts the evaluation process from there.</p>
+<p>Unlike <code>make</code>, Buildsome is designed for a directory structures from
+the get-go. Therefore, when executing in any directory, it looks up
+the directory structure to find the top-mEost <code>Buildsome.mk</code> file. It
+starts the evaluation process from there.</p>
 <h2 id="purity">Purity<a class="headerlink" href="#purity" title="Permanent link">&para;</a></h2>
-<p>The evalution of Buildsome's definition files, which is needed for the process of devising a target tree, is done in a precise in a way that is completely independent of the state of other files in the directory. It is therefore not possible to generate these definition files in the build process, and there is no <code>make</code> like process of "Makefile-reloading". This limitiation is intentional.</p>
+<p>The evalution of Buildsome's definition files, which is needed for the
+process of devising a target tree, is done in a precise in a way that
+is completely independent of the state of other files in the
+directory. It is therefore not possible to generate these definition
+files in the build process, and there is no <code>make</code> like process of
+"Makefile-reloading". This limitiation is intentional.</p>
 <h2 id="macros">Macros<a class="headerlink" href="#macros" title="Permanent link">&para;</a></h2>
 <h3 id="macro-assignment">Macro assignment<a class="headerlink" href="#macro-assignment" title="Permanent link">&para;</a></h3>
 <p>There are currently two ways to define a macro, shown in the next example:</p>
@@ -289,6 +296,7 @@ initial value <code>enabled</code>.</p>
 &lt;tab char&gt;&lt;script line n&gt;
 </code></pre>
 
+<p>The target named <code>default</code> is built if no target is mentioend in the command line.</p>
 <p>Not that unlike in <code>make</code>, all script lines are executed as one shell
 script, instead of separately.</p>
 <p>Macro expansion takes place at the target line specification.</p>
@@ -296,15 +304,25 @@ script, instead of separately.</p>
 However, if the execution of the target does make use of these inputs,
 a warning is emitted.</p>
 <h3 id="simple-patterns">Simple patterns<a class="headerlink" href="#simple-patterns" title="Permanent link">&para;</a></h3>
-<p>Target patterns can be specified similarly to the <code>make</code> syntax.</p>
+<p>Target patterns can be specified similarly to the <code>make</code> syntax. One
+or more files can be outputs, and <code>%</code> serves as a wild card. For
+example:</p>
+<p><em>(note that in the <code>cpp</code> to <code>o</code> rule below, nothing more needs to be specified, as all other input dependencies such as included headers
+are automatically detected.)</em></p>
 <pre><code class="no-highlight">%.o: %.cpp
         ${COMPILEXX}
 </code></pre>
 
-<p>However, there is an important difference between the <code>make</code> and Buildsome functionality of patterns. In the example above, the pattern
-does not match targets in a subtree (e.g .<code>subdir/a.o</code>), but only in the project's root directory. Though it is possible to reuse patterns, albeit in an explicit manner–a topic we shall visit in the next section.</p>
-<h4 id="reusing-patterns">Reusing patterns<a class="headerlink" href="#reusing-patterns" title="Permanent link">&para;</a></h4>
-<p>In order to make a pattern apply in more than one directory, we can use combine <em>Scope saving</em>, <em>Include directives</em>, and <em>variable assignment</em>s in the following manner.</p>
+<p>However, there is an important difference between the <code>mae</code> and
+Buildsome functionality of patterns. In the example above, the pattern
+does not match targets in a subtree (e.g .<code>subdir/a.o</code>), but only in
+the project's root directory. Though it is possible to reuse patterns,
+albeit in an explicit manner–a topic we shall visit in the next
+section.</p>
+<h4 id="reuse-of-patterns-in-sub-directories">Reuse of patterns in sub-directories<a class="headerlink" href="#reuse-of-patterns-in-sub-directories" title="Permanent link">&para;</a></h4>
+<p>In order to make a pattern apply in more than one directory, we can
+use combine <em>Scope saving</em>, <em>Include directives</em>, and <em>variable
+assignment</em>s in the following manner.</p>
 <p><strong>build/patterns.mk</strong>:</p>
 <pre><code class="no-highlight">${curdir}/%.o: ${curdir}/%.cpp
 </code></pre>
@@ -324,15 +342,53 @@ include patterns/include.mk
 local }
 </code></pre>
 
-<p>Note the assignment of the Buildsome variable <code>curdir</code>, that serves as the path to the current directory. It is more common to use the valid variable name <code>.</code> instead of the length <code>curdir</code>.</p>
-<h3 id="order-only-inputs">Order only inputs<a class="headerlink" href="#order-only-inputs" title="Permanent link">&para;</a></h3>
-<p><strong>TBD</strong></p>
+<p>Note the assignment of the Buildsome variable <code>curdir</code>, that serves as
+the path to the current directory. It is more common to use the valid
+variable name <code>.</code> instead of the lengthy <code>curdir</code>, so that <code>$.</code> can be
+used inplace of <code>${curdir}</code>.</p>
 <h3 id="wildcard-patterns">Wildcard patterns<a class="headerlink" href="#wildcard-patterns" title="Permanent link">&para;</a></h3>
-<p><strong>TBD</strong></p>
-<h3 id="phony-targets">Phony targets<a class="headerlink" href="#phony-targets" title="Permanent link">&para;</a></h3>
-<p><strong>TBD</strong></p>
+<p>Wildcard patterns allow a one-to-many target instanitation, by adding
+a wildcard in the output side of a pattern target.</p>
+<p>For example:</p>
+<pre><code class="no-highlight">local_%.sep.*.c: %.foo
+        ${TEMPLATE_MAKER}
+</code></pre>
+
+<p>The rule above will match for files names which match the globbing
+pattern <code>local_*.sep.*.c</code>. For example, with the file <code>local_test.sep.bar.c</code>,
+the target will expand as <code>local_test.sep.bar.c: bar.foo</code>.</p>
 <h3 id="special-macros">Special macros<a class="headerlink" href="#special-macros" title="Permanent link">&para;</a></h3>
-<p><strong>TBD</strong></p>
+<p>The following macros have special meaning when expansion takes place
+inside target definitions.</p>
+<ul>
+<li><code>$@</code> - expands to the first output of the target.</li>
+<li><code>$&lt;</code> - expands to the first specified input of the target.</li>
+<li><code>$^</code> - expands to all specified inputs of the target (not including order-only inputs).</li>
+<li><code>$|</code> - expands to all order-only inputs of the target.</li>
+</ul>
+<p>In addition, the following two modifiers can be appended, e.g. <code>$@(D)</code>:</p>
+<ul>
+<li><code>(D)</code> - take only the directory name.</li>
+<li><code>(F)</code> - take only the basename name.</li>
+</ul>
+<h3 id="phony-targets">Phony targets<a class="headerlink" href="#phony-targets" title="Permanent link">&para;</a></h3>
+<p>Similarly to <code>make</code>, phony targets can be specified, using the pseudo <code>.PHONEY</code>
+output target:</p>
+<pre><code>.PHONEY: default
+</code></pre>
+
+<h3 id="order-only-inputs">Order only inputs<a class="headerlink" href="#order-only-inputs" title="Permanent link">&para;</a></h3>
+<p>Some target inputs can be specified in the target definition line in a way that
+does not affect the expansion of <code>$^</code>.</p>
+<p>For example:</p>
+<pre><code>output: input | order-only
+        cat $|
+        cat $^
+        echo $^ &gt; $@
+</code></pre>
+
+<p>The execution of the target will read from <code>order-only</code>, but only the string <code>input</code>
+will be written to <code>output</code>.</p>
               
             </div>
           </div>
