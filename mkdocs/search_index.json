@@ -1,0 +1,199 @@
+{
+    "docs": [
+        {
+            "location": "/", 
+            "text": "Buildsome\n\n\nBuildsome is a generic build tool which provides emphasis on correctness\nwhile keeping the ease of use. The guiding principal is that partial\nrebuilds should be fast, and always yield outputs that are identical\nto full builds, regardless of the complexity of the build tree.\n\n\nTo facilitate this, Buildsome adds advanced features, such as\nautomatic dependency detection, output tracking, and more. Folks\nfamiliar with \nmake\n should feel at\nhome.\n\n\nHighlights\n\n\n\n\nAutomatic, generic, dependency handling\n: no need to specify\n  input dependencies for targets, as dependencies are detected while\n  targets are running, and the dependencies are remembered for further\n  execution. This makes specifing targets much easier. Only specify\n  the outputs. Input specification is optional.\n\n\nCorrectness\n: detection of extraenous file modification during\n  build (for example, by a user's editor).\n\n\nOutput capture\n: The standard output and standard error of\n  execution are saved for replay and diagnosis.\n\n\nVerbosity\n: prints in a friendly manner why a target was rebuilt.\n\n\nGit integartion\n: a root \n.gitignore\n file is automatically\n  maintained for all build outputs, so no 'clean' targets are needed.\n\n\nThe target specification itself is implicitly a dependency, unlike\n  in \nmake\n.\n\n\nOut of tree (global) dependencies are detected too under the same\n  mechanism. For instance, if you reinstalled \n/usr/bin/gcc\n, it will\n  be detected.\n\n\n\n\nIn depth\n\n\nConvenience\n\n\nWith Buildsome, you're free to specify your inputs \npartially\n (such\nspecification can aid a more efficient build process). You do not have\nto specify your file system inputs explicitly though, as they're\nautomatically detected using file system access hooks.\n\n\nNo false negatives\n\n\nAutomatic detection of dependencies does not only add convenience, it\nalso guarantees correctness. Correctness means no \"false negative\"\nbuilds. \"False negative\" means that when inputs change, the build\nsystem does not always recognize this properly, and avoids rebuilding\nparts that require it. Such false negatives plague virtually every\nbuild system in existence.\n\n\nAs an example: Virtually all build systems use \ngcc -M\n to detect\n\n#include\n dependencies.  If gcc was invoked with \n-Ia -Ib\n, and\n\nexample.h\n was included and found in \nb/example.h\n, most build\nsystems will only know to rebuild if \nb/example.h\n is changed.  If\n\na/example.h\n is introduced, however, the compilation process will\nhave a different result, and Buildsome will detect this and re-execute\nthe compilation command, unlike other build systems.\n\n\nAnother correctness issue solved by Buildsome is meddling with the\nfile system \nduring\n a build process. Unlike other build systems,\nBuildsome detects this and will not record false build results in\ndetectable cases. The only undetectable cases are third-party meddling\nwith outputs of a command while it is being built. Editing a source\nfile immediately after it was fed to a compiler will not accidentally\nmark the compilation as \"newer\" than that source file.\n\n\nNo lost warnings\n\n\nVirtually all build systems do not capture stdout/stderr of executed\ncommands. When a command succeeds (e.g: a compiler invocation), its\nstdout and stderr are displayed once and then forgotten. All future\nbuilds will never present the warnings from the compiler, which are\nthus lost until a \"clean\" command is issued. Buildsome captures these\noutputs and re-prints them when an execution is cached. This avoids\nthe most common reason \"-Werror\" is used: as warnings are no longer\nlost.\n\n\nParallelism\n\n\nAutomatic detection of file system dependencies and parallelism are\nsomewhat contradictory. To overcome this, Buildsome uses speculative\nparallelism based on previous detected inputs. These are likely to be", 
+            "title": "Home"
+        }, 
+        {
+            "location": "/#buildsome", 
+            "text": "Buildsome is a generic build tool which provides emphasis on correctness\nwhile keeping the ease of use. The guiding principal is that partial\nrebuilds should be fast, and always yield outputs that are identical\nto full builds, regardless of the complexity of the build tree.  To facilitate this, Buildsome adds advanced features, such as\nautomatic dependency detection, output tracking, and more. Folks\nfamiliar with  make  should feel at\nhome.", 
+            "title": "Buildsome"
+        }, 
+        {
+            "location": "/#highlights", 
+            "text": "Automatic, generic, dependency handling : no need to specify\n  input dependencies for targets, as dependencies are detected while\n  targets are running, and the dependencies are remembered for further\n  execution. This makes specifing targets much easier. Only specify\n  the outputs. Input specification is optional.  Correctness : detection of extraenous file modification during\n  build (for example, by a user's editor).  Output capture : The standard output and standard error of\n  execution are saved for replay and diagnosis.  Verbosity : prints in a friendly manner why a target was rebuilt.  Git integartion : a root  .gitignore  file is automatically\n  maintained for all build outputs, so no 'clean' targets are needed.  The target specification itself is implicitly a dependency, unlike\n  in  make .  Out of tree (global) dependencies are detected too under the same\n  mechanism. For instance, if you reinstalled  /usr/bin/gcc , it will\n  be detected.", 
+            "title": "Highlights"
+        }, 
+        {
+            "location": "/#in-depth", 
+            "text": "", 
+            "title": "In depth"
+        }, 
+        {
+            "location": "/#convenience", 
+            "text": "With Buildsome, you're free to specify your inputs  partially  (such\nspecification can aid a more efficient build process). You do not have\nto specify your file system inputs explicitly though, as they're\nautomatically detected using file system access hooks.", 
+            "title": "Convenience"
+        }, 
+        {
+            "location": "/#no-false-negatives", 
+            "text": "Automatic detection of dependencies does not only add convenience, it\nalso guarantees correctness. Correctness means no \"false negative\"\nbuilds. \"False negative\" means that when inputs change, the build\nsystem does not always recognize this properly, and avoids rebuilding\nparts that require it. Such false negatives plague virtually every\nbuild system in existence.  As an example: Virtually all build systems use  gcc -M  to detect #include  dependencies.  If gcc was invoked with  -Ia -Ib , and example.h  was included and found in  b/example.h , most build\nsystems will only know to rebuild if  b/example.h  is changed.  If a/example.h  is introduced, however, the compilation process will\nhave a different result, and Buildsome will detect this and re-execute\nthe compilation command, unlike other build systems.  Another correctness issue solved by Buildsome is meddling with the\nfile system  during  a build process. Unlike other build systems,\nBuildsome detects this and will not record false build results in\ndetectable cases. The only undetectable cases are third-party meddling\nwith outputs of a command while it is being built. Editing a source\nfile immediately after it was fed to a compiler will not accidentally\nmark the compilation as \"newer\" than that source file.", 
+            "title": "No false negatives"
+        }, 
+        {
+            "location": "/#no-lost-warnings", 
+            "text": "Virtually all build systems do not capture stdout/stderr of executed\ncommands. When a command succeeds (e.g: a compiler invocation), its\nstdout and stderr are displayed once and then forgotten. All future\nbuilds will never present the warnings from the compiler, which are\nthus lost until a \"clean\" command is issued. Buildsome captures these\noutputs and re-prints them when an execution is cached. This avoids\nthe most common reason \"-Werror\" is used: as warnings are no longer\nlost.", 
+            "title": "No lost warnings"
+        }, 
+        {
+            "location": "/#parallelism", 
+            "text": "Automatic detection of file system dependencies and parallelism are\nsomewhat contradictory. To overcome this, Buildsome uses speculative\nparallelism based on previous detected inputs. These are likely to be", 
+            "title": "Parallelism"
+        }, 
+        {
+            "location": "/ChangeLog/", 
+            "text": "0.1.0-1???\n\n\n\n\nFirst release providing documentation.", 
+            "title": "Changelog"
+        }, 
+        {
+            "location": "/ChangeLog/#010-1", 
+            "text": "First release providing documentation.", 
+            "title": "0.1.0-1???"
+        }, 
+        {
+            "location": "/install/", 
+            "text": "Build and install from source\n\n\nIt's possible to build Buildsome from source.\n\n\n\n\ninstall the \nStack tool\n.\n\n\nUsing \nstack\n, perform build and install:\n\n\n\n\ngit clone https://github.com/ElastiLotem/buildsome\ncd buildsome\nstack install\n\n\n\n\nThe binary should be available as \n~/.local/bin/buildsome\n.", 
+            "title": "Installation"
+        }, 
+        {
+            "location": "/install/#build-and-install-from-source", 
+            "text": "It's possible to build Buildsome from source.   install the  Stack tool .  Using  stack , perform build and install:   git clone https://github.com/ElastiLotem/buildsome\ncd buildsome\nstack install  The binary should be available as  ~/.local/bin/buildsome .", 
+            "title": "Build and install from source"
+        }, 
+        {
+            "location": "/execution/", 
+            "text": "Execution", 
+            "title": "Execution"
+        }, 
+        {
+            "location": "/execution/#execution", 
+            "text": "", 
+            "title": "Execution"
+        }, 
+        {
+            "location": "/syntax/", 
+            "text": "'Make' compatibility\n\n\nThe syntax for Buildsome's definition files is similar tho that of\n\nmake\n, however only a small subset\nis implemented, and a few constructs are added. The differences are\ndescribed here.\n\n\nDirectory structure\n\n\nUnlike \nmake\n, Buildsome is designed for a directory structures from the get-go. Therefore, when executing in any directory, it looks up\nthe directory structure to find the top-mEost \nBuildsome.mk\n file. It starts the evaluation process from there.\n\n\nPurity\n\n\nThe evalution of Buildsome's definition files, which is needed for the process of devising a target tree, is done in a precise in a way that is completely independent of the state of other files in the directory. It is therefore not possible to generate these definition files in the build process, and there is no \nmake\n like process of \"Makefile-reloading\". This limitiation is intentional.\n\n\nMacros\n\n\nMacro assignment\n\n\nThere are currently three ways to define a variable:\n\n\nFOO = value\nBAR ?= value\n\n\n\n\nIn this case variable \nFOO\n will be assigned with the new string\nalways, and \nBAR\n will be assigned only if it was not assigned before.\n\n\nCommand line build customization\n\n\nThere is a special case concerning variables whose names start with\n\nFLAG_\n: If \nFLAG_X\n is defined with with \n?=\n, then the user can pass\n\n--with X\n in the command line when executing Buildsome in order to\nset an initial value \nenabled\n, or \n--without\n to set it to\n\ndisabled\n.\n\n\nMacro are unrelated to POSIX environment\n\n\nUnlike in \nmake\n there is \nno relation between macros in Buildsome\ndefinition files and POSIX environment variables\n. In fact, when\ntarget are executing their commands, it is done with a very minimal\nenvironment variable set. The reason to ensure reproducability of the\nbuild between users, each possibly environment-sensitive tools under a\ndifferent execution environment.\n\n\nScope saving\n\n\nUsing \nlocal {\n and \nlocal }\n, it is possible to save-restore the\nvalues of all variables.\n\n\nA = 2\nlocal {\nA = 5\nlocal }\n\n\n\n\nIn the example above, \nA\n will revert to the value \n2\n after the\n\nlocal }\n line.\n\n\nSubstitution\n\n\nMacros can refer to other macros via \n${...}\n. The expansion itself\nhowever takes place only in the target definition.\n\n\nCFLAGS=-O2 ${CFLAGS_FEATURE}\n\n\n\n\nCartesian expansion\n\n\nSimilarly to expansion done in some shells, comma-delimited expressions\nenclosed in curly braces are expanded. For example, the expression\n\nx{a,b,c}\n is expanded to \nxa xb xc\n.\n\n\nMultiline assignments\n\n\nUsing \n\\\n, it is possible to extend a macro assignment to multiple\nlines. For example:\n\n\nDEFAULT_CFLAGS_C_COMMON=      \\\n    ${DEFAULT_CFLAGS_COMMON}  \\\n    ${CFLAGS_POISON_FULLY}    \\\n\n\n\n\n\nInclude directives\n\n\nIt is possible to recursively include other files. For example:\n\n\ninclude otherdir/otherfile.mk\n\n\n\n\nConditional evaluation\n\n\nCurrently, \nmake\n-style \nifeq\n and \nifneq\n are supported, along with\n\nelse\n.\n\n\nCLFAGS_FEATURE=\nifeq ($(flag_BAR),enabled)\nCLFAGS_FEATURE=-DFEATURE\nendif\n\n\n\n\nThere is a special case with variable whose names start with\n\nFLAG_\n. If those are defined with \n?=\n, then the user can pass\n\n--with\n in the command when executing buildsome in order to set an\ninitial value \nenabled\n.\n\n\nTarget definition\n\n\nSimilarly to \nmake\n, the syntax for targets is as follows:\n\n\noutputs\n : \noptionally-specified-inputs\n (| \norder-only-inputs\n)\n\ntab char\nscript line 1\n\n\ntab char\nscript line 2\n\n\ntab char\nscript line n\n\n\n\n\n\nNot that unlike in \nmake\n, all script lines are executed as one shell\nscript, instead of separately.\n\n\nMacro expansion takes place at the target line specification.\n\n\nInputs can be specified in order to assist in parallel first builds.\nHowever, if the execution of the target does make use of these inputs,\na warning is emitted.\n\n\nSimple patterns\n\n\nTarget patterns can be specified similarly to the \nmake\n syntax.\n\n\n%.o: %.cpp\n        ${COMPILEXX}\n\n\n\n\nHowever, there is an important difference between the \nmake\n and Buildsome functionality of patterns. In the example above, the pattern\ndoes not match targets in a subtree (e.g .\nsubdir/a.o\n), but only in the project's root directory. Though it is possible to reuse patterns, albeit in an explicit manner\u2013a topic we shall visit in the next section.\n\n\nReusing patterns\n\n\nIn order to make a pattern apply in more than one directory, we can use combine \nScope saving\n, \nInclude directives\n, and \nvariable assignment\ns in the following manner.\n\n\nbuild/patterns.mk\n:\n\n\n${curdir}/%.o: ${curdir}/%.cpp\n\n\n\n\nBuildsome.mk\n:\n\n\ncurdir=.\nincldue patterns/include.mk\nincldue subdir/include.mk\n\n\n\n\nsubdir/include.mk\n:\n\n\nlocal {\n\ncurdir=subdir\nincldue patterns/include.mk\n\nlocal }\n\n\n\n\nNote the assignment of the Buildsome variable \ncurdir\n, that serves as the path to the current directory. It is more common to use the valid variable name \n.\n instead of the length \ncurdir\n.\n\n\nOrder only inputs\n\n\nTBD\n\n\nWildcard patterns\n\n\nTBD\n\n\nPhony targets\n\n\nTBD\n\n\nSpecial macros\n\n\nTBD", 
+            "title": "Buildsome.mk syntax"
+        }, 
+        {
+            "location": "/syntax/#make-compatibility", 
+            "text": "The syntax for Buildsome's definition files is similar tho that of make , however only a small subset\nis implemented, and a few constructs are added. The differences are\ndescribed here.", 
+            "title": "'Make' compatibility"
+        }, 
+        {
+            "location": "/syntax/#directory-structure", 
+            "text": "Unlike  make , Buildsome is designed for a directory structures from the get-go. Therefore, when executing in any directory, it looks up\nthe directory structure to find the top-mEost  Buildsome.mk  file. It starts the evaluation process from there.", 
+            "title": "Directory structure"
+        }, 
+        {
+            "location": "/syntax/#purity", 
+            "text": "The evalution of Buildsome's definition files, which is needed for the process of devising a target tree, is done in a precise in a way that is completely independent of the state of other files in the directory. It is therefore not possible to generate these definition files in the build process, and there is no  make  like process of \"Makefile-reloading\". This limitiation is intentional.", 
+            "title": "Purity"
+        }, 
+        {
+            "location": "/syntax/#macros", 
+            "text": "", 
+            "title": "Macros"
+        }, 
+        {
+            "location": "/syntax/#macro-assignment", 
+            "text": "There are currently three ways to define a variable:  FOO = value\nBAR ?= value  In this case variable  FOO  will be assigned with the new string\nalways, and  BAR  will be assigned only if it was not assigned before.", 
+            "title": "Macro assignment"
+        }, 
+        {
+            "location": "/syntax/#command-line-build-customization", 
+            "text": "There is a special case concerning variables whose names start with FLAG_ : If  FLAG_X  is defined with with  ?= , then the user can pass --with X  in the command line when executing Buildsome in order to\nset an initial value  enabled , or  --without  to set it to disabled .", 
+            "title": "Command line build customization"
+        }, 
+        {
+            "location": "/syntax/#macro-are-unrelated-to-posix-environment", 
+            "text": "Unlike in  make  there is  no relation between macros in Buildsome\ndefinition files and POSIX environment variables . In fact, when\ntarget are executing their commands, it is done with a very minimal\nenvironment variable set. The reason to ensure reproducability of the\nbuild between users, each possibly environment-sensitive tools under a\ndifferent execution environment.", 
+            "title": "Macro are unrelated to POSIX environment"
+        }, 
+        {
+            "location": "/syntax/#scope-saving", 
+            "text": "Using  local {  and  local } , it is possible to save-restore the\nvalues of all variables.  A = 2\nlocal {\nA = 5\nlocal }  In the example above,  A  will revert to the value  2  after the local }  line.", 
+            "title": "Scope saving"
+        }, 
+        {
+            "location": "/syntax/#substitution", 
+            "text": "Macros can refer to other macros via  ${...} . The expansion itself\nhowever takes place only in the target definition.  CFLAGS=-O2 ${CFLAGS_FEATURE}", 
+            "title": "Substitution"
+        }, 
+        {
+            "location": "/syntax/#cartesian-expansion", 
+            "text": "Similarly to expansion done in some shells, comma-delimited expressions\nenclosed in curly braces are expanded. For example, the expression x{a,b,c}  is expanded to  xa xb xc .", 
+            "title": "Cartesian expansion"
+        }, 
+        {
+            "location": "/syntax/#multiline-assignments", 
+            "text": "Using  \\ , it is possible to extend a macro assignment to multiple\nlines. For example:  DEFAULT_CFLAGS_C_COMMON=      \\\n    ${DEFAULT_CFLAGS_COMMON}  \\\n    ${CFLAGS_POISON_FULLY}    \\", 
+            "title": "Multiline assignments"
+        }, 
+        {
+            "location": "/syntax/#include-directives", 
+            "text": "It is possible to recursively include other files. For example:  include otherdir/otherfile.mk", 
+            "title": "Include directives"
+        }, 
+        {
+            "location": "/syntax/#conditional-evaluation", 
+            "text": "Currently,  make -style  ifeq  and  ifneq  are supported, along with else .  CLFAGS_FEATURE=\nifeq ($(flag_BAR),enabled)\nCLFAGS_FEATURE=-DFEATURE\nendif  There is a special case with variable whose names start with FLAG_ . If those are defined with  ?= , then the user can pass --with  in the command when executing buildsome in order to set an\ninitial value  enabled .", 
+            "title": "Conditional evaluation"
+        }, 
+        {
+            "location": "/syntax/#target-definition", 
+            "text": "Similarly to  make , the syntax for targets is as follows:  outputs  :  optionally-specified-inputs  (|  order-only-inputs ) tab char script line 1  tab char script line 2  tab char script line n   Not that unlike in  make , all script lines are executed as one shell\nscript, instead of separately.  Macro expansion takes place at the target line specification.  Inputs can be specified in order to assist in parallel first builds.\nHowever, if the execution of the target does make use of these inputs,\na warning is emitted.", 
+            "title": "Target definition"
+        }, 
+        {
+            "location": "/syntax/#simple-patterns", 
+            "text": "Target patterns can be specified similarly to the  make  syntax.  %.o: %.cpp\n        ${COMPILEXX}  However, there is an important difference between the  make  and Buildsome functionality of patterns. In the example above, the pattern\ndoes not match targets in a subtree (e.g . subdir/a.o ), but only in the project's root directory. Though it is possible to reuse patterns, albeit in an explicit manner\u2013a topic we shall visit in the next section.", 
+            "title": "Simple patterns"
+        }, 
+        {
+            "location": "/syntax/#reusing-patterns", 
+            "text": "In order to make a pattern apply in more than one directory, we can use combine  Scope saving ,  Include directives , and  variable assignment s in the following manner.  build/patterns.mk :  ${curdir}/%.o: ${curdir}/%.cpp  Buildsome.mk :  curdir=.\nincldue patterns/include.mk\nincldue subdir/include.mk  subdir/include.mk :  local {\n\ncurdir=subdir\nincldue patterns/include.mk\n\nlocal }  Note the assignment of the Buildsome variable  curdir , that serves as the path to the current directory. It is more common to use the valid variable name  .  instead of the length  curdir .", 
+            "title": "Reusing patterns"
+        }, 
+        {
+            "location": "/syntax/#order-only-inputs", 
+            "text": "TBD", 
+            "title": "Order only inputs"
+        }, 
+        {
+            "location": "/syntax/#wildcard-patterns", 
+            "text": "TBD", 
+            "title": "Wildcard patterns"
+        }, 
+        {
+            "location": "/syntax/#phony-targets", 
+            "text": "TBD", 
+            "title": "Phony targets"
+        }, 
+        {
+            "location": "/syntax/#special-macros", 
+            "text": "TBD", 
+            "title": "Special macros"
+        }, 
+        {
+            "location": "/issues/", 
+            "text": "Reporting issues\n\n\nPlease \nsearch all past and current issues\n before\nreporting new ones, and feel free to open new issues \non Github\n to \ndiscuss about new features, bugs, and anything that you think that can be improved.", 
+            "title": "Reporting issues"
+        }, 
+        {
+            "location": "/issues/#reporting-issues", 
+            "text": "Please  search all past and current issues  before\nreporting new ones, and feel free to open new issues  on Github  to \ndiscuss about new features, bugs, and anything that you think that can be improved.", 
+            "title": "Reporting issues"
+        }, 
+        {
+            "location": "/credits/", 
+            "text": "Credits\n\n\nMost of the code in Buildsome was written by \nEyal Lotem\n, with further contributions from the following developers:\n\n\n\n\nNoam Lewis\n\n\nDan Aloni\n\n\nYair Chuchem\n\n\nEzra Hoch\n\n\nNadav Shemer\n\n\nRenana Frim\n\n\n\n\nThe file system hooks are inspired by\n\ntup\n. They are taken a couple of steps\nfurther though, by hooking the file system globally, and not just\nlocally, avoiding false negatives relating to system-wide changes,\ntoo. These hooks are also used to auto-detect dependencies and delay\ndependent executions, rather than just verify explicitly specified\ndependencies.", 
+            "title": "Credits"
+        }, 
+        {
+            "location": "/credits/#credits", 
+            "text": "Most of the code in Buildsome was written by  Eyal Lotem , with further contributions from the following developers:   Noam Lewis  Dan Aloni  Yair Chuchem  Ezra Hoch  Nadav Shemer  Renana Frim   The file system hooks are inspired by tup . They are taken a couple of steps\nfurther though, by hooking the file system globally, and not just\nlocally, avoiding false negatives relating to system-wide changes,\ntoo. These hooks are also used to auto-detect dependencies and delay\ndependent executions, rather than just verify explicitly specified\ndependencies.", 
+            "title": "Credits"
+        }
+    ]
+}

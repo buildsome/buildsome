@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <meta name="author" content="Buildsome devs">
+  
+  <title>Buildsome.mk syntax - Buildsome</title>
+  
+
+  <link rel="shortcut icon" href="../img/favicon.ico">
+
+  
+  <link href='https://fonts.googleapis.com/css?family=Lato:400,700|Roboto+Slab:400,700|Inconsolata:400,700' rel='stylesheet' type='text/css'>
+
+  <link rel="stylesheet" href="../css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="../css/theme_extra.css" type="text/css" />
+  <link rel="stylesheet" href="../css/highlight.css">
+
+  
+  <script>
+    // Current page data
+    var mkdocs_page_name = "Buildsome.mk syntax";
+    var mkdocs_page_input_path = "syntax.md";
+    var mkdocs_page_url = "/syntax/";
+  </script>
+  
+  <script src="../js/jquery-2.1.1.min.js"></script>
+  <script src="../js/modernizr-2.8.3.min.js"></script>
+  <script type="text/javascript" src="../js/highlight.pack.js"></script>
+  <script src="../js/theme.js"></script> 
+
+  
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+      <div class="wy-side-nav-search">
+        <a href=".." class="icon icon-home"> Buildsome</a>
+        <div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+        <ul class="current">
+          
+            <li>
+    <li class="toctree-l1 ">
+        <a class="" href="..">Home</a>
+        
+    </li>
+<li>
+          
+            <li>
+    <li class="toctree-l1 ">
+        <a class="" href="../ChangeLog/">Changelog</a>
+        
+    </li>
+<li>
+          
+            <li>
+    <ul class="subnav">
+    <li><span>Documentation</span></li>
+
+        
+            
+    <li class="toctree-l1 ">
+        <a class="" href="../install/">Installation</a>
+        
+    </li>
+
+        
+            
+    <li class="toctree-l1 ">
+        <a class="" href="../execution/">Execution</a>
+        
+    </li>
+
+        
+            
+    <li class="toctree-l1 current">
+        <a class="current" href="./">Buildsome.mk syntax</a>
+        
+            <ul>
+            
+                <li class="toctree-l3"><a href="#make-compatibility">'Make' compatibility</a></li>
+                
+            
+                <li class="toctree-l3"><a href="#directory-structure">Directory structure</a></li>
+                
+            
+                <li class="toctree-l3"><a href="#purity">Purity</a></li>
+                
+            
+                <li class="toctree-l3"><a href="#macros">Macros</a></li>
+                
+                    <li><a class="toctree-l4" href="#macro-assignment">Macro assignment</a></li>
+                
+                    <li><a class="toctree-l4" href="#command-line-build-customization">Command line build customization</a></li>
+                
+                    <li><a class="toctree-l4" href="#macro-are-unrelated-to-posix-environment">Macro are unrelated to POSIX environment</a></li>
+                
+                    <li><a class="toctree-l4" href="#scope-saving">Scope saving</a></li>
+                
+                    <li><a class="toctree-l4" href="#substitution">Substitution</a></li>
+                
+                    <li><a class="toctree-l4" href="#cartesian-expansion">Cartesian expansion</a></li>
+                
+            
+                <li class="toctree-l3"><a href="#multiline-assignments">Multiline assignments</a></li>
+                
+            
+                <li class="toctree-l3"><a href="#include-directives">Include directives</a></li>
+                
+            
+                <li class="toctree-l3"><a href="#conditional-evaluation">Conditional evaluation</a></li>
+                
+            
+                <li class="toctree-l3"><a href="#target-definition">Target definition</a></li>
+                
+                    <li><a class="toctree-l4" href="#simple-patterns">Simple patterns</a></li>
+                
+                    <li><a class="toctree-l4" href="#order-only-inputs">Order only inputs</a></li>
+                
+                    <li><a class="toctree-l4" href="#wildcard-patterns">Wildcard patterns</a></li>
+                
+                    <li><a class="toctree-l4" href="#phony-targets">Phony targets</a></li>
+                
+                    <li><a class="toctree-l4" href="#special-macros">Special macros</a></li>
+                
+            
+            </ul>
+        
+    </li>
+
+        
+    </ul>
+<li>
+          
+            <li>
+    <li class="toctree-l1 ">
+        <a class="" href="../issues/">Reporting issues</a>
+        
+    </li>
+<li>
+          
+            <li>
+    <li class="toctree-l1 ">
+        <a class="" href="../credits/">Credits</a>
+        
+    </li>
+<li>
+          
+        </ul>
+      </div>
+      &nbsp;
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" role="navigation" aria-label="top navigation">
+        <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+        <a href="..">Buildsome</a>
+      </nav>
+
+      
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="..">Docs</a> &raquo;</li>
+    
+      
+        
+          <li>Documentation &raquo;</li>
+        
+      
+    
+    <li>Buildsome.mk syntax</li>
+    <li class="wy-breadcrumbs-aside">
+      
+        
+          <a href="https://github.com/ElastiLotem/buildsome/tree/master/doc" class="icon icon-github"> Edit on GitHub</a>
+        
+      
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main">
+            <div class="section">
+              
+                <h2 id="make-compatibility">'Make' compatibility<a class="headerlink" href="#make-compatibility" title="Permanent link">&para;</a></h2>
+<p>The syntax for Buildsome's definition files is similar tho that of
+<a href="https://www.gnu.org/software/make">make</a>, however only a small subset
+is implemented, and a few constructs are added. The differences are
+described here.</p>
+<h2 id="directory-structure">Directory structure<a class="headerlink" href="#directory-structure" title="Permanent link">&para;</a></h2>
+<p>Unlike <code>make</code>, Buildsome is designed for a directory structures from the get-go. Therefore, when executing in any directory, it looks up
+the directory structure to find the top-mEost <code>Buildsome.mk</code> file. It starts the evaluation process from there.</p>
+<h2 id="purity">Purity<a class="headerlink" href="#purity" title="Permanent link">&para;</a></h2>
+<p>The evalution of Buildsome's definition files, which is needed for the process of devising a target tree, is done in a precise in a way that is completely independent of the state of other files in the directory. It is therefore not possible to generate these definition files in the build process, and there is no <code>make</code> like process of "Makefile-reloading". This limitiation is intentional.</p>
+<h2 id="macros">Macros<a class="headerlink" href="#macros" title="Permanent link">&para;</a></h2>
+<h3 id="macro-assignment">Macro assignment<a class="headerlink" href="#macro-assignment" title="Permanent link">&para;</a></h3>
+<p>There are currently three ways to define a variable:</p>
+<pre><code class="no-highlight">FOO = value
+BAR ?= value
+</code></pre>
+
+<p>In this case variable <code>FOO</code> will be assigned with the new string
+always, and <code>BAR</code> will be assigned only if it was not assigned before.</p>
+<h3 id="command-line-build-customization">Command line build customization<a class="headerlink" href="#command-line-build-customization" title="Permanent link">&para;</a></h3>
+<p>There is a special case concerning variables whose names start with
+<code>FLAG_</code>: If <code>FLAG_X</code> is defined with with <code>?=</code>, then the user can pass
+<code>--with X</code> in the command line when executing Buildsome in order to
+set an initial value <code>enabled</code>, or <code>--without</code> to set it to
+<code>disabled</code>.</p>
+<h3 id="macro-are-unrelated-to-posix-environment">Macro are unrelated to POSIX environment<a class="headerlink" href="#macro-are-unrelated-to-posix-environment" title="Permanent link">&para;</a></h3>
+<p>Unlike in <code>make</code> there is <em>no relation between macros in Buildsome
+definition files and POSIX environment variables</em>. In fact, when
+target are executing their commands, it is done with a very minimal
+environment variable set. The reason to ensure reproducability of the
+build between users, each possibly environment-sensitive tools under a
+different execution environment.</p>
+<h3 id="scope-saving">Scope saving<a class="headerlink" href="#scope-saving" title="Permanent link">&para;</a></h3>
+<p>Using <code>local {</code> and <code>local }</code>, it is possible to save-restore the
+values of all variables.</p>
+<pre><code class="no-highlight">A = 2
+local {
+A = 5
+local }
+</code></pre>
+
+<p>In the example above, <code>A</code> will revert to the value <code>2</code> after the
+<code>local }</code> line.</p>
+<h3 id="substitution">Substitution<a class="headerlink" href="#substitution" title="Permanent link">&para;</a></h3>
+<p>Macros can refer to other macros via <code>${...}</code>. The expansion itself
+however takes place only in the target definition.</p>
+<pre><code class="no-highlight">CFLAGS=-O2 ${CFLAGS_FEATURE}
+</code></pre>
+
+<h3 id="cartesian-expansion">Cartesian expansion<a class="headerlink" href="#cartesian-expansion" title="Permanent link">&para;</a></h3>
+<p>Similarly to expansion done in some shells, comma-delimited expressions
+enclosed in curly braces are expanded. For example, the expression
+<code>x{a,b,c}</code> is expanded to <code>xa xb xc</code>.</p>
+<h2 id="multiline-assignments">Multiline assignments<a class="headerlink" href="#multiline-assignments" title="Permanent link">&para;</a></h2>
+<p>Using <code>\</code>, it is possible to extend a macro assignment to multiple
+lines. For example:</p>
+<pre><code class="no-highlight">DEFAULT_CFLAGS_C_COMMON=      \
+    ${DEFAULT_CFLAGS_COMMON}  \
+    ${CFLAGS_POISON_FULLY}    \
+
+</code></pre>
+
+<h2 id="include-directives">Include directives<a class="headerlink" href="#include-directives" title="Permanent link">&para;</a></h2>
+<p>It is possible to recursively include other files. For example:</p>
+<pre><code class="no-highlight">include otherdir/otherfile.mk
+</code></pre>
+
+<h2 id="conditional-evaluation">Conditional evaluation<a class="headerlink" href="#conditional-evaluation" title="Permanent link">&para;</a></h2>
+<p>Currently, <code>make</code>-style <code>ifeq</code> and <code>ifneq</code> are supported, along with
+<code>else</code>.</p>
+<pre><code class="no-highlight">CLFAGS_FEATURE=
+ifeq ($(flag_BAR),enabled)
+CLFAGS_FEATURE=-DFEATURE
+endif
+</code></pre>
+
+<p>There is a special case with variable whose names start with
+<code>FLAG_</code>. If those are defined with <code>?=</code>, then the user can pass
+<code>--with</code> in the command when executing buildsome in order to set an
+initial value <code>enabled</code>.</p>
+<h2 id="target-definition">Target definition<a class="headerlink" href="#target-definition" title="Permanent link">&para;</a></h2>
+<p>Similarly to <code>make</code>, the syntax for targets is as follows:</p>
+<pre><code class="no-highlight">&lt;outputs&gt; : &lt;optionally-specified-inputs&gt; (| &lt;order-only-inputs&gt;)
+&lt;tab char&gt;&lt;script line 1&gt;
+&lt;tab char&gt;&lt;script line 2&gt;
+&lt;tab char&gt;&lt;script line n&gt;
+</code></pre>
+
+<p>Not that unlike in <code>make</code>, all script lines are executed as one shell
+script, instead of separately.</p>
+<p>Macro expansion takes place at the target line specification.</p>
+<p>Inputs can be specified in order to assist in parallel first builds.
+However, if the execution of the target does make use of these inputs,
+a warning is emitted.</p>
+<h3 id="simple-patterns">Simple patterns<a class="headerlink" href="#simple-patterns" title="Permanent link">&para;</a></h3>
+<p>Target patterns can be specified similarly to the <code>make</code> syntax.</p>
+<pre><code class="no-highlight">%.o: %.cpp
+        ${COMPILEXX}
+</code></pre>
+
+<p>However, there is an important difference between the <code>make</code> and Buildsome functionality of patterns. In the example above, the pattern
+does not match targets in a subtree (e.g .<code>subdir/a.o</code>), but only in the project's root directory. Though it is possible to reuse patterns, albeit in an explicit manner–a topic we shall visit in the next section.</p>
+<h4 id="reusing-patterns">Reusing patterns<a class="headerlink" href="#reusing-patterns" title="Permanent link">&para;</a></h4>
+<p>In order to make a pattern apply in more than one directory, we can use combine <em>Scope saving</em>, <em>Include directives</em>, and <em>variable assignment</em>s in the following manner.</p>
+<p><strong>build/patterns.mk</strong>:</p>
+<pre><code class="no-highlight">${curdir}/%.o: ${curdir}/%.cpp
+</code></pre>
+
+<p><strong>Buildsome.mk</strong>:</p>
+<pre><code class="no-highlight">curdir=.
+incldue patterns/include.mk
+incldue subdir/include.mk
+</code></pre>
+
+<p><strong>subdir/include.mk</strong>:</p>
+<pre><code class="no-highlight">local {
+
+curdir=subdir
+incldue patterns/include.mk
+
+local }
+</code></pre>
+
+<p>Note the assignment of the Buildsome variable <code>curdir</code>, that serves as the path to the current directory. It is more common to use the valid variable name <code>.</code> instead of the length <code>curdir</code>.</p>
+<h3 id="order-only-inputs">Order only inputs<a class="headerlink" href="#order-only-inputs" title="Permanent link">&para;</a></h3>
+<p><strong>TBD</strong></p>
+<h3 id="wildcard-patterns">Wildcard patterns<a class="headerlink" href="#wildcard-patterns" title="Permanent link">&para;</a></h3>
+<p><strong>TBD</strong></p>
+<h3 id="phony-targets">Phony targets<a class="headerlink" href="#phony-targets" title="Permanent link">&para;</a></h3>
+<p><strong>TBD</strong></p>
+<h3 id="special-macros">Special macros<a class="headerlink" href="#special-macros" title="Permanent link">&para;</a></h3>
+<p><strong>TBD</strong></p>
+              
+            </div>
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="../issues/" class="btn btn-neutral float-right" title="Reporting issues">Next <span class="icon icon-circle-arrow-right"></span></a>
+      
+      
+        <a href="../execution/" class="btn btn-neutral" title="Execution"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+    
+      <p>Copyright (c) 2015-2016, Buildsome devs</p>
+    
+  </div>
+
+  Built with <a href="http://www.mkdocs.org">MkDocs</a> using a <a href="https://github.com/snide/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+	  
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+<div class="rst-versions" role="note" style="cursor: pointer">
+    <span class="rst-current-version" data-toggle="rst-current-version">
+      
+          <a href="https://github.com/ElastiLotem/buildsome/tree/master/doc" class="icon icon-github" style="float: left; color: #fcfcfc"> GitHub</a>
+      
+      
+        <span><a href="../execution/" style="color: #fcfcfc;">&laquo; Previous</a></span>
+      
+      
+        <span style="margin-left: 15px"><a href="../issues/" style="color: #fcfcfc">Next &raquo;</a></span>
+      
+    </span>
+</div>
+
+</body>
+</html>

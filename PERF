@@ -1,0 +1,21 @@
+Full build:
+
+sauron:
+real	0m2.472s
+user	0m1.824s
+sys	0m0.404s
+
+buildsome:
+real	0m3.252s
+user	0m2.596s
+sys	0m0.696s
+
+buildsome -j4:
+real	0m1.779s
+user	0m3.716s
+sys	0m0.928s
+
+Empty buildsome:
+real	0m0.152s
+user	0m0.128s
+sys	0m0.024s
