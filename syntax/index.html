@@ -136,7 +136,7 @@
                 
                     <li><a class="toctree-l4" href="#phony-targets">Phony targets</a></li>
                 
-                    <li><a class="toctree-l4" href="#order-only-inputs">Order only inputs</a></li>
+                    <li><a class="toctree-l4" href="#order-only-inputs">Order-only inputs</a></li>
                 
             
             </ul>
@@ -372,12 +372,12 @@ inside target definitions.</p>
 <li><code>(F)</code> - take only the basename name.</li>
 </ul>
 <h3 id="phony-targets">Phony targets<a class="headerlink" href="#phony-targets" title="Permanent link">&para;</a></h3>
-<p>Similarly to <code>make</code>, phony targets can be specified, using the pseudo <code>.PHONEY</code>
+<p>Similarly to <code>make</code>, phony targets can be specified, using the pseudo <code>.PHONY</code>
 output target:</p>
-<pre><code>.PHONEY: default
+<pre><code>.PHONY: default
 </code></pre>
 
-<h3 id="order-only-inputs">Order only inputs<a class="headerlink" href="#order-only-inputs" title="Permanent link">&para;</a></h3>
+<h3 id="order-only-inputs">Order-only inputs<a class="headerlink" href="#order-only-inputs" title="Permanent link">&para;</a></h3>
 <p>Some target inputs can be specified in the target definition line in a way that
 does not affect the expansion of <code>$^</code>.</p>
 <p>For example:</p>
