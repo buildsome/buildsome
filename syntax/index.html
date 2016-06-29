@@ -325,6 +325,7 @@ use combine <em>Scope saving</em>, <em>Include directives</em>, and <em>variable
 assignment</em>s in the following manner.</p>
 <p><strong>build/patterns.mk</strong>:</p>
 <pre><code class="no-highlight">${curdir}/%.o: ${curdir}/%.cpp
+        ${COMPILEXX}
 </code></pre>
 
 <p><strong>Buildsome.mk</strong>:</p>
