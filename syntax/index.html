@@ -311,15 +311,15 @@ does not match targets in a subtree (e.g .<code>subdir/a.o</code>), but only in 
 
 <p><strong>Buildsome.mk</strong>:</p>
 <pre><code class="no-highlight">curdir=.
-incldue patterns/include.mk
-incldue subdir/include.mk
+include patterns/include.mk
+include subdir/include.mk
 </code></pre>
 
 <p><strong>subdir/include.mk</strong>:</p>
 <pre><code class="no-highlight">local {
 
 curdir=subdir
-incldue patterns/include.mk
+include patterns/include.mk
 
 local }
 </code></pre>
