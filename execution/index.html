@@ -88,6 +88,16 @@
             
                 <li class="toctree-l3"><a href="#execution">Execution</a></li>
                 
+                    <li><a class="toctree-l4" href="#specifying-targets">Specifying targets</a></li>
+                
+                    <li><a class="toctree-l4" href="#output-format">Output format</a></li>
+                
+                    <li><a class="toctree-l4" href="#execution-errors">Execution errors</a></li>
+                
+                    <li><a class="toctree-l4" href="#parallelism">Parallelism</a></li>
+                
+                    <li><a class="toctree-l4" href="#by-passing-automatic-dependency-detection">By-passing automatic dependency detection</a></li>
+                
             
             </ul>
         
@@ -159,6 +169,80 @@
             <div class="section">
               
                 <h1 id="execution">Execution<a class="headerlink" href="#execution" title="Permanent link">&para;</a></h1>
+<p>To see an overview of all command line options, run <code>buildsome --help</code>. This
+document will focus on most significant aspects of the command line options,
+and operation around building.</p>
+<h2 id="specifying-targets">Specifying targets<a class="headerlink" href="#specifying-targets" title="Permanent link">&para;</a></h2>
+<p>One or more target can specified at the command line, or none at all (explained
+here);</p>
+<pre><code class="no-highlight">buildsome
+</code></pre>
+
+<p>Or:</p>
+<pre><code class="no-highlight">buildsome some-file-to-build subdir/some/nested/target
+</code></pre>
+
+<p>Or from inside a subdirectory:</p>
+<pre><code class="no-highlight">cd subdir/some
+buildsome nested/target
+</code></pre>
+
+<p>By default, <code>Buildsome</code> regards the directory containing the top-most
+<code>Buildsome.mk</code> as the root dir, and always starts evaluating the
+target tree from there. Additionally, running <code>buildsome</code> without specifying
+targets, while in any sub-directory, is equivalent to trying to build
+the <code>default</code> target in that sub-directory.</p>
+<h3 id="building-in-sub-directories-while-being-in-them-or-outside-of-them">Building in sub-directories while being in them, or outside of them<a class="headerlink" href="#building-in-sub-directories-while-being-in-them-or-outside-of-them" title="Permanent link">&para;</a></h3>
+<p>It may be confusing that passing a source directory to <code>buildsome</code> as
+a target does nothing. That happens because the directory itself
+already exists, so nothing needs to be done. Instead, if one defines a
+<code>default</code> target in a subdirectory, it would make more sense to pass
+that target explicity, e.g. <code>buildsome subdir/default</code>.</p>
+<h2 id="output-format">Output format<a class="headerlink" href="#output-format" title="Permanent link">&para;</a></h2>
+<p>Buildsome makes an effort to tell why a target is being built. There
+could be various reasons:</p>
+<ul>
+<li>Rebuild due to changes in the content or meta-data of an input.</li>
+</ul>
+<pre><code class="no-highlight">T141 Execution log of [&quot;src/.objs/Class.c.release.o&quot;] did not match because input(content): change: &quot;src/Class.c&quot;
+T141 { [&quot;src/Class.o&quot;] BUILDING (BecauseSpeculative (BecauseHooked AccessDocEmpty))
+</code></pre>
+
+<ul>
+<li>Output is missing</li>
+</ul>
+<pre><code class="no-highlight">T093 Execution log of [&quot;src/Class.o&quot;] did not match because output file was deleted: &quot;src/Class.o&quot;
+T093 { [&quot;src/Class.o&quot;] BUILDING (BecauseSpeculative (BecauseHooked AccessDocEmpty))
+</code></pre>
+
+<ul>
+<li>Rebuild due to changes in the evaulated target script.</li>
+</ul>
+<pre><code class="no-highlight">T093 { [&quot;src/Class.o&quot;] BUILDING (BecauseSpeculative (BecauseHooked AccessDocEmpty))
+</code></pre>
+
+<p><strong>(TODO: it does not explicitly say that a target script was changed.
+This needs fixing)</strong>.</p>
+<h2 id="execution-errors">Execution errors<a class="headerlink" href="#execution-errors" title="Permanent link">&para;</a></h2>
+<p>Various errors are encountered by users of Buildsome. The following is
+a summary of the major ones, and detailed explaination.</p>
+<h3 id="thirdpartymeddlingerror">ThirdPartyMeddlingError<a class="headerlink" href="#thirdpartymeddlingerror" title="Permanent link">&para;</a></h3>
+<p>TBD.</p>
+<h3 id="targetcommandfailed">TargetCommandFailed<a class="headerlink" href="#targetcommandfailed" title="Permanent link">&para;</a></h3>
+<p>TBD.</p>
+<h3 id="unregisteredoutputfileexists">UnregisteredOutputFileExists<a class="headerlink" href="#unregisteredoutputfileexists" title="Permanent link">&para;</a></h3>
+<p>TBD.</p>
+<h3 id="targetdependencyloop">TargetDependencyLoop<a class="headerlink" href="#targetdependencyloop" title="Permanent link">&para;</a></h3>
+<p>TBD.</p>
+<h2 id="parallelism">Parallelism<a class="headerlink" href="#parallelism" title="Permanent link">&para;</a></h2>
+<p>It is possible to pass a <code>-j</code> parameter that determines the number of
+jobs to run in parallel. Note that it does not serve as a hard limit,
+because it is possible that jobs would be temporarily stopped
+mid-execution in order to satisfy dependencies, so <code>-j</code> comes to serve
+as a limit to the number of jobs currently not waiting for any
+dependency.</p>
+<h2 id="by-passing-automatic-dependency-detection">By-passing automatic dependency detection<a class="headerlink" href="#by-passing-automatic-dependency-detection" title="Permanent link">&para;</a></h2>
+<p>TBD.</p>
               
             </div>
           </div>
