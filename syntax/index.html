@@ -369,7 +369,7 @@ inside target definitions.</p>
 <p>In addition, the following two modifiers can be appended, e.g. <code>$@(D)</code>:</p>
 <ul>
 <li><code>(D)</code> - take only the directory name.</li>
-<li><code>(F)</code> - take only the basename name.</li>
+<li><code>(F)</code> - take only the base name.</li>
 </ul>
 <h3 id="phony-targets">Phony targets<a class="headerlink" href="#phony-targets" title="Permanent link">&para;</a></h3>
 <p>Similarly to <code>make</code>, phony targets can be specified, using the pseudo <code>.PHONY</code>
@@ -387,7 +387,7 @@ does not affect the expansion of <code>$^</code>.</p>
         echo $^ &gt; $@
 </code></pre>
 
-<p>The execution of the target will read from <code>order-only</code>, but only the string <code>input</code>
+<p>In the target above, the execution read from <code>order-only</code>, but only the string <code>input</code>
 will be written to <code>output</code>.</p>
               
             </div>
