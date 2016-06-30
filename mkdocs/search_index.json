@@ -52,12 +52,12 @@
         }, 
         {
             "location": "/install/", 
-            "text": "Build and install from source\n\n\nIt's possible to build Buildsome from source.\n\n\n\n\ninstall the \nStack tool\n.\n\n\nUsing \nstack\n, perform build and install:\n\n\n\n\ngit clone https://github.com/ElastiLotem/buildsome\ncd buildsome\nstack install\n\n\n\n\nThe binary should be available as \n~/.local/bin/buildsome\n.", 
+            "text": "Build and install from source\n\n\nIt's possible to build Buildsome from source.\n\n\n\n\ninstall the \nStack tool\n.\n\n\nUsing \nstack\n, perform build and install:\n\n\n\n\ngit clone https://github.com/buildsome/buildsome\ncd buildsome\nstack install\n\n\n\n\nThe binary should be available as \n~/.local/bin/buildsome\n.", 
             "title": "Installation"
         }, 
         {
             "location": "/install/#build-and-install-from-source", 
-            "text": "It's possible to build Buildsome from source.   install the  Stack tool .  Using  stack , perform build and install:   git clone https://github.com/ElastiLotem/buildsome\ncd buildsome\nstack install  The binary should be available as  ~/.local/bin/buildsome .", 
+            "text": "It's possible to build Buildsome from source.   install the  Stack tool .  Using  stack , perform build and install:   git clone https://github.com/buildsome/buildsome\ncd buildsome\nstack install  The binary should be available as  ~/.local/bin/buildsome .", 
             "title": "Build and install from source"
         }, 
         {
