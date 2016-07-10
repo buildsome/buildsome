@@ -251,7 +251,7 @@ slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [(Parallelism.Entity, Sl
 slavesForChildrenOf bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | not (null childPatterns) =
-    fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome $ show bteReason) ++ ")"
+    fail $ "UNSUPPORTED: Read directory on directory with patterns. Path: '" ++ show path ++ "' (" ++ BS8.unpack (bsRender bteBuildsome $ show bteReason) ++ ") Patterns: " ++ show childPatterns
   | otherwise =
     -- Non-pattern targets here, so they're explicitly demanded
     traverse (getSlaveForTarget bte { bteExplicitlyDemanded = True }) $
