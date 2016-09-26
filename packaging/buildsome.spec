@@ -48,11 +48,8 @@ fi
 
 stack --no-terminal setup
 
-pushd ~
 # A hack to make sure *some* version of Happy is installed before proceeding
-stack --no-terminal setup
 stack install happy
-popd
 
 %build
 
