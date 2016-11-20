@@ -1,0 +1,22 @@
+site_name: Buildsome
+site_description: Buildome
+site_author: Buildsome devs
+repo_url: https://github.com/buildsome/buildsome/tree/master/doc
+copyright: Copyright (c) 2015-2016, Buildsome devs
+docs_dir: doc
+site_dir: _site
+theme: readthedocs
+
+pages:
+- Home: index.md
+- Changelog: ChangeLog.md
+- Documentation:
+  - Installation: install.md
+  - Buildsome.mk syntax: syntax.md
+  - Execution: execution.md
+- Reporting issues: issues.md
+- Credits: credits.md
+
+markdown_extensions:
+- toc:
+    permalink: true

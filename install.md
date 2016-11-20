@@ -26,7 +26,7 @@ Install the leveldb development packages.
 Run the following commands:
 
 ```
-git clone https://github.com/ElastiLotem/buildsome
+git clone https://github.com/buildsome/buildsome
 cd buildsome
 stack install
 ```

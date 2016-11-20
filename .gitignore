@@ -1,4 +1,6 @@
 /dist/
+/docenv/
+/_site/
 /.stack-work/
 /cbits/fs_override.so
 /.cabal-sandbox
