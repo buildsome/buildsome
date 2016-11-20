@@ -237,9 +237,13 @@ set an initial value <code>enabled</code>, or <code>--without</code> to set it t
 <p>Unlike in <code>make</code> there is <em>no relation between macros in Buildsome
 definition files and POSIX environment variables</em>. In fact, when
 target are executing their commands, it is done with a very minimal
-environment variable set. The reason to ensure reproducability of the
-build between users, each possibly environment-sensitive tools under a
-different execution environment.</p>
+environment variable set.</p>
+<p>The POSIX environment is made pristine for target execution. For
+example, except <code>$PATH</code> and <code>$HOME</code>, any environment variable set
+in <code>.bashrc</code>, will not appear set under target execution. The reason
+is to ensure reproducability of the build between users, each having
+their own possibly environment-sensitive tools under a different
+execution environment.</p>
 <h3 id="scope-saving">Scope saving<a class="headerlink" href="#scope-saving" title="Permanent link">&para;</a></h3>
 <p>Using <code>local {</code> and <code>local }</code>, it is possible to save-restore the
 values of all variables.</p>
