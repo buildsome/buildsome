@@ -7,6 +7,7 @@
 #include <sys/syscall.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <errno.h>
 
 #define PROTOCOL_HELLO "PROTOCOL10: HELLO, I AM: "
 
@@ -105,8 +106,14 @@ static int assert_connection(void)
 bool await_go(void)
 {
     char buf[2];
-    ssize_t rc = recv(assert_connection(), PS(buf), 0);
-    return 2 == rc && !memcmp("GO", PS(buf));
+    uint32_t got = 0;
+    while (got < sizeof(buf)) {
+        ssize_t rc = recv(assert_connection(), &buf[got], sizeof(buf) - got, 0);
+        if (rc == -1 && errno == EINTR) continue;
+        ASSERT(rc >= 0);
+        got += (uint32_t)rc;
+    }
+    return !memcmp("GO", PS(buf));
 }
 
 bool client__send_hooked(bool is_delayed, const char *buf, size_t size)
