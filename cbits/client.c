@@ -109,8 +109,9 @@ bool await_go(void)
     uint32_t got = 0;
     while (got < sizeof(buf)) {
         ssize_t rc = recv(assert_connection(), &buf[got], sizeof(buf) - got, 0);
+        if (rc == 0) break;
         if (rc == -1 && errno == EINTR) continue;
-        ASSERT(rc >= 0);
+        ASSERT(rc > 0);
         got += (uint32_t)rc;
     }
     return !memcmp("GO", PS(buf));
