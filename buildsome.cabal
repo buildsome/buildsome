@@ -41,10 +41,10 @@ library
      cpp-options: -DDEBUG_PRINT
 
   if flag(debug) {
-    ghc-options:       -threaded -Wall -O0
+    ghc-options:       -threaded -Wall -O0 -g
   } else {
-    ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
-    ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
+    ghc-options:       -threaded -Wall -O2 -g -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
+    ghc-prof-options:  -threaded -Wall -O2 -g -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
   }
   exposed-modules:   Buildsome
                ,     Buildsome.BuildId
@@ -129,22 +129,22 @@ library
                ,     Paths_buildsome
 
   build-depends:     aeson >=0.7
-                   , aeson-pretty >=0.7 && <0.8
+                   , aeson-pretty >=0.7 && <0.9
                    , ansi-terminal == 0.6.*
                    , array >= 0.5.1
                    , async >=2.0 && <2.2
                    , base16-bytestring >= 0.1.1.6
-                   , base >=4.6 && <4.9
+                   , base >=4.6 && <5
                    , base-compat
-                   , binary >=0.7 && <0.8
+                   , binary >=0.7 && <0.9
                    , bytestring >=0.10 && <0.11
                    , cassava >=0.4.2 && <0.5
                    , containers >=0.5 && <0.6
                    , cryptohash >=0.11 && <0.12
-                   , data-default ==0.5.*
+                   , data-default <0.8
                    , deepseq >=1.3 && <1.5
-                   , deepseq-generics >=0.1 && <0.2
-                   , directory == 1.2.*
+                   , deepseq-generics >=0.1 && <=0.3
+                   , directory < 1.4
                    , dlist >= 0.7.1.1
                    , either >=4.1 && <4.5
                    , leveldb-haskell >=0.6 && <0.7
@@ -152,13 +152,13 @@ library
                    , old-locale == 1.0.*
                    , optparse-applicative >=0.7
                    , parsec >=3.1.5 && <3.2
-                   , process >=1.2 && <1.3
+                   , process >=1.2 && <1.5
                    , split >=0.2 && <0.3
                    , system-argv0 >=0.1 && <0.2
                    , system-filepath >=0.4 && <0.5
-                   , template-haskell >= 2.8 && < 2.11
-                   , time >=1.4 && <1.6
-                   , transformers >=0.3 && <=0.5
+                   , template-haskell >= 2.8 && < 2.12
+                   , time >=1.4 && <1.7
+                   , transformers >=0.3 && <=0.6
                    , unix >=2.7 && <2.8
                    , pretty-hex == 1.0
                    , inline-c >= 0.5.5.2
@@ -182,7 +182,7 @@ executable buildsome
 
   ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
   ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
-  build-depends:     base >=4.6 && <4.9
+  build-depends:     base >=4.6 && <5
                ,     buildsome
                ,     base-compat
                ,     bytestring >=0.10 && <0.11
@@ -197,14 +197,14 @@ benchmark bench-serialization
   default-language:  Haskell2010
   ghc-options:       -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
   ghc-prof-options:  -threaded -Wall -O2 -fsimpl-tick-factor=1000 -rtsopts -with-rtsopts=-A16M -fwarn-incomplete-uni-patterns -g -funbox-strict-fields
-  build-depends:     base >=4.6 && <4.9
+  build-depends:     base >=4.6 && <5
                    , buildsome
-               ,     binary >=0.7 && <0.8
+                   , binary >=0.7 && <0.9
                ,     base-compat
                ,     bytestring >=0.10 && <0.11
                ,     containers >=0.5 && <0.6
                ,     deepseq >=1.3 && <1.5
-               ,     deepseq-generics >=0.1 && <0.2
+               ,     deepseq-generics >=0.1 && <=0.3
                ,     unix >=2.7 && <2.8
                ,     transformers >=0.3 && <=0.5
                    , criterion >= 1.1 && < 2.0

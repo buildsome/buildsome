@@ -21,12 +21,6 @@ fromPicos = MkFixed
 {-# INLINE toPicos #-}
 {-# INLINE fromPicos #-}
 
-instance Binary (Fixed E12) where
-  get = fromPicos <$> get
-  put = put . toPicos
-  {-# INLINE get #-}
-  {-# INLINE put #-}
-
 {-# INLINE toPico #-}
 toPico :: Real a => a -> Pico
 toPico = realToFrac

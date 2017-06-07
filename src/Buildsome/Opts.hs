@@ -15,7 +15,7 @@ module Buildsome.Opts
   ) where
 
 import Prelude.Compat hiding (FilePath)
-
+import Data.Monoid ((<>))
 import Control.Monad (liftM)
 import Data.ByteString (ByteString)
 import Data.List (intercalate)

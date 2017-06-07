@@ -48,6 +48,11 @@ getOutputs cmd inheritedEnvs envs = do
     CreateProcess
     { cwd = Nothing
     , cmdspec = cmd
+    , child_user = Nothing
+    , child_group = Nothing
+    , create_new_console = False
+    , new_session = False
+    , detach_console = False
     , env = Just (oldEnvs ++ envs)
     , std_in = CreatePipe
     , std_out = CreatePipe
