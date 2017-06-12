@@ -19,7 +19,7 @@ extra-source-files:  README.md
 cabal-version:       >=1.10
 
 data-files:          cbits/fs_override.so
-extra-source-files:  cbits/*.[ch]
+extra-source-files:  cbits/*.c cbits/*.h
 
 flag Debug
   Description: Enable debug support
