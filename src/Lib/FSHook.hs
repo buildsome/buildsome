@@ -212,19 +212,19 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
 
     -- outputs
     -- TODO: Handle truncation flag
-    Protocol.OpenW outPath _openWMode _create Protocol.OpenNoTruncate
+    Protocol.OpenW _openWMode _create Protocol.OpenNoTruncate outPath
                                 -> handleOutputs [(OutputBehavior.fileChanger, outPath)]
-    Protocol.OpenW outPath _openWMode _create Protocol.OpenTruncate
+    Protocol.OpenW _openWMode _create Protocol.OpenTruncate outPath
                                 -> handleOutputs [(OutputBehavior.fileChanger, outPath)]
-    Protocol.Creat outPath _    -> handleOutputs [(OutputBehavior.fileChanger, outPath)]
+    Protocol.Creat _ outPath    -> handleOutputs [(OutputBehavior.fileChanger, outPath)]
     Protocol.Rename a b         -> handleOutputs [ (OutputBehavior.existingFileChanger, a)
                                                  , (OutputBehavior.fileChanger, b) ]
-    Protocol.Unlink outPath _   -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
-    Protocol.Truncate outPath _ -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
-    Protocol.Chmod outPath _    -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
-    Protocol.Chown outPath _ _  -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
-    Protocol.MkNod outPath _ _  -> handleOutputs [(OutputBehavior.nonExistingFileChanger, outPath)] -- TODO: Special mkNod handling?
-    Protocol.MkDir outPath _    -> handleOutputs [(OutputBehavior.nonExistingFileChanger, outPath)]
+    Protocol.Unlink _ outPath   -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.Truncate _ outPath -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.Chmod _ outPath    -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.Chown _ _ outPath  -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
+    Protocol.MkNod _ _ outPath  -> handleOutputs [(OutputBehavior.nonExistingFileChanger, outPath)] -- TODO: Special mkNod handling?
+    Protocol.MkDir _ outPath    -> handleOutputs [(OutputBehavior.nonExistingFileChanger, outPath)]
     Protocol.RmDir outPath      -> handleOutputs [(OutputBehavior.existingFileChanger, outPath)]
 
     -- I/O
@@ -239,7 +239,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
 
     -- inputs
     Protocol.OpenR path            -> handleInput AccessTypeFull path
-    Protocol.Access path _mode     -> handleInput AccessTypeModeOnly path
+    Protocol.Access _mode path     -> handleInput AccessTypeModeOnly path
     Protocol.Stat path             -> handleInput AccessTypeStat path
     Protocol.LStat path            -> handleInput AccessTypeStat path
     Protocol.OpenDir path          -> handleInput AccessTypeFull path

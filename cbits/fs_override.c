@@ -65,9 +65,11 @@ static void initialize_process_state(void)
     process_state.root_filter_length = len;
 }
 
-static void send_connection_await(const char *buf, size_t size, bool is_delayed)
+static void send_connection_await(const char *buf, size_t size,
+                                 bool is_delayed, const char *truncatable_end)
 {
-    if(!client__send_hooked(is_delayed, buf, size)) return;
+    if(!client__send_hooked(is_delayed, buf, size,
+                           truncatable_end)) return;
     if(!is_delayed) return;
     bool res ATTR_UNUSED = await_go();
 }
@@ -87,7 +89,7 @@ static void send_connection_await(const char *buf, size_t size, bool is_delayed)
 
 #define SEND_MSG_AWAIT(_is_delayed, msg)                \
     ({                                                  \
-        send_connection_await(PS(msg), _is_delayed);    \
+        send_connection_await(PS(msg), _is_delayed, NULL);    \
     })
 
 #define AWAIT_CALL_REAL(needs_await, msg, ...)     \
@@ -151,12 +153,12 @@ static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *can
 #define CALL_WITH_OUTPUTS(msg, _is_delayed, ret_type, args, out_report_code) \
     ({                                                                  \
         if(_is_delayed) {                                               \
-            send_connection_await(PS(msg), true);                       \
+            send_connection_await(PS(msg), true, NULL);                 \
         }                                                               \
         ret_type result = SILENT_CALL_REAL args;                        \
         if(!_is_delayed) {                                              \
             do out_report_code while(0);                                \
-            bool ATTR_UNUSED res = client__send_hooked(false, PS(msg)); \
+            bool ATTR_UNUSED res = client__send_hooked(false, PS(msg), NULL); \
             /* Can't stop me now, effect already happened, so just ignore */ \
             /* server-side rejects after-the-fact. */                   \
         }                                                               \
@@ -856,7 +858,7 @@ static void vtrace(enum severity sev, const char *fmt, va_list args)
     msg.args.severity = sev;
     vsnprintf(PS(msg.args.msg), fmt, args);
     const bool success __attribute__((unused)) =
-        client__send_hooked(false, PS(msg));
+        client__send_hooked(false, PS(msg), NULL);
 }
 
 static void trace(enum severity sev, const char *fmt, ...)

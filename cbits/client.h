@@ -7,7 +7,8 @@
 
 #define ENVVARS_PREFIX "BUILDSOME_"
 
-bool client__send_hooked(bool is_delayed, const char *buf, size_t size) ATTR_WARN_UNUSED_RESULT;
+bool client__send_hooked(bool is_delayed, const char *buf, size_t size,
+                         const char *truncatable_end) ATTR_WARN_UNUSED_RESULT;
 bool await_go(void) ATTR_WARN_UNUSED_RESULT;
 
 enum need { HOOK, HINT };
