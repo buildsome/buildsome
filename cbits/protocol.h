@@ -58,29 +58,29 @@ enum out_effect {
 };
 
 typedef struct {
-    char out_path[MAX_PATH];
     enum out_effect out_effect;
+    char out_path[MAX_PATH];
 } out_path;
 
 /* NOTE: This must be kept in sync with Protocol.hs */
 struct func_openr     {in_path path;};
-struct func_openw     {out_path path; uint32_t flags; uint32_t mode;};
-struct func_creat     {out_path path; uint32_t mode;};
+struct func_openw     {int32_t flags; uint32_t mode; out_path path;};
+struct func_creat     {uint32_t mode; out_path path; };
 struct func_stat      {in_path path;};
 struct func_lstat     {in_path path;};
 struct func_opendir   {in_path path;};
-struct func_access    {in_path path; uint32_t mode;};
-struct func_truncate  {out_path path; uint64_t length;};
-struct func_unlink    {out_path path; uint32_t flags;};
+struct func_access    {uint32_t mode; in_path path;};
+struct func_truncate  {uint64_t length; out_path path;};
+struct func_unlink    {uint32_t flags; out_path path;};
 struct func_rename    {out_path oldpath; out_path newpath;};
-struct func_chmod     {out_path path; uint32_t mode;};
+struct func_chmod     {uint32_t mode; out_path path;};
 struct func_readlink  {in_path path; };
-struct func_mknod     {out_path path; uint32_t mode; uint64_t dev;};
-struct func_mkdir     {out_path path; uint32_t mode;};
+struct func_mknod     {uint32_t mode; uint64_t dev; out_path path;};
+struct func_mkdir     {uint32_t mode; out_path path;};
 struct func_rmdir     {out_path path;};
 struct func_symlink   {in_path target /* TODO: target should probably not even be here */; out_path linkpath;};
 struct func_link      {out_path oldpath; out_path newpath;};
-struct func_chown     {out_path path; uint32_t owner; uint32_t group;};
+struct func_chown     {uint32_t owner; uint32_t group; out_path path;};
 struct func_exec      {in_path path;};
 struct func_execp     {char file[MAX_EXEC_FILE]; char cwd[MAX_PATH]; char env_var_PATH[MAX_PATH_ENV_VAR_LENGTH]; char conf_str_CS_PATH[MAX_PATH_CONF_STR];};
 struct func_realpath  {in_path path;};
