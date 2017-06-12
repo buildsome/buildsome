@@ -77,35 +77,32 @@ instance Binary Severity
 data OutFilePath = OutFilePath
   { outPath :: FilePath
   , outEffect :: OutEffect
-  } deriving (Eq, Ord, Show, Generic)
-instance Binary OutFilePath
+  } deriving (Eq, Ord, Show)
 
 data Func
   = OpenR InFilePath
-  | OpenW OutFilePath OpenWriteMode CreationMode OpenTruncateMode
+  | OpenW OpenWriteMode CreationMode OpenTruncateMode OutFilePath
   | Stat InFilePath
   | LStat InFilePath
-  | Creat OutFilePath Word32
+  | Creat Word32 OutFilePath
   | Rename OutFilePath OutFilePath
-  | Unlink OutFilePath Word32
-  | Access InFilePath Word32{- TODO: replace Int with AccessMode -}
+  | Unlink Word32 OutFilePath
+  | Access Word32 InFilePath{- TODO: replace Int with AccessMode -}
   | OpenDir InFilePath
-  | Truncate OutFilePath Word64{- length -}
-  | Chmod OutFilePath Word32{-mode-}
+  | Truncate Word64 OutFilePath{- length -}
+  | Chmod Word32 OutFilePath{-mode-}
   | ReadLink InFilePath
-  | MkNod OutFilePath Word32{-mode-} Word64{-dev-}
-  | MkDir OutFilePath Word32{-mode-}
+  | MkNod Word32{-mode-} Word64{-dev-} OutFilePath
+  | MkDir Word32{-mode-} OutFilePath
   | RmDir OutFilePath
   | SymLink InFilePath OutFilePath
   | Link OutFilePath OutFilePath
-  | Chown OutFilePath Word32 Word32
+  | Chown Word32 Word32 OutFilePath
   | Exec InFilePath
   | ExecP (Maybe FilePath) [FilePath]{-prior searched paths (that did not exist)-}
   | RealPath InFilePath
   | Trace Severity ByteString
-  deriving (Show, Generic)
-
-instance Binary Func
+  deriving Show
 
 -- Hook is delayed waiting for handler to complete
 data IsDelayed = Delayed | NotDelayed
@@ -118,23 +115,23 @@ data Msg = Msg
 {-# INLINE showFunc #-}
 showFunc :: Func -> String
 showFunc (OpenR path) = "open:" ++ show path
-showFunc (OpenW path wmode creation trunc) = "openW" ++ showOpenWriteMode wmode ++ ":" ++ show path ++ showCreationMode creation ++ showOpenTruncateMode trunc
+showFunc (OpenW wmode creation trunc path) = "openW" ++ showOpenWriteMode wmode ++ ":" ++ show path ++ showCreationMode creation ++ showOpenTruncateMode trunc
 showFunc (Stat path) = "stat:" ++ show path
 showFunc (LStat path) = "lstat:" ++ show path
-showFunc (Creat path perms) = concat ["create:", show path, " ", showOct perms ""]
+showFunc (Creat perms path) = concat ["create:", show path, " ", showOct perms ""]
 showFunc (Rename old new) = concat ["rename:", show old, "->", show new]
-showFunc (Unlink path mode) = concat ["unlink:", show path, " ", show mode]
-showFunc (Access path mode) = concat ["access:", show path, " ", show mode]
+showFunc (Unlink mode path) = concat ["unlink:", show path, " ", show mode]
+showFunc (Access mode path) = concat ["access:", show path, " ", show mode]
 showFunc (OpenDir path) = concat ["openDir:", show path]
-showFunc (Truncate path len) = concat ["truncate:", show path, " ", show len]
-showFunc (Chmod path perms) = concat ["chmod:", show path, " ", showOct perms ""]
+showFunc (Truncate len path) = concat ["truncate:", show path, " ", show len]
+showFunc (Chmod perms path) = concat ["chmod:", show path, " ", showOct perms ""]
 showFunc (ReadLink path) = concat ["readlink:", show path]
-showFunc (MkNod path mode dev) = unwords ["mknod:", show path, showOct mode "", show dev]
-showFunc (MkDir path mode) = unwords ["mkdir:", show path, showOct mode ""]
+showFunc (MkNod mode dev path) = unwords ["mknod:", show path, showOct mode "", show dev]
+showFunc (MkDir mode path) = unwords ["mkdir:", show path, showOct mode ""]
 showFunc (RmDir path) = unwords ["rmdir:", show path]
 showFunc (SymLink target linkpath) = unwords ["symlink:", show target, show linkpath]
 showFunc (Link src dest) = unwords ["link:", show src, show dest]
-showFunc (Chown path uid gid) = unwords ["chown:", show path, show uid, show gid]
+showFunc (Chown uid gid path) = unwords ["chown:", show path, show uid, show gid]
 showFunc (Exec path) = unwords ["exec:", show path]
 showFunc (ExecP (Just path) attempted) = unwords ["execP:", show path, "searched:", show attempted]
 showFunc (ExecP Nothing attempted) = unwords ["failedExecP:searched:", show attempted]
@@ -166,7 +163,7 @@ getOutEffect :: Get OutEffect
 getOutEffect = toEnum . fromIntegral <$> getWord32le
 
 getOutPath :: Get OutFilePath
-getOutPath = OutFilePath <$> getPath <*> getOutEffect
+getOutPath = flip OutFilePath <$> getOutEffect <*> getPath
 
 getSeverity :: Get Severity
 getSeverity = toEnum . fromIntegral <$> getWord32le
@@ -180,10 +177,10 @@ fLAG_TRUNCATE = 4
 
 {-# INLINE parseOpenW #-}
 parseOpenW :: Get Func
-parseOpenW = mkOpen <$> getOutPath <*> getWord32le <*> getWord32le
+parseOpenW = mkOpen <$> getWord32le <*> getWord32le <*> getOutPath
   where
-    mkOpen path flags mode =
-      OpenW path (openMode flags) (creationMode flags mode) (isTruncate flags)
+    mkOpen flags mode path =
+      OpenW (openMode flags) (creationMode flags mode) (isTruncate flags) path
     openMode flags
       | 0 /= flags .&. fLAG_ALSO_READ = ReadWriteMode
       | otherwise = WriteMode
@@ -214,22 +211,22 @@ funcs =
   M.fromList
   [ (0x10000, ("openR"   , return <$> (OpenR <$> getInPath)))
   , (0x10001, ("openW"   , return <$> parseOpenW)) -- TODO: Parse here, do post-process in func like execP
-  , (0x10002, ("creat"   , return <$> (Creat <$> getOutPath <*> getWord32le)))
+  , (0x10002, ("creat"   , return <$> (Creat <$> getWord32le <*> getOutPath)))
   , (0x10003, ("stat"    , return <$> (Stat <$> getInPath)))
   , (0x10004, ("lstat"   , return <$> (LStat <$> getInPath)))
   , (0x10005, ("opendir" , return <$> (OpenDir <$> getInPath)))
-  , (0x10006, ("access"  , return <$> (Access <$> getInPath <*> getWord32le)))
-  , (0x10007, ("truncate", return <$> (Truncate <$> getOutPath <*> getWord64le)))
-  , (0x10008, ("unlink"  , return <$> (Unlink <$> getOutPath <*> getWord32le)))
+  , (0x10006, ("access"  , return <$> (Access <$> getWord32le <*> getInPath)))
+  , (0x10007, ("truncate", return <$> (Truncate <$> getWord64le <*> getOutPath)))
+  , (0x10008, ("unlink"  , return <$> (Unlink <$> getWord32le <*> getOutPath)))
   , (0x10009, ("rename"  , return <$> (Rename <$> getOutPath <*> getOutPath)))
-  , (0x1000A, ("chmod"   , return <$> (Chmod <$> getOutPath <*> getWord32le)))
+  , (0x1000A, ("chmod"   , return <$> (Chmod <$> getWord32le <*> getOutPath)))
   , (0x1000B, ("readlink", return <$> (ReadLink <$> getInPath)))
-  , (0x1000C, ("mknod"   , return <$> (MkNod <$> getOutPath <*> getWord32le <*> getWord64le)))
-  , (0x1000D, ("mkdir"   , return <$> (MkDir <$> getOutPath <*> getWord32le)))
+  , (0x1000C, ("mknod"   , return <$> (MkNod <$> getWord32le <*> getWord64le <*> getOutPath)))
+  , (0x1000D, ("mkdir"   , return <$> (MkDir <$> getWord32le <*> getOutPath)))
   , (0x1000E, ("rmdir"   , return <$> (RmDir <$> getOutPath)))
   , (0x1000F, ("symlink" , return <$> (SymLink <$> getInPath <*> getOutPath)))
   , (0x10010, ("link"    , return <$> (Link <$> getOutPath <*> getOutPath)))
-  , (0x10011, ("chown"   , return <$> (Chown <$> getOutPath <*> getWord32le <*> getWord32le)))
+  , (0x10011, ("chown"   , return <$> (Chown <$> getWord32le <*> getWord32le <*> getOutPath)))
   , (0x10012, ("exec"    , return <$> (Exec <$> getInPath)))
   , (0x10013, ("execp"   , execP <$> getNullTerminated mAX_EXEC_FILE <*> getPath <*> getNullTerminated mAX_PATH_ENV_VAR_LENGTH <*> getNullTerminated mAX_PATH_CONF_STR))
   , (0x10014, ("realPath", return <$> (RealPath <$> getInPath)))
