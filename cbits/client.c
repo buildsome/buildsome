@@ -40,7 +40,7 @@ static bool send_size(int fd, size_t size)
 
 static int connect_master(const char *need_str)
 {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     ASSERT(-1 != fd);
 
     char *env_sockaddr = getenv(ENVVARS_PREFIX "MASTER_UNIX_SOCKADDR");
