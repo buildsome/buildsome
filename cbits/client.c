@@ -81,10 +81,11 @@ int client_make_connection(enum need need)
 {
     pid_t pid = getpid();
     if(pid != thread_state.pid) {
+        thread_state.pid = pid;
+        thread_state.connection_fd = -1;
         int fd = connect_master(need == HOOK ? "HOOK" : "HINT");
         if(-1 == fd) return -1;
         thread_state.connection_fd = fd;
-        thread_state.pid = pid;
         thread_state.need = need;
         if(!await_go()) return -1;
     }
