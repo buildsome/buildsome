@@ -140,6 +140,7 @@ executable buildsome
                    , old-locale >= 1.0
                    , optparse-applicative >=0.7
                    , parsec >=3.1.5
+                   , pretty-hex == 1.0
                    , process >=1.2
                    , split >=0.2
                    , system-argv0 >=0.1

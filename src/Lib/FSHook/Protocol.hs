@@ -26,6 +26,7 @@ import System.Posix.Files.ByteString (fileAccess)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.IntMap as M
+import Hexdump (prettyHex)
 
 import Prelude.Compat hiding (FilePath)
 
@@ -154,14 +155,25 @@ getNullTerminated len = truncateAt 0 <$> getByteString len
 getPath :: Get FilePath
 getPath = getNullTerminated mAX_PATH
 
+getPathEOM :: Get FilePath
+getPathEOM = do
+  lb <- getLazyByteStringNul
+  pure $ BS8.concat $ BSL.toChunks lb
+
 getInPath :: Get InFilePath
 getInPath = getPath
+
+getInPathEOM :: Get InFilePath
+getInPathEOM = getPathEOM
 
 getOutEffect :: Get OutEffect
 getOutEffect = toEnum . fromIntegral <$> getWord32le
 
 getOutPath :: Get OutFilePath
 getOutPath = flip OutFilePath <$> getOutEffect <*> getPath
+
+getOutPathEOM :: Get OutFilePath
+getOutPathEOM = flip OutFilePath <$> getOutEffect <*> getPathEOM
 
 getSeverity :: Get Severity
 getSeverity = toEnum . fromIntegral <$> getWord32le
@@ -175,7 +187,7 @@ fLAG_TRUNCATE = 4
 
 {-# INLINE parseOpenW #-}
 parseOpenW :: Get Func
-parseOpenW = mkOpen <$> getWord32le <*> getWord32le <*> getOutPath
+parseOpenW = mkOpen <$> getWord32le <*> getWord32le <*> getOutPathEOM
   where
     mkOpen flags mode path =
       OpenW (openMode flags) (creationMode flags mode) (isTruncate flags) path
@@ -207,27 +219,27 @@ execP file cwd envPath confStrPath
 funcs :: IntMap (String, Get (IO Func))
 funcs =
   M.fromList
-  [ (0x10000, ("openR"   , pure <$> (OpenR <$> getInPath)))
+  [ (0x10000, ("openR"   , pure <$> (OpenR <$> getInPathEOM)))
   , (0x10001, ("openW"   , pure <$> parseOpenW)) -- TODO: Parse here, do post-process in func like execP
-  , (0x10002, ("creat"   , pure <$> (Creat <$> getWord32le <*> getOutPath)))
-  , (0x10003, ("stat"    , pure <$> (Stat <$> getInPath)))
-  , (0x10004, ("lstat"   , pure <$> (LStat <$> getInPath)))
-  , (0x10005, ("opendir" , pure <$> (OpenDir <$> getInPath)))
-  , (0x10006, ("access"  , pure <$> (Access <$> getWord32le <*> getInPath)))
-  , (0x10007, ("truncate", pure <$> (Truncate <$> getWord64le <*> getOutPath)))
-  , (0x10008, ("unlink"  , pure <$> (Unlink <$> getWord32le <*> getOutPath)))
-  , (0x10009, ("rename"  , pure <$> (Rename <$> getOutPath <*> getOutPath)))
-  , (0x1000A, ("chmod"   , pure <$> (Chmod <$> getWord32le <*> getOutPath)))
-  , (0x1000B, ("readlink", pure <$> (ReadLink <$> getInPath)))
-  , (0x1000C, ("mknod"   , pure <$> (MkNod <$> getWord32le <*> getWord64le <*> getOutPath)))
-  , (0x1000D, ("mkdir"   , pure <$> (MkDir <$> getWord32le <*> getOutPath)))
-  , (0x1000E, ("rmdir"   , pure <$> (RmDir <$> getOutPath)))
-  , (0x1000F, ("symlink" , pure <$> (SymLink <$> getInPath <*> getOutPath)))
-  , (0x10010, ("link"    , pure <$> (Link <$> getOutPath <*> getOutPath)))
-  , (0x10011, ("chown"   , pure <$> (Chown <$> getWord32le <*> getWord32le <*> getOutPath)))
-  , (0x10012, ("exec"    , pure <$> (Exec <$> getInPath)))
+  , (0x10002, ("creat"   , pure <$> (Creat <$> getWord32le <*> getOutPathEOM)))
+  , (0x10003, ("stat"    , pure <$> (Stat <$> getInPathEOM)))
+  , (0x10004, ("lstat"   , pure <$> (LStat <$> getInPathEOM)))
+  , (0x10005, ("opendir" , pure <$> (OpenDir <$> getInPathEOM)))
+  , (0x10006, ("access"  , pure <$> (Access <$> getWord32le <*> getInPathEOM)))
+  , (0x10007, ("truncate", pure <$> (Truncate <$> getWord64le <*> getOutPathEOM)))
+  , (0x10008, ("unlink"  , pure <$> (Unlink <$> getWord32le <*> getOutPathEOM)))
+  , (0x10009, ("rename"  , pure <$> (Rename <$> getOutPath <*> getOutPathEOM)))
+  , (0x1000A, ("chmod"   , pure <$> (Chmod <$> getWord32le <*> getOutPathEOM)))
+  , (0x1000B, ("readlink", pure <$> (ReadLink <$> getInPathEOM)))
+  , (0x1000C, ("mknod"   , pure <$> (MkNod <$> getWord32le <*> getWord64le <*> getOutPathEOM)))
+  , (0x1000D, ("mkdir"   , pure <$> (MkDir <$> getWord32le <*> getOutPathEOM)))
+  , (0x1000E, ("rmdir"   , pure <$> (RmDir <$> getOutPathEOM)))
+  , (0x1000F, ("symlink" , pure <$> (SymLink <$> getInPath <*> getOutPathEOM)))
+  , (0x10010, ("link"    , pure <$> (Link <$> getOutPath <*> getOutPathEOM)))
+  , (0x10011, ("chown"   , pure <$> (Chown <$> getWord32le <*> getWord32le <*> getOutPathEOM)))
+  , (0x10012, ("exec"    , pure <$> (Exec <$> getInPathEOM)))
   , (0x10013, ("execp"   , execP <$> getNullTerminated mAX_EXEC_FILE <*> getPath <*> getNullTerminated mAX_PATH_ENV_VAR_LENGTH <*> getNullTerminated mAX_PATH_CONF_STR))
-  , (0x10014, ("realPath", pure <$> (RealPath <$> getInPath)))
+  , (0x10014, ("realPath", pure <$> (RealPath <$> getInPathEOM)))
   , (0xF0000, ("trace"   , pure <$> (Trace <$> getSeverity <*> getNullTerminated 1024)))
   ]
 
@@ -242,7 +254,9 @@ parseMsgLazy bs =
       let (_name, getter) = funcs ! fromIntegral funcId
       ioFunc <- getter
       finished <- isEmpty
-      unless finished $ fail "Unexpected trailing input in message"
+      unless finished $ do
+        fail $ "Unexpected trailing input in message: "
+           ++ (prettyHex $ BS8.concat $ BSL.toChunks bs)
       pure (if isDelayedInt == 0 then NotDelayed else Delayed, ioFunc)
 
 {-# INLINE strictToLazy #-}

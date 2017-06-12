@@ -87,14 +87,14 @@ static void send_connection_await(const char *buf, size_t size,
         real(__VA_ARGS__);                              \
     })
 
-#define SEND_MSG_AWAIT(_is_delayed, msg)                \
+#define SEND_MSG_AWAIT(_is_delayed, msg, truncatable)   \
     ({                                                  \
-        send_connection_await(PS(msg), _is_delayed, NULL);    \
+        send_connection_await(PS(msg), _is_delayed, truncatable);    \
     })
 
-#define AWAIT_CALL_REAL(needs_await, msg, ...)     \
+#define AWAIT_CALL_REAL(needs_await, msg, truncatable, ...)     \
     ({                                                  \
-        SEND_MSG_AWAIT(needs_await, msg);               \
+        SEND_MSG_AWAIT(needs_await, msg, truncatable);  \
         SILENT_CALL_REAL(__VA_ARGS__);                  \
     })
 
@@ -150,15 +150,15 @@ static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *can
     return true;
 }
 
-#define CALL_WITH_OUTPUTS(msg, _is_delayed, ret_type, args, out_report_code) \
+#define CALL_WITH_OUTPUTS(msg, _is_delayed, truncatable, ret_type, args, out_report_code) \
     ({                                                                  \
         if(_is_delayed) {                                               \
-            send_connection_await(PS(msg), true, NULL);                 \
+            send_connection_await(PS(msg), true, truncatable);          \
         }                                                               \
         ret_type result = SILENT_CALL_REAL args;                        \
         if(!_is_delayed) {                                              \
             do out_report_code while(0);                                \
-            bool ATTR_UNUSED res = client__send_hooked(false, PS(msg), NULL); \
+            bool ATTR_UNUSED res = client__send_hooked(false, PS(msg), truncatable); \
             /* Can't stop me now, effect already happened, so just ignore */ \
             /* server-side rejects after-the-fact. */                   \
         }                                                               \
@@ -176,7 +176,7 @@ DEFINE_WRAPPER(int, creat, (const char *path, mode_t mode))
     msg.args.mode = mode;
 
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path,
         int, (creat, path, mode),
         {
             /* May actually truncate file, rather than create it, but
@@ -194,7 +194,8 @@ DEFINE_WRAPPER(int, name, (int vers, const char *path, struct stat_struct *buf))
     bool needs_await = false;                                           \
     DEFINE_MSG(msg, msg_type);                                          \
     IN_PATH_COPY(needs_await, msg.args.path, path);                     \
-    return AWAIT_CALL_REAL(needs_await, msg, name, vers, path, buf);    \
+    return AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path, name, \
+                          vers, path, buf);\
 }
 
 DEFINE_STAT_WRAPPER(   __xstat,  stat, stat  )
@@ -209,7 +210,7 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *path))
     bool needs_await = false;
     DEFINE_MSG(msg, opendir);
     IN_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(needs_await, msg, opendir, path);
+    return AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path, opendir, path);
 }
 
 /* Depends on the full path */
@@ -220,7 +221,7 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
     DEFINE_MSG(msg, access);
     IN_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
-    return AWAIT_CALL_REAL(needs_await, msg, access, path, mode);
+    return AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path, access, path, mode);
 }
 
 /* Outputs the full path */
@@ -232,7 +233,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
     msg.args.length = length;
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path,
         int, (truncate, path, length),
         {
             msg.args.path.out_effect =
@@ -247,7 +248,7 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
     bool needs_await = false;
     DEFINE_MSG(msg, readlink);
     IN_PATH_COPY(needs_await, msg.args.path, path);
-    return AWAIT_CALL_REAL(needs_await, msg, readlink, path, buf, bufsiz);
+    return AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path, readlink, path, buf, bufsiz);
 }
 
 static bool dereference_dir(int dirfd, char *buf, size_t buf_len) ATTR_WARN_UNUSED_RESULT;
@@ -289,7 +290,7 @@ DEFINE_WRAPPER(int, unlink, (const char *path))
     msg.args.flags = 0;
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path,
         int, (unlink, path),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
@@ -312,7 +313,7 @@ DEFINE_WRAPPER(int, unlinkat, (int dirfd, const char *path, int flags))
     msg.args.flags = flags;
     OUT_PATH_COPY(needs_await, msg.args.path, pathptr);
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path,
         int, (unlinkat, dirfd, path, flags),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
@@ -328,7 +329,7 @@ DEFINE_WRAPPER(int, rename, (const char *oldpath, const char *newpath))
     OUT_PATH_COPY(needs_await, msg.args.oldpath, oldpath);
     OUT_PATH_COPY(needs_await, msg.args.newpath, newpath);
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.newpath.out_path,
         int, (rename, oldpath, newpath),
         {
             msg.args.oldpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
@@ -346,7 +347,7 @@ DEFINE_WRAPPER(int, chmod, (const char *path, mode_t mode))
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path,
         int, (chmod, path, mode),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED);
@@ -363,7 +364,7 @@ DEFINE_WRAPPER(int, mknod, (const char *path, mode_t mode, dev_t dev))
     msg.args.mode = mode;
     msg.args.dev = dev;
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path,
         int, (mknod, path, mode, dev),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
@@ -379,7 +380,7 @@ DEFINE_WRAPPER(int, mkdir, (const char *path, mode_t mode))
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path,
         int, (mkdir, path, mode),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
@@ -394,7 +395,7 @@ DEFINE_WRAPPER(int, rmdir, (const char *path))
     DEFINE_MSG(msg, rmdir);
     OUT_PATH_COPY(needs_await, msg.args.path, path);
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path,
         int, (rmdir, path),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_DELETED);
@@ -413,7 +414,7 @@ DEFINE_WRAPPER(int, symlink, (const char *target, const char *linkpath))
     IN_PATH_COPY(needs_await, msg.args.target, target);
     OUT_PATH_COPY(needs_await, msg.args.linkpath, linkpath);
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.linkpath.out_path,
         int, (symlink, target, linkpath),
         {
             msg.args.linkpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CREATED);
@@ -428,7 +429,7 @@ DEFINE_WRAPPER(int, link, (const char *oldpath, const char *newpath))
     OUT_PATH_COPY(needs_await, msg.args.oldpath, oldpath);
     OUT_PATH_COPY(needs_await, msg.args.newpath, newpath);
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.newpath.out_path,
         int, (link, oldpath, newpath),
         {
             msg.args.oldpath.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED); // stat/refcount changed
@@ -446,7 +447,7 @@ DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
     msg.args.owner = owner;
     msg.args.group = group;
     return CALL_WITH_OUTPUTS(
-        msg, needs_await,
+        msg, needs_await, msg.args.path.out_path, 
         int, (chown, path, owner, group),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED);
@@ -542,7 +543,7 @@ DEFINE_WRAPPER(int, execvpe, (const char *file, char *const argv[], char *const 
         ASSERT(size <= sizeof msg.args.conf_str_CS_PATH); /* Value truncated */
     }
 
-    SEND_MSG_AWAIT(true, msg);
+    SEND_MSG_AWAIT(true, msg, NULL);
 
     return execvpe_real(file, argv, envp);
 }
@@ -614,7 +615,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
     bool needs_await = false;
     DEFINE_MSG(msg, exec);
     IN_PATH_COPY(needs_await, msg.args.path, filename);
-    return AWAIT_CALL_REAL(needs_await, msg, execve, filename, argv, envp);
+    return AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path, execve, filename, argv, envp);
 }
 
 /****************** open ********************/
@@ -637,7 +638,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
             DEFINE_MSG(msg, openr);                                     \
             IN_PATH_COPY(needs_await, msg.args.path, _path);            \
             return AWAIT_CALL_REAL(                                     \
-                needs_await, msg, _name, _path, _flags);                \
+                needs_await, msg, msg.args.path.in_path, _name, _path, _flags); \
         }                                                               \
         case O_RDWR:                                                    \
             is_also_read = true;                                        \
@@ -651,7 +652,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
             if(is_truncate)  msg.args.flags |= FLAG_TRUNCATE;           \
             msg.args.mode = mode;                                       \
             return CALL_WITH_OUTPUTS(                                   \
-                msg, needs_await,                                       \
+                msg, needs_await, msg.args.path.out_path,               \
                 int, (_name, _path, _flags, mode),                      \
                 {                                                       \
                     msg.args.path.out_effect =                          \
@@ -753,7 +754,8 @@ struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
             DEFINE_MSG(msg, openr);                                     \
             IN_PATH_COPY(needs_await, msg.args.path, path);             \
             return AWAIT_CALL_REAL(                                     \
-                needs_await, msg, name, path, modestr, ##__VA_ARGS__);  \
+                needs_await, msg, msg.args.path.in_path, name,          \
+                                       path, modestr, ##__VA_ARGS__);  \
         }                                                               \
         bool needs_await = false;                                       \
         DEFINE_MSG(msg, openw);                                         \
@@ -763,7 +765,8 @@ struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
         if(mode.is_truncate) msg.args.flags |= FLAG_TRUNCATE;           \
         msg.args.mode = 0666;                                           \
         return CALL_WITH_OUTPUTS(                                       \
-            msg, needs_await, FILE *, (name, path, modestr, ##__VA_ARGS__),               \
+            msg, needs_await, msg.args.path.out_path,                   \
+            FILE *, (name, path, modestr, ##__VA_ARGS__),              \
             {                                                           \
                 msg.args.path.out_effect =                              \
                     OUT_EFFECT_IF_NOT_ERROR(                            \
@@ -817,7 +820,8 @@ DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
     /* TODO: dlopen does a lot of searching/etc if the pathname does
      * not contain slash, need to handle it correctly (or switch to
      * fuse!) */
-    return AWAIT_CALL_REAL(needs_await, msg, dlopen, filename, flag);
+    return AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path, 
+                          dlopen, filename, flag);
 }
 
 DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
@@ -838,7 +842,8 @@ DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
     }
 
     char *const rptr =
-        AWAIT_CALL_REAL(needs_await, msg, realpath, path, resolved_path);
+        AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path,
+                       realpath, path, resolved_path);
 
     if (!rptr && allocated) {
         const int errno_save = errno;
