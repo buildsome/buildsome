@@ -16,7 +16,6 @@ module Lib.FileDesc
 import Prelude.Compat hiding (FilePath)
 
 import Data.Binary (Binary(..))
-import Data.ByteString (ByteString)
 import Data.Function (on)
 import Data.Monoid ((<>))
 import Data.Time.Clock.POSIX (POSIXTime)
@@ -28,13 +27,14 @@ import Lib.Posix.FileType (FileType, fileTypeOfStat)
 import Lib.Posix.Instances ()
 import Lib.TimeInstances ()
 import qualified Control.Exception as E
-import qualified Crypto.Hash.MD5 as MD5
+import qualified Lib.Hash as Hash
+import           Lib.Hash (Hash)
 import qualified Data.ByteString.Char8 as BS8
 import qualified Lib.Cmp as Cmp
 import qualified Lib.Directory as Dir
 import qualified System.Posix.ByteString as Posix
 
-type ContentHash = ByteString
+type ContentHash = Hash
 
 data FileContentDesc
   = FileContentDescRegular ContentHash
@@ -151,7 +151,7 @@ fileModeDescOfStat = FileModeDesc . Posix.fileMode
 fileContentDescOfStat :: FilePath -> Posix.FileStatus -> IO FileContentDesc
 fileContentDescOfStat path stat
   | Posix.isRegularFile stat =
-    FileContentDescRegular . MD5.hash <$> BS8.readFile (BS8.unpack path)
+    FileContentDescRegular . Hash.md5 <$> BS8.readFile (BS8.unpack path)
   | Posix.isDirectory stat =
     FileContentDescDir <$> Dir.getDirectoryContentsHash path
   | Posix.isSymbolicLink stat =
