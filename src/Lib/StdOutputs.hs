@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Lib.StdOutputs
@@ -15,7 +18,7 @@ import GHC.Generics (Generic)
 data StdOutputs a = StdOutputs
   { stdOut :: a
   , stdErr :: a
-  } deriving (Generic, Show)
+  } deriving (Generic, Show, Functor, Foldable, Traversable)
 instance Binary a => Binary (StdOutputs a)
 
 null :: (Eq a, Monoid a) => StdOutputs a -> Bool
