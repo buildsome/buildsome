@@ -49,11 +49,13 @@ import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import           Lib.Printer (Printer)
 import qualified Lib.Printer as Printer
 import qualified Lib.Process as Process
+import           Lib.SharedMemory (SharedMemory)
+import qualified Lib.SharedMemory as SharedMemory
 import           Lib.Sock (recvFrame, recvLoop_, withUnixStreamListener)
 import           Lib.StdOutputs (StdOutputs(..))
 import           Lib.TimeIt (timeIt)
 import qualified Lib.Timeout as Timeout
-import           Network.Socket (Socket)
+import           Network.Socket (Socket, fdSocket)
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import           Paths_buildsome (getDataFileName)
@@ -126,8 +128,8 @@ fromNeedStr "HOOK" = HOOK
 fromNeedStr "HINT" = HINT
 fromNeedStr x = error $ "Invalid hello message need str: " ++ show x
 
-serve :: Printer -> FSHook -> Socket -> IO ()
-serve printer fsHook conn = do
+serve :: Printer -> FSHook -> SharedMemory -> Socket -> IO ()
+serve printer fsHook shmem conn = do
   mHelloLine <- recvFrame conn
   case mHelloLine of
     Nothing -> E.throwIO $ ProtocolError "Unexpected EOF"
@@ -153,7 +155,7 @@ serve printer fsHook conn = do
               -- New connection created in the process of killing connections, ignore it
               return ()
             Just (LiveJob job) ->
-              handleJobConnection fullTidStr conn job $ fromNeedStr needStr
+              handleJobConnection shmem fullTidStr conn job $ fromNeedStr needStr
             Just (CompletedJob _label labelStr) ->
               E.throwIO $ ProtocolError $ concat
               -- Main/parent process completed, and leaked some subprocess
@@ -170,8 +172,8 @@ printRethrowExceptions msg =
       _ -> E.uninterruptibleMask_ $ hPutStrLn stderr $ msg ++ show (e :: E.SomeException)
     E.throwIO e
 
-with :: Printer -> FilePath -> (FSHook -> IO a) -> IO a
-with printer ldPreloadPath body = do
+with :: SharedMemory -> Printer -> FilePath -> (FSHook -> IO a) -> IO a
+with shmem printer ldPreloadPath body = do
   pid <- Posix.getProcessID
   freshJobIds <- Fresh.new 0
   let serverFilename = "/tmp/fshook-" <> BS8.pack (show pid)
@@ -194,7 +196,7 @@ with printer ldPreloadPath body = do
             -- Job connection may fail when the process is killed
             -- during a send-message, which may cause a protocol error
             printRethrowExceptions "Job connection failed: " $
-            serve printer fsHook conn
+            serve printer fsHook shmem conn
             `finally` Sock.close conn
       body fsHook
 
@@ -295,13 +297,15 @@ withRegistered registry key val =
     register = atomicModifyIORef_ registry $ M.insert key val
     unregister = atomicModifyIORef_ registry $ M.delete key
 
-handleJobConnection :: String -> Socket -> RunningJob -> Need -> IO ()
-handleJobConnection tidStr conn job _need = do
+handleJobConnection :: SharedMemory -> String -> Socket -> RunningJob -> Need -> IO ()
+handleJobConnection shmem tidStr conn job _need = do
   -- This lets us know for sure that by the time the slave dies,
   -- we've seen its connection
   connId <- Fresh.next $ jobFreshConnIds job
   tid <- myThreadId
 
+  SharedMemory.sharedMemorySendFD shmem (fdSocket conn)
+  
   connFinishedMVar <- newEmptyMVar
   (`finally` putMVar connFinishedMVar ()) $
     withRegistered (jobActiveConnections job) connId (tid, readMVar connFinishedMVar) $ do

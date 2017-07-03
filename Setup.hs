@@ -4,7 +4,7 @@ import Distribution.Simple.Program
 import Distribution.Simple.Program.Db
 
 sources :: [FilePath]
-sources = ["cbits/fs_override.c", "cbits/canonize_path.c", "cbits/client.c"]
+sources = ["cbits/fs_override.c", "cbits/canonize_path.c", "cbits/client.c", "cbits/shared.c", "cbits/sha1.c"]
 
 main :: IO ()
 main = defaultMainWithHooks simpleUserHooks
@@ -12,6 +12,6 @@ main = defaultMainWithHooks simpleUserHooks
       let verbosity = fromFlag $ buildVerbosity flags
       putStrLn "Building cbits/fs_override.so"
       (gcc, _) <- requireProgram verbosity gccProgram defaultProgramDb
-      runProgram verbosity gcc . words $ "-o cbits/fs_override.so -g -Wall -Werror -Wextra -Winit-self -shared -fPIC -D_GNU_SOURCE " ++ unwords sources ++ " -ldl"
+      runProgram verbosity gcc . words $ "-o cbits/fs_override.so -g -Wall -Werror -Wextra -Winit-self -shared -std=gnu11 -fPIC -D_GNU_SOURCE " ++ unwords sources ++ " -ldl"
       return (Nothing, [])
   }

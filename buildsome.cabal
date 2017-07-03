@@ -32,6 +32,11 @@ flag Charts
 executable buildsome
   hs-source-dirs:    src/
   main-is:           Main.hs
+  c-sources:         cbits/shared.c
+               ,     cbits/sha1.c
+               ,     src/Lib/SharedMemory.c
+  cc-options:        -Wall -O2 -fPIC -std=gnu11
+
   if flag(debug) {
     ghc-options:       -threaded -Wall -O0
   } else {
@@ -102,6 +107,7 @@ executable buildsome
                ,     Lib.Revisit
                ,     Lib.ScanFileUpwards
                ,     Lib.Set
+               ,     Lib.SharedMemory
                ,     Lib.Show
                ,     Lib.ShowBytes
                ,     Lib.Sigint
@@ -147,6 +153,7 @@ executable buildsome
                    , transformers >=0.3 && <=0.5
                    , unix >=2.6 && <2.8
                    , pretty-hex == 1.0
+                   , inline-c >= 0.5.5.2
                    , happy
 
   if flag(Charts)
