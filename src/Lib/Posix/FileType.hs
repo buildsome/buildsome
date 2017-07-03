@@ -15,7 +15,8 @@ data FileType
   | RegularFile
   | Socket
   | SymbolicLink
-  deriving (Generic, Eq, Show)
+  deriving (Generic, Eq, Show, Ord)
+  -- Weird deriving order!
 instance Binary FileType
 
 fileTypeOfStat :: Posix.FileStatus -> FileType
