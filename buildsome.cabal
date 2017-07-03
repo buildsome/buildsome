@@ -99,6 +99,7 @@ library
                ,     Lib.Makefile.VerifyPhonies
                ,     Lib.Map
                ,     Lib.NonEmptyList
+               ,     Lib.NonEmptyMap
                ,     Lib.Once
                ,     Lib.Parallelism
                ,     Lib.Parsec
