@@ -11,7 +11,7 @@ module Lib.FSHook
   , Protocol.OutFilePath(..), Protocol.OutEffect(..), Protocol.Severity(..)
   , FSAccessHandlers(..)
 
-  , AccessType(..), AccessDoc
+  , AccessType(..), AccessDoc(..)
 
   , runCommand, timedRunCommand
   ) where
