@@ -45,6 +45,13 @@ import           Prelude.Compat hiding (FilePath)
 schemaVersion :: ByteString
 schemaVersion = "schema.ver.20"
 
+debugPrint :: MonadIO io => String -> io ()
+#ifdef DEBUG_PRINT
+debugPrint = liftIO . putStrLn
+#else
+debugPrint _ = liftIO $ return ()
+#endif
+
 data Db = Db
   { dbLevel :: LevelDB.DB
   , dbRegisteredOutputs :: IORef (Set FilePath)
