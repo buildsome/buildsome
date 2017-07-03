@@ -115,6 +115,7 @@ executable buildsome
                ,     Lib.StdOutputs
                ,     Lib.StringPattern
                ,     Lib.SyncMap
+               ,     Lib.Trie
                ,     Lib.TimeInstances
                ,     Lib.TimeIt
                ,     Lib.Timeout
