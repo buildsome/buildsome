@@ -34,6 +34,10 @@ executable buildsome
   hs-source-dirs:    src/
   main-is:           Main.hs
   ghc-options:  -threaded -Wall -Widentities -Wmissing-home-modules -Wincomplete-patterns -Wnoncanonical-monad-instances -Wsemigroup -Wincomplete-record-updates -Wimplicit-prelude -Wredundant-constraints
+  c-sources:         cbits/shared.c
+               ,     cbits/sha1.c
+  cc-options:        -Wall -O2 -fPIC -std=gnu11
+
   if flag(debug) {
     ghc-options:       -threaded -Wall -O0
   } else {
@@ -104,6 +108,7 @@ executable buildsome
                ,     Lib.Revisit
                ,     Lib.ScanFileUpwards
                ,     Lib.Set
+               ,     Lib.SharedMemory
                ,     Lib.Show
                ,     Lib.ShowBytes
                ,     Lib.Sigint
@@ -150,6 +155,7 @@ executable buildsome
                    , transformers >=0.3
                    , unix >=2.6
                    , colour >=2.3
+                   , inline-c >= 0.5.5.2
 
   if flag(Charts)
     cpp-options:       -DWITH_CHARTS_SUPPORT

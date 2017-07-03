@@ -11,11 +11,14 @@
 
 #define PROTOCOL_HELLO "PROTOCOL10: HELLO, I AM: "
 
+#include "shared.h"
+
 static __thread struct {
     pid_t pid;                  /* TODO: Document that this identifies fork()ed threads */
     int connection_fd;
+    shmem_context *shmem_context;
     enum need need;
-} thread_state = {-1, -1, -1};
+} thread_state = {-1, -1, NULL, -1};
 
 static int gettid(void)
 {
@@ -85,12 +88,22 @@ int client_make_connection(enum need need)
         thread_state.connection_fd = -1;
         int fd = connect_master(need == HOOK ? "HOOK" : "HINT");
         if(-1 == fd) return -1;
+        thread_state.shmem_context = recv_readonly_shmem(fd);
         thread_state.connection_fd = fd;
         thread_state.need = need;
         if(!await_go()) return -1;
     }
     ASSERT(thread_state.need == need);
     return thread_state.connection_fd;
+}
+
+bool is_wait_needed(const char *filename)
+{
+    if (!thread_state.shmem_context) {
+        return true;
+    }
+    return !shmem_get_item_non_deterministic(thread_state.shmem_context,
+        filename);
 }
 
 static int connection(void)

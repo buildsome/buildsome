@@ -1,6 +1,5 @@
 module Buildsome.Types where
 
-
 import           Buildsome.BuildId (BuildId)
 import           Buildsome.BuildMaps (BuildMaps(..), TargetRep)
 import           Buildsome.Db (Db, Reason)
@@ -19,6 +18,7 @@ import qualified Lib.Parallelism as Parallelism
 import           Lib.Printer (Printer)
 import qualified Lib.Printer as Printer
 import           Lib.SyncMap (SyncMap)
+import           Lib.SharedMemory (SharedMemory)
 
 import           Prelude.Compat hiding (FilePath)
 
@@ -33,6 +33,7 @@ data Buildsome = Buildsome
     , bsRootPath :: FilePath
     , bsBuildMaps :: BuildMaps
     -- dynamic:
+    , bsSharedMemory :: SharedMemory
     , bsDb :: Db
     , bsFsHook :: FSHook
     , bsSlaveByTargetRep :: SyncMap TargetRep (Parallelism.Entity, Slave Stats)

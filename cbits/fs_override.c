@@ -121,7 +121,7 @@ static void send_connection_await(const char *buf, size_t size,
         bool in_root = try_chop_common_root(                            \
             process_state.root_filter_length,                           \
             process_state.root_filter, dest);                           \
-        needs_await = needs_await || in_root;                           \
+        needs_await = (needs_await || in_root) && is_wait_needed(dest); \
     } while(0)
 
 #define IN_PATH_COPY(needs_await, dest, src)    \
