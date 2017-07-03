@@ -1,8 +1,10 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Map
   ( filterA, filterAWithKey
   ) where
 
-import Control.Applicative ((<$>), Applicative)
+import           Prelude.Compat hiding (FilePath)
+
 import Data.Map (Map)
 import qualified Data.Map as Map
 

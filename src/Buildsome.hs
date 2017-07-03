@@ -7,9 +7,9 @@ module Buildsome
   , PutInputsInStats(..), CollectStats(..), want
   ) where
 
-import           Buildsome.BuildId (BuildId)
+
 import qualified Buildsome.BuildId as BuildId
-import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetRep, TargetDesc(..))
+import           Buildsome.BuildMaps (BuildMaps(..), DirectoryBuildMap(..), TargetDesc(..))
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Clean as Clean
 import qualified Buildsome.Color as Color
@@ -25,6 +25,7 @@ import           Buildsome.Slave (Slave)
 import qualified Buildsome.Slave as Slave
 import           Buildsome.Stats (Stats(Stats))
 import qualified Buildsome.Stats as Stats
+import           Buildsome.Types (Buildsome(..), Parents, WaitOrCancel(..), BuildTargetEnv(..), BuiltTargets(..), PutInputsInStats(..), CollectStats(..))
 import           Control.Concurrent (forkIO, threadDelay)
 import qualified Control.Exception as E
 import           Control.Monad (void, unless, when, filterM, forM, forM_)
@@ -49,12 +50,11 @@ import qualified Lib.ColorText as ColorText
 import           Lib.Directory (getMFileStatus, removeFileOrDirectory, removeFileOrDirectoryOrNothing)
 import qualified Lib.Directory as Dir
 import           Lib.Exception (finally, logErrors, handle, catch, handleSync, putLn)
-import           Lib.FSHook (FSHook, OutputBehavior(..), OutputEffect(..))
+import           Lib.FSHook (OutputBehavior(..), OutputEffect(..))
 import qualified Lib.FSHook as FSHook
 import           Lib.FileDesc (fileModeDescOfStat, fileStatDescOfStat)
 import           Lib.FilePath (FilePath, (</>), (<.>))
 import qualified Lib.FilePath as FilePath
-import           Lib.Fresh (Fresh)
 import qualified Lib.Fresh as Fresh
 import           Lib.IORef (atomicModifyIORef'_, atomicModifyIORef_)
 import           Lib.Makefile (Makefile(..), TargetType(..), Target, targetAllInputs,
@@ -68,7 +68,6 @@ import           Lib.Show (show)
 import           Lib.ShowBytes (showBytes)
 import           Lib.Sigint (withInstalledSigintHandler)
 import           Lib.StdOutputs (StdOutputs(..))
-import           Lib.SyncMap (SyncMap)
 import qualified Lib.SyncMap as SyncMap
 import           Lib.TimeIt (timeIt)
 import qualified Lib.Timeout as Timeout
@@ -81,28 +80,6 @@ import           Text.Parsec (SourcePos)
 import qualified Prelude.Compat
 import           Prelude.Compat hiding (FilePath, show)
 
-type Parents = [(TargetRep, Target, Reason)]
-
-data Buildsome = Buildsome
-  { -- static:
-    bsOpts :: Opt
-  , bsMakefile :: Makefile
-  , bsPhoniesSet :: Set FilePath
-  , bsBuildId :: BuildId
-  , bsRootPath :: FilePath
-  , bsBuildMaps :: BuildMaps
-    -- dynamic:
-  , bsDb :: Db
-  , bsFsHook :: FSHook
-  , bsSlaveByTargetRep :: SyncMap TargetRep (Parallelism.Entity, Slave Stats)
-  , bsFreshPrinterIds :: Fresh Printer.Id
-  , bsFastKillBuild :: E.SomeException -> IO ()
-  , bsRender :: ColorText -> ByteString
-  , bsParPool :: Parallelism.Pool
-  }
-
-data WaitOrCancel = Wait | CancelAndWait
-  deriving Eq
 
 onAllSlaves :: WaitOrCancel -> Buildsome -> IO ()
 onAllSlaves shouldCancel bs =
@@ -176,33 +153,6 @@ updateGitIgnore buildsome makefilePath = do
     header = ["# AUTO GENERATED FILE - DO NOT EDIT",
               BS8.concat
              ["# If you need to ignore files not managed by buildsome, add to ", gitignoreBaseName]]
-
-data PutInputsInStats = PutInputsInStats | Don'tPutInputsInStats
-    deriving (Eq, Ord, Show)
-
-data CollectStats = CollectStats PutInputsInStats | Don'tCollectStats
-    deriving (Eq, Ord, Show)
-
-data BuildTargetEnv = BuildTargetEnv
-  { bteBuildsome :: Buildsome
-  , btePrinter :: Printer
-  , bteReason :: Reason
-  , bteParents :: Parents
-  , bteExplicitlyDemanded :: Bool
-  , bteSpeculative :: Bool
-    -- used by charts & compat makefile, undesirable memory
-    -- consumption otherwise
-  , bteCollectStats :: CollectStats
-  }
-
-data BuiltTargets = BuiltTargets
-  { builtTargets :: [Target]
-  , builtStats :: Stats
-  }
-instance Monoid BuiltTargets where
-  mempty = BuiltTargets mempty mempty
-  mappend (BuiltTargets a1 b1) (BuiltTargets a2 b2) =
-    BuiltTargets (mappend a1 a2) (mappend b1 b2)
 
 data ExplicitPathsBuilt = ExplicitPathsBuilt | ExplicitPathsNotBuilt
 
@@ -301,7 +251,7 @@ slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [(Parallelism.Entity, Sl
 slavesForChildrenOf bte@BuildTargetEnv{..} path
   | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
   | not (null childPatterns) =
-    fail $ "UNSUPPORTED: Read directory on directory with patterns: " ++ show path ++ " (" ++ BS8.unpack (bsRender bteBuildsome $ show bteReason) ++ ")"
+    fail $ "UNSUPPORTED: Read directory on directory with patterns. Path: '" ++ show path ++ "' (" ++ BS8.unpack (bsRender bteBuildsome $ show bteReason) ++ ") Patterns: " ++ show childPatterns
   | otherwise =
     -- Non-pattern targets here, so they're explicitly demanded
     traverse (getSlaveForTarget bte { bteExplicitlyDemanded = True }) $
@@ -1050,6 +1000,24 @@ buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
     verbosityCommands = Opts.verbosityCommands verbosity
     verbosity = optVerbosity (bsOpts bteBuildsome)
 
+statsOfNullCmd :: BuildTargetEnv -> TargetDesc -> BuiltTargets -> Stats
+statsOfNullCmd BuildTargetEnv{..} TargetDesc{..} hintedBuiltTargets =
+  stats <> Stats
+  { Stats.ofTarget =
+    M.singleton tdRep Stats.TargetStats
+    { tsWhen = Stats.BuiltNow
+    , tsTime = 0
+    , tsDirectDeps = deps
+    , tsExistingInputs =
+      case bteCollectStats of
+      CollectStats PutInputsInStats -> Just $ targetAllInputs tdTarget
+      _ -> Nothing
+    }
+  , Stats.stdErr = S.empty
+  }
+  where
+    BuiltTargets deps stats = hintedBuiltTargets
+
 buildTarget :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO Stats
 buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
   maybeRedirectExceptions bte TargetDesc{..} $ do
@@ -1058,7 +1026,9 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
       ExplicitPathsNotBuilt ->
         -- Failed to build our hints when allowed, just leave with collected stats
         return $ builtStats hintedBuiltTargets
-      ExplicitPathsBuilt -> do
+      ExplicitPathsBuilt | BS8.null $ targetInterpolatedCmds tdTarget ->
+        return $ statsOfNullCmd bte TargetDesc{..} hintedBuiltTargets
+      ExplicitPathsBuilt | otherwise ->  do
         mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
         (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
           case mSlaveStats of
@@ -1080,10 +1050,7 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
                     , tsExistingInputs =
                       case putInputsInStats of
                       PutInputsInStats ->
-                          Just $ concat
-                          [ targetAllInputs tdTarget
-                          , [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
-                          ]
+                          Just $ targetAllInputs tdTarget ++ [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
                       Don'tPutInputsInStats -> Nothing
                     }
                   , Stats.stdErr =
