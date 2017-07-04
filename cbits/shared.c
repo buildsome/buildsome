@@ -15,6 +15,7 @@
 
 #include "shared.h"
 #include "sha1.h"
+#include "c.h"
 
 // #define FSHOOK_SHARED_DEBUG
 
@@ -43,10 +44,14 @@ typedef struct _key_hash {
             uint64_t a;
             uint64_t b;
             uint32_t c;
-        };
-    };
+        } ATTR_PACKED;
+    } ATTR_PACKED;
     uint32_t blob_offset;
-} key_hash;
+} ATTR_PACKED key_hash;
+CT_ASSERT(SIZEOF_STRUCT_MEMBER(key_hash, data) ==
+          SIZEOF_STRUCT_MEMBER(key_hash, a)
+          + SIZEOF_STRUCT_MEMBER(key_hash, b)
+          + SIZEOF_STRUCT_MEMBER(key_hash, c));
 
 typedef struct _shmem_header {
     size_t table_start;
