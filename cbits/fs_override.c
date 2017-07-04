@@ -87,9 +87,15 @@ static void send_connection_await(const char *buf, size_t size,
         real(__VA_ARGS__);                              \
     })
 
-#define SEND_MSG_AWAIT(_is_delayed, msg, truncatable)   \
-    ({                                                  \
-        send_connection_await(PS(msg), _is_delayed, truncatable);    \
+#define CT_ASSERT_TRUNCATABLE_IS_LAST(msg, truncatable)                 \
+    CT_ASSERT((truncatable == NULL)                                     \
+              || (((char *)truncatable - (char *)&msg.args + sizeof(truncatable)) \
+                  == sizeof(msg.args)))
+
+#define SEND_MSG_AWAIT(_is_delayed, msg, truncatable)                   \
+    ({                                                                  \
+        CT_ASSERT_TRUNCATABLE_IS_LAST(msg, truncatable);                \
+        send_connection_await(PS(msg), _is_delayed, truncatable);       \
     })
 
 #define AWAIT_CALL_REAL(needs_await, msg, truncatable, ...)     \
@@ -102,7 +108,7 @@ static void send_connection_await(const char *buf, size_t size,
     struct {                                    \
         enum func func;                         \
         struct func_##name args;                \
-    } __attribute__ ((packed))                  \
+    } ATTR_PACKED                               \
     msg = { .func = func_##name };
 
 #define CREATION_FLAGS (O_CREAT | O_EXCL)
@@ -153,6 +159,7 @@ static bool try_chop_common_root(unsigned prefix_length, char *prefix, char *can
 #define CALL_WITH_OUTPUTS(msg, _is_delayed, truncatable, ret_type, args, out_report_code) \
     ({                                                                  \
         if(_is_delayed) {                                               \
+            CT_ASSERT_TRUNCATABLE_IS_LAST(msg, truncatable);            \
             send_connection_await(PS(msg), true, truncatable);          \
         }                                                               \
         ret_type result = SILENT_CALL_REAL args;                        \
@@ -447,7 +454,7 @@ DEFINE_WRAPPER(int, chown, (const char *path, uid_t owner, gid_t group))
     msg.args.owner = owner;
     msg.args.group = group;
     return CALL_WITH_OUTPUTS(
-        msg, needs_await, msg.args.path.out_path, 
+        msg, needs_await, msg.args.path.out_path,
         int, (chown, path, owner, group),
         {
             msg.args.path.out_effect = OUT_EFFECT_IF_NOT_ERROR(-1, OUT_EFFECT_CHANGED);
@@ -820,7 +827,7 @@ DEFINE_WRAPPER(void *, dlopen, (const char *filename, int flag))
     /* TODO: dlopen does a lot of searching/etc if the pathname does
      * not contain slash, need to handle it correctly (or switch to
      * fuse!) */
-    return AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path, 
+    return AWAIT_CALL_REAL(needs_await, msg, msg.args.path.in_path,
                           dlopen, filename, flag);
 }
 
