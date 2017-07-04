@@ -23,13 +23,13 @@
 #endif
 
 #ifdef FSHOOK_SHARED_DEBUG
-#define LOG(fmt, params...) do { \
+#define SHARED_LOG(fmt, params...) do { \
     fprintf(stderr, "fshooks-shared<pid=%d>: " \
             fmt "\n", getpid(), ##params); \
     fflush(stderr); \
 } while (0)
 #else
-#define LOG(fmt, params...) do { if (0) { printf(fmt "\n", ##params); } } while (0)
+#define SHARED_LOG(fmt, params...) do { if (0) { printf(fmt "\n", ##params); } } while (0)
 #endif
 
 #define KEY_DATA_SIZE                 20
@@ -90,7 +90,7 @@ static void shmem_remap(shmem_context *shmem_ctx)
     const bool is_readonly = shmem_ctx->fd == -1;
 
     if (shmem_ctx->mapped_size != mapped_size) {
-        LOG("remap to size 0x%lx", mapped_size);
+        SHARED_LOG("remap to size 0x%lx", mapped_size);
 
         if (shmem_ctx->mapped_size) {
             munmap(shmem_ctx->root, shmem_ctx->mapped_size);
@@ -126,7 +126,7 @@ static void shmem_remap(shmem_context *shmem_ctx)
 static void shmem_resize(shmem_context *shmem_ctx)
 {
     if (shmem_ctx->file_size != shmem_ctx->size) {
-        LOG("resize to 0x%lx (from 0x%lx)", shmem_ctx->size,
+        SHARED_LOG("resize to 0x%lx (from 0x%lx)", shmem_ctx->size,
             shmem_ctx->file_size);
 
         int ret = ftruncate(shmem_ctx->fd, shmem_ctx->size);
@@ -143,11 +143,11 @@ void shmem_dump(const shmem_context *shmem_ctx)
     const shmem_header *header = ((shmem_header *)shmem_ctx->root);
 
     if (!header) {
-        LOG("no header at this point");
+        SHARED_LOG("no header at this point");
         return;
     }
 
-    LOG("shmem header (0x%lx, 0x%lx, 0x%lx, 0x%lx)", header->table_start,
+    SHARED_LOG("shmem header (0x%lx, 0x%lx, 0x%lx, 0x%lx)", header->table_start,
         header->table_order, header->table_end, header->next_blob_offset);
 }
 
@@ -170,7 +170,7 @@ size_t shmem_add_string(shmem_context *shmem_ctx, const char *str, size_t len)
     memcpy(buf, str, len);
     buf[n] = '\0';
 
-    LOG("added string \"%s\" at offset 0x%lx", str, offset);
+    SHARED_LOG("added string \"%s\" at offset 0x%lx", str, offset);
 
     return offset;
 }
@@ -243,7 +243,7 @@ static void shmem_double_capacity(shmem_context *shmem_ctx)
         }
     }
 
-    LOG("total items migrate: %ld, total iterations: %ld",
+    SHARED_LOG("total items migrate: %ld, total iterations: %ld",
         header->items_used, counter);
 
     *header = new_header;
@@ -273,7 +273,7 @@ key_hash *shmem_get_item_non_deterministic(shmem_context *shmem_ctx,
 
     uint64_t max_tries = 0x20; /* failures are okay */
 
-    LOG("get_item_nondeter %p for '%s'", shmem_ctx, str);
+    SHARED_LOG("get_item_nondeter %p for '%s'", shmem_ctx, str);
 
     for (uint64_t try = 0; try < max_tries; try++) {
         key_hash *const existing_key =
@@ -284,7 +284,7 @@ key_hash *shmem_get_item_non_deterministic(shmem_context *shmem_ctx,
         }
 
         if (!memcmp(&existing_key->data, new_key.data, KEY_DATA_SIZE)) {
-            LOG("found at %p", existing_key);
+            SHARED_LOG("found at %p", existing_key);
 
             return existing_key;
         }
@@ -337,7 +337,7 @@ key_hash *shmem_add_item_bs(shmem_context *shmem_ctx,
             header = ((shmem_header *)shmem_ctx->root);
             header->items_used += 1;
 
-            LOG("added key offset 0x%lx", existing_key_offset);
+            SHARED_LOG("added key offset 0x%lx", existing_key_offset);
 
             pthread_mutex_unlock(&shmem_ctx->mutex);
 
