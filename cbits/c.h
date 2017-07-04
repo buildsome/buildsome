@@ -15,7 +15,13 @@ void _do_log(enum severity, const char *fmt, ...);
 
 #define MIN(x, y)  ((x) < (y) ? (x) : (y))
 
+#define CONCAT_(A, B) A ## B
+#define CONCAT(A,B) CONCAT_(A,B)
+
+#define CT_ASSERT(pred) enum { CONCAT(CT_ASSERT__, __COUNTER__) = 1/!!(pred) };
+
 #define ATTR_UNUSED  __attribute__((unused))
 #define ATTR_WARN_UNUSED_RESULT __attribute__((warn_unused_result))
+#define ATTR_PACKED __attribute__ ((packed))
 
 #endif
