@@ -37,6 +37,10 @@
 #define MAX_DISTANCE_FOR_RESIZE       0x10
 #define INITIAL_TABLE_ORDER           9
 
+#define PAGE_SIZE        0x1000ULL
+#define CACHE_LINE_SIZE  0x40ULL
+#define PAGE_ALIGN_UP(x) (((x) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+
 typedef struct _key_hash {
     union {
         unsigned char data[KEY_DATA_SIZE];
@@ -91,56 +95,54 @@ static uint64_t key_hash_to_full_idx(const key_hash *key)
 
 static void shmem_remap(shmem_context *shmem_ctx)
 {
-    const size_t mapped_size = (shmem_ctx->size + 0xfff) & ~0xfff;
+    const size_t mapped_size = PAGE_ALIGN_UP(shmem_ctx->size);
     const bool is_readonly = shmem_ctx->fd == -1;
 
-    if (shmem_ctx->mapped_size != mapped_size) {
-        SHARED_LOG("remap to size 0x%lx", mapped_size);
+    if (!is_readonly) {
+        if (shmem_ctx->file_size != shmem_ctx->size) {
+            SHARED_LOG("resize to 0x%lx (from 0x%lx)", shmem_ctx->size,
+                       shmem_ctx->file_size);
 
-        if (shmem_ctx->mapped_size) {
-            munmap(shmem_ctx->root, shmem_ctx->mapped_size);
+            int ret = ftruncate(shmem_ctx->fd, shmem_ctx->size);
+            assert(ret >= 0);
+
+            shmem_ctx->file_size = shmem_ctx->size;
         }
-
-        const int fd = is_readonly ? shmem_ctx->ro_fd : shmem_ctx->fd;
-        shmem_ctx->root = mmap(NULL, mapped_size,
-                               PROT_READ | (is_readonly ? 0 : PROT_WRITE),
-                               MAP_SHARED,
-                               fd,
-                               0);
-        if (shmem_ctx->root == MAP_FAILED) {
-            if (errno == EBADF) {
-                /*
-                 * The process may have did a for-loop to
-                 * close all FDs on shutdown.
-                 */
-                return;
-            }
-        }
-
-        shmem_ctx->mapped_size = mapped_size;
-
-        if (!is_readonly) {
-            shmem_header *header = ((shmem_header *)shmem_ctx->root);
-            header->mappable_size = mapped_size;
-        }
-
-        assert(shmem_ctx->root != MAP_FAILED);
-    }
-}
-
-static void shmem_resize(shmem_context *shmem_ctx)
-{
-    if (shmem_ctx->file_size != shmem_ctx->size) {
-        SHARED_LOG("resize to 0x%lx (from 0x%lx)", shmem_ctx->size,
-            shmem_ctx->file_size);
-
-        int ret = ftruncate(shmem_ctx->fd, shmem_ctx->size);
-        assert(ret >= 0);
-
-        shmem_ctx->file_size = shmem_ctx->size;
     }
 
-    shmem_remap(shmem_ctx);
+    if (shmem_ctx->mapped_size == mapped_size) {
+        return;
+    }
+
+    SHARED_LOG("remap to size 0x%lx from %0lx", mapped_size,
+               shmem_ctx->mapped_size);
+
+    if (shmem_ctx->mapped_size) {
+        munmap(shmem_ctx->root, shmem_ctx->mapped_size);
+    }
+
+    const int fd = is_readonly ? shmem_ctx->ro_fd : shmem_ctx->fd;
+    shmem_ctx->root = mmap(NULL, mapped_size,
+                           PROT_READ | (is_readonly ? 0 : PROT_WRITE),
+                           MAP_SHARED,
+                           fd,
+                           0);
+    if (shmem_ctx->root == MAP_FAILED) {
+        if (errno == EBADF) {
+            /*
+             * The process may have did a for-loop to
+             * close all FDs on shutdown.
+             */
+            return;
+        }
+    }
+
+    shmem_ctx->mapped_size = mapped_size;
+
+    if (!is_readonly) {
+        shmem_header *header = ((shmem_header *)shmem_ctx->root);
+        header->mappable_size = mapped_size;
+    }
 }
 
 void shmem_dump(const shmem_context *shmem_ctx)
@@ -164,7 +166,7 @@ size_t shmem_add_string(shmem_context *shmem_ctx, const char *str, size_t len)
 
     if (n + offset > shmem_ctx->size) {
         shmem_ctx->size = n + offset + 0x10000;
-        shmem_resize(shmem_ctx);
+        shmem_remap(shmem_ctx);
 
         header = ((shmem_header *)shmem_ctx->root);
     }
@@ -210,14 +212,16 @@ static void shmem_double_capacity(shmem_context *shmem_ctx)
     const uint64_t orig_table_size = 1ULL << header->table_order;
 
     new_header.table_order += 1;
-    new_header.table_start = (header->next_blob_offset + 0x3fUL) & ~0x3fUL;
+    new_header.table_start = (header->next_blob_offset + CACHE_LINE_SIZE - 1)
+        & ~(CACHE_LINE_SIZE - 1);
 
     const uint64_t max_tries = 1ULL << new_header.table_order;
 
     shmem_init_table_end(shmem_ctx, &new_header);
-    shmem_resize(shmem_ctx);
+    shmem_remap(shmem_ctx);
 
     header = ((shmem_header *)shmem_ctx->root);
+    new_header.mappable_size = header->mappable_size;
 
     uint64_t counter = 0;
 
@@ -231,7 +235,8 @@ static void shmem_double_capacity(shmem_context *shmem_ctx)
         const uint64_t full_idx = key_hash_to_full_idx(existing_key);
 
         counter++;
-        for (uint64_t try = 0; try < max_tries; try++) {
+        uint64_t try;
+        for (try = 0; try < max_tries; try++) {
             key_hash *const migrated_key =
                 shmem_get_item_by_idx(shmem_ctx, try + full_idx, &new_header);
 
@@ -246,6 +251,9 @@ static void shmem_double_capacity(shmem_context *shmem_ctx)
             *migrated_key = *existing_key;
             break;
         }
+
+        /* Check we really added the entry */
+        assert(try < max_tries);
     }
 
     SHARED_LOG("total items migrate: %ld, total iterations: %ld",
@@ -379,15 +387,19 @@ shmem_context *new_shmem(void)
     shmem_ctx->fd = fd;
     shmem_ctx->ro_fd = ro_fd;
     shmem_ctx->size = sizeof(shmem_header);
+    shmem_ctx->file_size = 0;
+    shmem_ctx->mapped_size = 0;
+    pthread_mutex_init(&shmem_ctx->mutex, NULL);
+    shmem_ctx->root = NULL;
 
-    shmem_resize(shmem_ctx);
+    shmem_remap(shmem_ctx);
 
     shmem_header *header = ((shmem_header *)shmem_ctx->root);
     header->table_order = INITIAL_TABLE_ORDER;
     header->table_start = sizeof(*header);
     shmem_init_table_end(shmem_ctx, header);
 
-    shmem_resize(shmem_ctx);
+    shmem_remap(shmem_ctx);
 
     return shmem_ctx;
 }
@@ -477,14 +489,16 @@ shmem_context *new_readonly_shmem(int ro_fd)
     assert(shmem_ctx != NULL);
     shmem_ctx->fd = -1;
     shmem_ctx->ro_fd = ro_fd;
-
+    shmem_ctx->file_size = 0;
+    shmem_ctx->mapped_size = 0;
     pthread_mutex_init(&shmem_ctx->mutex, NULL);
+    shmem_ctx->root = NULL;
 
     struct stat st;
     int ret = fstat(shmem_ctx->ro_fd, &st);
     assert(ret == 0);
 
-    shmem_ctx->size = st.st_size;
+    shmem_ctx->size = PAGE_ALIGN_UP(st.st_size);
 
     shmem_remap(shmem_ctx);
 
