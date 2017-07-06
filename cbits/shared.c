@@ -76,16 +76,17 @@ typedef struct _shmem_context {
     void *root;
 } shmem_context;
 
-static void string_to_key_hash(const char *str, size_t len, key_hash *out)
-{
-    sha1(out->data, (unsigned char *)str, len);
-}
-
 static bool key_hash_is_empty(const key_hash *existing_key)
 {
     return (existing_key->a == 0  &&
             existing_key->b == 0  &&
             existing_key->c == 0);
+}
+
+static void string_to_key_hash(const char *str, size_t len, key_hash *out)
+{
+    sha1(out->data, (unsigned char *)str, len);
+    assert(!key_hash_is_empty(out));
 }
 
 static uint64_t key_hash_to_full_idx(const key_hash *key)
@@ -103,8 +104,15 @@ static void shmem_remap(shmem_context *shmem_ctx)
             SHARED_LOG("resize to 0x%lx (from 0x%lx)", shmem_ctx->size,
                        shmem_ctx->file_size);
 
-            int ret = ftruncate(shmem_ctx->fd, shmem_ctx->size);
-            assert(ret >= 0);
+            int ret;
+            do {
+                ret = ftruncate(shmem_ctx->fd, shmem_ctx->size);
+                if (ret < 0  &&  errno == EINTR) {
+                    continue;
+                }
+                assert(ret >= 0);
+                break;
+            } while (true);
 
             shmem_ctx->file_size = shmem_ctx->size;
         }
@@ -135,6 +143,7 @@ static void shmem_remap(shmem_context *shmem_ctx)
              */
             return;
         }
+        assert(is_readonly);
     }
 
     shmem_ctx->mapped_size = mapped_size;
@@ -158,7 +167,7 @@ void shmem_dump(const shmem_context *shmem_ctx)
         header->table_order, header->table_end, header->next_blob_offset);
 }
 
-size_t shmem_add_string(shmem_context *shmem_ctx, const char *str, size_t len)
+static size_t shmem_add_string(shmem_context *shmem_ctx, const char *str, size_t len)
 {
     shmem_header *header = ((shmem_header *)shmem_ctx->root);
     size_t offset = header->next_blob_offset;
@@ -431,13 +440,20 @@ void shmem_send_fd(shmem_context *shmem_ctx, int target_fd)
 
     memcpy(CMSG_DATA(cmsg), &shmem_ctx->ro_fd, sizeof(int));
 
-    const int n = sendmsg(target_fd, &hdr, 0);
+    int n;
+    do {
+        n = sendmsg(target_fd, &hdr, 0);
 
-    if (n < 0) {
-        if (errno == EPIPE) {
-            return;
+        if (n < 0) {
+            if (errno == EPIPE) {
+                return;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
         }
-    }
+        break;
+    } while (true);
 
     assert(n >= 0);
 }
@@ -476,7 +492,15 @@ shmem_context *recv_readonly_shmem(int source_fd)
     int ro_fd;
     memcpy(&ro_fd, CMSG_DATA(cmsg), sizeof(int));
 
-    int ret = fcntl(ro_fd, F_SETFD, FD_CLOEXEC);
+    int ret;
+    do {
+        ret = fcntl(ro_fd, F_SETFD, FD_CLOEXEC);
+        if (ret < 0  &&  errno == EINTR) {
+            continue;
+        }
+        break;
+    } while (true);
+
     assert(ret >= 0);
 
     return new_readonly_shmem(ro_fd);
