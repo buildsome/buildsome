@@ -305,7 +305,7 @@ handleJobConnection shmem tidStr conn job _need = do
   tid <- myThreadId
 
   SharedMemory.sharedMemorySendFD shmem (fdSocket conn)
-  
+
   connFinishedMVar <- newEmptyMVar
   (`finally` putMVar connFinishedMVar ()) $
     withRegistered (jobActiveConnections job) connId (tid, readMVar connFinishedMVar) $ do
