@@ -103,6 +103,7 @@ static void shmem_remap(shmem_context *shmem_ctx)
         if (shmem_ctx->file_size != shmem_ctx->size) {
             SHARED_LOG("resize to 0x%lx (from 0x%lx)", shmem_ctx->size,
                        shmem_ctx->file_size);
+            assert(shmem_ctx->file_size < shmem_ctx->size);
 
             int ret;
             do {

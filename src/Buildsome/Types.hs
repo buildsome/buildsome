@@ -22,7 +22,6 @@ import           Lib.Printer (Printer)
 import qualified Lib.Printer as Printer
 import           Lib.SyncMap (SyncMap)
 import           Lib.SharedMemory (SharedMemory)
-import qualified Lib.SharedMemory as SharedMemory
 
 import           Prelude.Compat hiding (FilePath)
 
