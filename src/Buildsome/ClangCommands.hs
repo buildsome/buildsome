@@ -44,8 +44,7 @@ buildCommands cwd stats target =
         _ -> []
     depBuildCommands =
       case Map.lookup (BuildMaps.computeTargetRep target) (Stats.ofTarget stats) of
-      Nothing ->
-        error "BUG: Stats does not contain targets that appear as root/dependencies"
+      Nothing -> return [] -- ok because some dependencies have no rule?
       Just targetStats -> buildCommandsTargets cwd stats $ Stats.tsDirectDeps targetStats
 
 buildCommandsTargets :: FilePath -> Stats -> [Target] -> M [Aeson.Value]
