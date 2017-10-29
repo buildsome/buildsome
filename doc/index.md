@@ -1,7 +1,7 @@
 # Buildsome
 
 Buildsome is a generic build tool which provides emphasis on correctness
-while keeping the ease of use. The guiding principal is that partial
+while keeping the ease of use. The guiding principle is that partial
 rebuilds should be fast, and always yield outputs that are identical
 to full builds, regardless of the complexity of the build tree.
 
