@@ -29,11 +29,11 @@ type FilePath = Posix.RawFilePath
 {-# INLINE exists #-}
 exists :: FilePath -> IO Bool
 exists path
-  | BS8.null path = return True
+  | BS8.null path = pure True
   | otherwise = Posix.fileExist path `catch`
     \e ->
     case ioeGetErrorType e of
-    InappropriateType -> return False
+    InappropriateType -> pure False
     _ -> throwIO e
 
 splitPath :: FilePath -> [FilePath]

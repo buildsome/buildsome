@@ -85,7 +85,7 @@ rootEntity pool =
             , entityRunningState = EntityAlloced parId
             , entityRunningReleaseCounter = 0
             }
-        return Entity
+        pure Entity
             { entityState = state
             , entityId = "Root"
             }
@@ -111,7 +111,7 @@ assertPutMVar :: MVar a -> a -> IO ()
 assertPutMVar mvar val =
     do
         True <- tryPutMVar mvar val
-        return ()
+        pure ()
 
 -- runs under mask (non-blocking)
 allChildrenDone :: Printer -> PoolAlloc.Priority -> Pool -> Entity -> IO ()
@@ -146,7 +146,7 @@ notifyParent printer pool child parent =
             )
         ([_], rest) ->
             ( EntityReleasedToChildren rest allocStartedMVar
-            , return ()
+            , pure ()
             )
         ([], _) ->
             error $
@@ -166,7 +166,7 @@ linkChild printer pool parent child =
     EntityStateFinished -> (EntityStateFinished, notifyParent printer pool child parent)
     EntityStateRunning er ->
         ( EntityStateRunning er { entityRunningParents = parent:entityRunningParents er }
-        , return ()
+        , pure ()
         )
 
 cancelAllocation :: Pool -> Alloc ParId -> IO ()
@@ -273,7 +273,7 @@ maybeReallocFromChildren _printer parent =
             )
         EntityRunning parents priority rc runState ->
             ( EntityStateRunning (EntityRunning parents priority (rc - 1) runState)
-            , return ()
+            , pure ()
             )
         where
             finishAlloc alloc =
@@ -321,7 +321,7 @@ fork ident _printer pool =
                 { entityState = stateRef
                 , entityId = ident
                 }
-        return (entity, wrapChild pool entity alloc)
+        pure (entity, wrapChild pool entity alloc)
 
 -- Called only if the fork allocation has failed!
 -- Runs under uninterruptibleMask
@@ -349,7 +349,7 @@ wrapChild pool child alloc printer =
                 parId <- PoolAlloc.finish alloc
                 modifyEntityRunningState child $ \_running ->
                   \case
-                  EntityForking _alloc -> (EntityAlloced parId, return ())
+                  EntityForking _alloc -> (EntityAlloced parId, pure ())
                   state -> error $ "wrapChild/before: invalid state: " ++ ersDebugShow state ++ "?!"
         afterChild =
             -- runs under uninterruptibleMask
@@ -362,7 +362,7 @@ wrapChild pool child alloc printer =
                         traverse_ (notifyParent printer pool child) parents
                         PoolAlloc.release pool parId
                     )
-            _ -> error "forked child did not return to Alloced state with rc=0"
+            _ -> error "forked child did not pure to Alloced state with rc=0"
 
 boostChildPriority :: Printer -> PoolAlloc.Priority -> Entity -> IO ()
 boostChildPriority printer parentVal =
@@ -373,9 +373,9 @@ boostPriority printer upgrade entity =
     modifyEntityState entity $
     \state ->
     case state of
-    EntityStateFinished -> (state, return ())
+    EntityStateFinished -> (state, pure ())
     EntityStateRunning (EntityRunning parents oldPriority rc runState)
-        | priorityVal newPriority <= priorityVal oldPriority -> (state, return ())
+        | priorityVal newPriority <= priorityVal oldPriority -> (state, pure ())
         | otherwise ->
             ( EntityStateRunning (EntityRunning parents newPriority rc runState)
             , case runState of
@@ -385,9 +385,9 @@ boostPriority printer upgrade entity =
                   PoolAlloc.changePriority alloc (priorityVal newPriority)
               EntityReleasedToChildren children _mvar ->
                   traverse_ (boostChildPriority printer (priorityVal newPriority)) children
-              EntityReallocStarting _ -> return ()
+              EntityReallocStarting _ -> pure ()
               -- Not waiting for children, not allocating, do nothing:
-              EntityAlloced _ -> return ()
+              EntityAlloced _ -> pure ()
             )
         where
             newPriority = upgrade oldPriority

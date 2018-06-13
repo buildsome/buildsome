@@ -103,7 +103,7 @@ printWrap ColorScheme{..} printer str entryMsg body = do
     printStrLn printer $ after $ cException $
     "EXCEPTION: " <> (fromString . concat . take 1 . lines . show) e
   printStrLn printer $ after $ cOk "OK"
-  return res
+  pure res
   where
     indentLevel  = printerIndentLevelRef printer
     addIndent d  = atomicModifyIORef' indentLevel $ \old -> (old+d, ())

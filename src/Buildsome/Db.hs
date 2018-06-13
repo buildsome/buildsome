@@ -140,7 +140,7 @@ with rawDbPath body = do
       Posix.rename (path <.> "tmp") path
     decodeFileOrEmpty path =
       (S.fromList . BS8.lines <$> BS8.readFile (BS8.unpack path))
-      `catchDoesNotExist` return S.empty
+      `catchDoesNotExist` pure S.empty
 
 data IRef a = IRef
   { readIRef :: IO (Maybe a)

@@ -48,7 +48,7 @@ tryInsert (SyncMap refMap) key action =
     do  mvar <- newEmptyMVar
         let fillMVar x =
                 do putMVar mvar x
-                   return (Inserted, x)
+                   pure (Inserted, x)
         E.mask_ . join $
             atomicModifyIORef refMap $
             \oldMap ->
@@ -63,7 +63,7 @@ tryInsert (SyncMap refMap) key action =
 insert :: Ord k => SyncMap k a -> k -> IO a -> IO a
 insert syncMap key action =
     do  (_, res) <- tryInsert syncMap key action
-        either E.throwIO return res
+        either E.throwIO pure res
 
 new :: IO (SyncMap k v)
 new = SyncMap <$> newIORef M.empty

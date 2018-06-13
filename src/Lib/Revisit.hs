@@ -16,7 +16,7 @@ avoid :: (Monad m, Ord e) => e -> M e m a -> M e m (Maybe a)
 avoid rep act = do
   visited <- State.get
   if rep `Set.member` visited
-    then return Nothing
+    then pure Nothing
     else do
       State.modify $ Set.insert rep
       Just <$> act

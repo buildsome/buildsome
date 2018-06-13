@@ -27,7 +27,7 @@ putLn :: IO.Handle -> String -> IO ()
 putLn h = swallowExceptions . IO.hPutStrLn h
 
 swallowExceptions :: IO () -> IO ()
-swallowExceptions = E.uninterruptibleMask_ . handle (\E.SomeException {} -> return ())
+swallowExceptions = E.uninterruptibleMask_ . handle (\E.SomeException {} -> pure ())
 
 infixl 1 `finally`
 finally :: IO a -> IO () -> IO a
@@ -38,7 +38,7 @@ action `finally` cleanup =
         cleanup `logErrors` ("overrides original error (" ++ show e ++ ")")
         E.throwIO e
     E.uninterruptibleMask_ cleanup `logErrors` "during successful finally cleanup"
-    return res
+    pure res
 
 infixl 1 `catch`
 catch :: E.Exception e => IO a -> (e -> IO a) -> IO a

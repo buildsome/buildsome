@@ -40,7 +40,7 @@ data Alloc a = Alloc
 instance Eq (Alloc a) where
     (==) = (==) `on` identity
 
--- | start an allocation, and return an action that blocks to finish
+-- | start an allocation, and pure an action that blocks to finish
 -- the allocation
 -- NOTE: MUST run startAlloc with proper masking to avoid leaking the token!
 --       MUST run the returned alloc action to avoid leaking!
@@ -52,8 +52,8 @@ startAlloc priority (PoolAlloc stateRef) =
         let
             trivialAlloc token =
                 Alloc
-                { finish = return token
-                , changePriority = const $ return ()
+                { finish = pure token
+                , changePriority = const $ pure ()
                 , identity = ident
                 }
         atomicModifyIORef' stateRef $
@@ -82,7 +82,7 @@ startAlloc priority (PoolAlloc stateRef) =
             -- Oops: Someone handed us over an allocation already, release it!
             (ps, takeMVar candidate >>= release (PoolAlloc stateRef))
             -- Got out in time, whew:
-            $ \waiters' -> (PoolStateWithoutTokens waiters', return ())
+            $ \waiters' -> (PoolStateWithoutTokens waiters', pure ())
         changePriorityCandidate newPriority candidate ps =
             extract ps candidate
             -- Allocation already done, priority change irrelevant:
@@ -105,7 +105,7 @@ release (PoolAlloc stateRef) token =
   where
     f (PoolStateWithoutTokens waiters) =
       case PriorityQueue.dequeue waiters of
-      Nothing -> (PoolStateWithTokens (NonEmptyList.singleton token), return ())
+      Nothing -> (PoolStateWithTokens (NonEmptyList.singleton token), pure ())
       Just (newWaiters, (_priority, waiter)) ->
         (PoolStateWithoutTokens newWaiters, putMVar waiter token)
-    f (PoolStateWithTokens tokens) = (PoolStateWithTokens (NonEmptyList.cons token tokens), return ())
+    f (PoolStateWithTokens tokens) = (PoolStateWithTokens (NonEmptyList.cons token tokens), pure ())

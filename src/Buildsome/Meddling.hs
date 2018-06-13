@@ -28,7 +28,7 @@ assertSameMTime msgPrefix path oldMStat newMStat =
   case (oldMStat, newMStat) of
   (Nothing, Just _) -> fileErr "created"
   (Just _, Nothing) -> fileErr "deleted"
-  (Nothing, Nothing) -> return ()
+  (Nothing, Nothing) -> pure ()
   (Just oldStat, Just newStat)
     | Posix.isDirectory newStat ->
       unless
@@ -36,7 +36,7 @@ assertSameMTime msgPrefix path oldMStat newMStat =
          fileStatDescOfStat newStat) $ err "Directory modified"
     | Posix.modificationTimeHiRes oldStat /=
       Posix.modificationTimeHiRes newStat -> fileErr "changed"
-    | otherwise -> return ()
+    | otherwise -> pure ()
   where
     err msg = E.throwIO $ ThirdPartyMeddlingError path (msgPrefix ++ ": " ++ msg)
     fileErr verb = err $ "File " ++ verb ++ " during build!"

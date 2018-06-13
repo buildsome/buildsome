@@ -38,4 +38,4 @@ spawn (AsyncContext freshNames cancelActionsVar) act = do
       \unmask -> unmask act
                  `onException` atomicModifyIORef'_ cancelActionsVar (IntMap.delete name)
     atomicModifyIORef'_ cancelActionsVar $ IntMap.insert name (cancel actAsync)
-    return actAsync
+    pure actAsync

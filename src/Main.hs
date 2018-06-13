@@ -75,8 +75,8 @@ specifiedMakefile printer path = do
     case mStat of
         Nothing -> E.throwIO $ SpecifiedInexistentMakefilePath (Printer.render printer) path
         Just stat
-            | Posix.isDirectory stat -> return $ path </> standardMakeFilename
-            | otherwise -> return path
+            | Posix.isDirectory stat -> pure $ path </> standardMakeFilename
+            | otherwise -> pure path
 
 data TargetsRequest = TargetsRequest
     { targetsRequestPaths :: [FilePath]
@@ -109,13 +109,13 @@ instance Show BadCommandLine where
         errorShowConcat render ["Invalid command line options: ", fromString msg]
 
 getRequestedTargets :: Printer -> Opts.ExtraOutputs -> [ByteString] -> IO Requested
-getRequestedTargets _ _ ["clean"] = return RequestedClean
+getRequestedTargets _ _ ["clean"] = pure RequestedClean
 getRequestedTargets printer extraOutputs ts
     | "clean" `elem` ts =
         E.throwIO $
         BadCommandLine (Printer.render printer) "Clean must be requested exclusively"
     | otherwise =
-        return $ RequestedTargets TargetsRequest
+        pure $ RequestedTargets TargetsRequest
             { targetsRequestPaths = requestPaths
             , targetsRequestReason = reason
             , targetsRequestExtraOutputs = extraOutputs
@@ -134,13 +134,13 @@ switchDirectory :: FilePath -> IO (FilePath, FilePath, FilePath)
 switchDirectory makefilePath = do
     origCwd <- Posix.getWorkingDirectory
     newCwd <-
-        if BS8.null cwd then return origCwd
+        if BS8.null cwd then pure origCwd
         else do
             Posix.changeWorkingDirectory cwd
             fullCwd <- FilePath.canonicalizePath $ origCwd </> cwd
             BS8.putStrLn $ "make: Entering directory `" <> fullCwd <> "'"
-            return fullCwd
-    return (origCwd, file, newCwd)
+            pure fullCwd
+    pure (origCwd, file, newCwd)
     where
         (cwd, file) = FilePath.splitFileName makefilePath
 
@@ -151,12 +151,12 @@ parseMakefile printer _ origMakefilePath finalMakefilePath vars cwd = do
         rawMakefile <- BMake.parse absFinalMakefilePath vars
         let makefile = runIdentity $ Makefile.onMakefilePaths (Identity . FilePath.canonicalizePathAsRelativeCwd cwd) rawMakefile
         Makefile.verifyPhonies makefile
-        return makefile
+        pure makefile
     let msg = "Parsed makefile: "
     Printer.rawPrintStrLn printer $ mconcat
         [ msg, cPath (show origMakefilePath)
         , " (took ", cTiming (show parseTime <> "sec"), ")"]
-    return makefile
+    pure makefile
     where
         Color.Scheme{..} = Color.scheme
 
@@ -175,14 +175,14 @@ instance Show MakefileScanFailed where
 -- TODO: Extract the --enable/disable colors outside of the
 -- version/etc separation.
 getColorRender :: Opts -> IO (ColorText -> ByteString)
-getColorRender GetVersion = return ColorText.stripColors
+getColorRender GetVersion = pure ColorText.stripColors
 getColorRender (Opts opt) =
     case optColor opt of
-    Opts.ColorDisable -> return ColorText.stripColors
-    Opts.ColorEnable -> return ColorText.render
+    Opts.ColorDisable -> pure ColorText.stripColors
+    Opts.ColorEnable -> pure ColorText.render
     Opts.ColorDefault -> do
         isTty <- queryTerminal stdOutput
-        return $
+        pure $
             if isTty
             then ColorText.render
             else ColorText.stripColors
@@ -219,7 +219,7 @@ showHelpFlags flags = do
 
 verifyValidFlags :: Makefile.Vars -> [ByteString] -> IO ()
 verifyValidFlags validFlags userFlags
-    | null invalidUserFlags = return ()
+    | null invalidUserFlags = pure ()
     | otherwise = fail $ "Given non-existent flags: " ++ show invalidUserFlags
     where
         invalidUserFlags = filter (`M.notMember` validFlags) userFlags
@@ -233,7 +233,7 @@ handleOpts printer (Opts opt) body = do
     origMakefilePath <-
         case optMakefilePath opt of
         Nothing ->
-            maybe (E.throwIO (MakefileScanFailed (Printer.render printer))) return =<<
+            maybe (E.throwIO (MakefileScanFailed (Printer.render printer))) pure =<<
             scanFileUpwards standardMakeFilename
         Just path -> specifiedMakefile printer path
     (origCwd, finalMakefilePath, cwd) <- switchDirectory origMakefilePath
@@ -276,9 +276,9 @@ handleRequested
     = do
             Buildsome.BuiltTargets rootTargets slaveStats <-
                 Buildsome.want printer buildsome collectStats reason requestedTargetPaths
-            maybe (return ()) (Chart.make slaveStats) mChartPath
+            maybe (pure ()) (Chart.make slaveStats) mChartPath
             cwd <- Posix.getWorkingDirectory
-            maybe (return ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
+            maybe (pure ()) (ClangCommands.make cwd slaveStats rootTargets) mClangCommandsPath
             whenCompat $
                 CompatMakefile.make (Buildsome.bsPhoniesSet buildsome) cwd slaveStats rootTargets "compat-makefile"
     where
@@ -287,8 +287,8 @@ handleRequested
             Opts.CompatMakefile -> (CollectStats PutInputsInStats, id :: IO a -> IO a)
             Opts.NoCompatMakefile
                     | isJust mChartPath || isJust mClangCommandsPath
-                        -> (CollectStats DontPutInputsInStats, const (return ()))
-                    | otherwise -> (DontCollectStats, const (return ()))
+                        -> (CollectStats DontPutInputsInStats, const (pure ()))
+                    | otherwise -> (DontCollectStats, const (pure ()))
 
 -- Includes "fail" and "error" (i.e: userError is part of IOError)
 -- Other error types are trusted to do their own color pretty-printing

@@ -17,7 +17,7 @@ import           Prelude.Compat
 %name happyParser
 %tokentype { Token }
 
-%monad { Parser } { thenP } { returnP }
+%monad { Parser } { thenP } { pureP }
 %lexer { lexer } { Token _ TokenEOF }
 %errorhandlertype explist
 %error { handleErrorExpList }
@@ -74,11 +74,11 @@ Statement :: {Maybe Statement}
       | ExprList MW ":" MW TgtExprListInputE TgtScriptE
                                        {% Lexer.getFileName >>= \fn ->
                                            let regularInputs = $5
-                                            in return $ Just $ Target (fn, tokenToPosN $3) $1 regularInputs [] $6 }
+                                            in pure $ Just $ Target (fn, tokenToPosN $3) $1 regularInputs [] $6 }
       | ExprList MW ":" MW TgtExprListInputE "|" TgtExprListE TgtScriptE
                                        {% Lexer.getFileName >>= \fn ->
                                            let regularInputs = $5
-                                            in return $ Just $ Target ("", tokenToPosN $3) $1 regularInputs $7 $8 }
+                                            in pure $ Just $ Target ("", tokenToPosN $3) $1 regularInputs $7 $8 }
       | include MW OTHER               { Just $ Include $3 }
       | SPACES                         { Nothing }
       | ifeq IfStmt                    { Just $ ($2) $ IfCmp IfEquals }
@@ -113,9 +113,9 @@ ExprDList :: {DList Expr}
 Expr :: {Expr}
       : OTHER                         { Str $1 }
       | DC                            { parseDCToken $1 }
-      | "$" "{" OTHER "}"             {% Lexer.getFileName >>= \fn -> return $ VarSimple (fn, tokenToPosN $2) $3 }
-      | "{"                           {% Lexer.getFileName >>= \fn -> return $ OpenBrace (fn, tokenToPosN $1) }
-      | "}"                           {% Lexer.getFileName >>= \fn -> return $ CloseBrace (fn, tokenToPosN $1) }
+      | "$" "{" OTHER "}"             {% Lexer.getFileName >>= \fn -> pure $ VarSimple (fn, tokenToPosN $2) $3 }
+      | "{"                           {% Lexer.getFileName >>= \fn -> pure $ OpenBrace (fn, tokenToPosN $1) }
+      | "}"                           {% Lexer.getFileName >>= \fn -> pure $ CloseBrace (fn, tokenToPosN $1) }
       | SPACES                        { Spaces }
       | ","                           { Comma }
       | "|"                           { Str "|" }
@@ -145,9 +145,9 @@ NoCommaExprDList :: {DList Expr}
 NoCommaExpr :: {Expr}
       : OTHER                         { Str $1 }
       | DC                            { parseDCToken $1 }
-      | "$" "{" OTHER "}"             {% Lexer.getFileName >>= \fn -> return $ VarSimple (fn, tokenToPosN $2) $3 }
-      | "{"                           {% Lexer.getFileName >>= \fn -> return $ OpenBrace (fn, tokenToPosN $1) }
-      | "}"                           {% Lexer.getFileName >>= \fn -> return $ CloseBrace (fn, tokenToPosN $1) }
+      | "$" "{" OTHER "}"             {% Lexer.getFileName >>= \fn -> pure $ VarSimple (fn, tokenToPosN $2) $3 }
+      | "{"                           {% Lexer.getFileName >>= \fn -> pure $ OpenBrace (fn, tokenToPosN $1) }
+      | "}"                           {% Lexer.getFileName >>= \fn -> pure $ CloseBrace (fn, tokenToPosN $1) }
       | SPACES                        { Spaces }
       | "|"                           { Str "|" }
       | "%"                           { Str "%" }
@@ -175,10 +175,10 @@ TgtExpr :: {Expr}
       : OTHER                         { Str $1 }
       | SPACES                        { Spaces }
       | DC                            { parseDCToken $1 }
-      | "$" "{" OTHER "}"             {% Lexer.getFileName >>= \fn -> return $ VarSimple (fn, tokenToPosN $2) $3 }
+      | "$" "{" OTHER "}"             {% Lexer.getFileName >>= \fn -> pure $ VarSimple (fn, tokenToPosN $2) $3 }
       | "$"                           { Str "$" }
-      | "{"                           {% Lexer.getFileName >>= \fn -> return $ OpenBrace (fn, tokenToPosN $1) }
-      | "}"                           {% Lexer.getFileName >>= \fn -> return $ CloseBrace (fn, tokenToPosN $1) }
+      | "{"                           {% Lexer.getFileName >>= \fn -> pure $ OpenBrace (fn, tokenToPosN $1) }
+      | "}"                           {% Lexer.getFileName >>= \fn -> pure $ CloseBrace (fn, tokenToPosN $1) }
       | else                          { Str "else" }
       | ifeq                          { Str "ifeq" }
       | ifneq                         { Str "ifneq" }
@@ -207,10 +207,10 @@ TgtInputExpr :: {Expr}
       : OTHER                         { Str $1 }
       | SPACES                        { Spaces }
       | DC                            { parseDCToken $1 }
-      | "$" "{" OTHER "}"             {% Lexer.getFileName >>= \fn -> return $ VarSimple (fn, tokenToPosN $2) $3 }
+      | "$" "{" OTHER "}"             {% Lexer.getFileName >>= \fn -> pure $ VarSimple (fn, tokenToPosN $2) $3 }
       | "$"                           { Str "$" }
-      | "{"                           {% Lexer.getFileName >>= \fn -> return $ OpenBrace (fn, tokenToPosN $1) }
-      | "}"                           {% Lexer.getFileName >>= \fn -> return $ CloseBrace (fn, tokenToPosN $1) }
+      | "{"                           {% Lexer.getFileName >>= \fn -> pure $ OpenBrace (fn, tokenToPosN $1) }
+      | "}"                           {% Lexer.getFileName >>= \fn -> pure $ CloseBrace (fn, tokenToPosN $1) }
       | else                          { Str "else" }
       | ifeq                          { Str "ifeq" }
       | ifneq                         { Str "ifneq" }

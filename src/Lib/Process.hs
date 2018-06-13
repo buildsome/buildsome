@@ -75,5 +75,5 @@ getOutputs cmd inheritedEnvs envs = do
             exitCode <- waitForProcess processHandle
             stdout <- wait stdoutReader
             stderr <- wait stderrReader
-            return (exitCode, StdOutputs { stdOut = stdout, stdErr = stderr })
+            pure (exitCode, StdOutputs { stdOut = stdout, stdErr = stderr })
       _ -> error "withProcess didn't supply handles?!"

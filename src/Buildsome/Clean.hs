@@ -26,10 +26,10 @@ output :: FilePath -> IO Result
 output path = do
     mStat <- getMFileStatus path
     case mStat of
-        Nothing -> return mempty
+        Nothing -> pure mempty
         Just stat -> do
           removeFileOrDirectory path
-          return
+          pure
             Result
             { cleanedTotalSize = fileSize stat
             , cleanedTotalEstimatedSpace = align 4096 (fileSize stat)

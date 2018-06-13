@@ -16,14 +16,14 @@ timeIt act =
         before <- getCurrentTime
         res <- act
         after <- getCurrentTime
-        return (after `diffUTCTime` before, res)
+        pure (after `diffUTCTime` before, res)
 
 printTimeIt :: String -> IO a -> IO a
 printTimeIt msg act =
     do
         (t, res) <- timeIt act
         putStrLn $ msg ++ " took " ++ show t
-        return res
+        pure res
 
 pureTimeIt :: String -> a -> a
 pureTimeIt msg x = unsafePerformIO $ printTimeIt msg (evaluate x)

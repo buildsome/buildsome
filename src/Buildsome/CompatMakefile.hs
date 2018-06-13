@@ -41,7 +41,7 @@ makefileTarget :: Target -> IO MakefileTarget
 makefileTarget target = do
   repIsDir <- isDir repPath
   (targetOutputDirs, targetOutputFiles) <- partitionA isDir (targetOutputs target)
-  return MakefileTarget
+  pure MakefileTarget
     { makefileTargetPaths = map (</> ".dir") targetOutputDirs ++ targetOutputFiles
     , makefileTargetDirs = targetOutputDirs
     , isDirectory = repIsDir
@@ -104,7 +104,7 @@ onOneTarget phoniesSet cwd stats target =
         , prependAll "\t" $ targetCmdLines tgt target
         , [ "" ]
         ]
-    return $ myLines ++ depsLines
+    pure $ myLines ++ depsLines
   where
     inputs =
       fromMaybe

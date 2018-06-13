@@ -76,14 +76,14 @@ mergeAllFileStatuses :: FilePath -> [Maybe Posix.FileStatus] -> IO (Maybe Posix.
 mergeAllFileStatuses filePath = go
   where
     go [] = fail "Empty list impossible"
-    go [x] = return x
+    go [x] = pure x
     go (x:xs) = do
       r <- go xs
       Meddling.assertSameMTime "When checking Makefile inputs" filePath x r
-      return x
+      pure x
 
 runM :: M a -> IO (ReadFiles, [PutStrLn], a)
 runM (M act) = do
   (res, w) <- runStateT act mempty
   readFiles <- Map.traverseWithKey mergeAllFileStatuses (wReadFiles w)
-  return (readFiles, wPutStrLns w, res)
+  pure (readFiles, wPutStrLns w, res)

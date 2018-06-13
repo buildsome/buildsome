@@ -109,7 +109,7 @@ onAllSlaves shouldCancel bs =
                                         Slave.cancel slave
                                     _ <- timeoutWarning "finish" (Timeout.seconds 1) slave $
                                         Slave.waitCatch slave
-                                    return ()
+                                    pure ()
                                 `finally` atomicModifyIORef'_ completedRef (M.insert key slave)
                                 `logErrors` BS8.unpack ("cancel of slave " <> bsRender bs (Slave.str slave) <> " failed: ")
                         -- Make sure to cancel any potential new slaves that were
@@ -142,7 +142,7 @@ updateGitIgnore buildsome makefilePath = do
     verbosePutLn buildsome IO.stdout "Updating .gitignore"
     base <- Dir.catchDoesNotExist
                     (fmap BS8.lines $ BS8.readFile $    BS8.unpack gitIgnoreBasePath)
-                    $ return []
+                    $ pure []
     let
         generatedPaths =
             map (("/" <>) . FilePath.makeRelative dir) $
@@ -178,9 +178,9 @@ assertExplicitInputsExist BuildTargetEnv{..} paths = do
             unless doesExist $ throwE $
                 ExplicitFileMissing (bsRender bteBuildsome) path bteParents
     case res of
-        Right () -> return ExplicitPathsBuilt
+        Right () -> pure ExplicitPathsBuilt
         Left err | bteExplicitlyDemanded -> E.throwIO err
-                         | otherwise -> return ExplicitPathsNotBuilt
+                         | otherwise -> pure ExplicitPathsNotBuilt
 
 -- | Top-level root target
 want :: Printer -> Buildsome -> CollectStats -> Reason -> [FilePath] -> IO BuiltTargets
@@ -210,7 +210,7 @@ want printer buildsome collectStats reason paths = do
     printStrLn printer $ mconcat
         [ lastLinePrefix, ": "
         , cTiming (show buildTime <> " seconds"), " total." ]
-    return builtTargets
+    pure builtTargets
     where
         Color.Scheme{..} = Color.scheme
 
@@ -236,11 +236,11 @@ slaveForDirectPath :: BuildTargetEnv -> FilePath -> IO (Maybe (Parallelism.Entit
 slaveForDirectPath bte@BuildTargetEnv{..} path
     | FilePath.isAbsolute path =
         -- Only project-relative paths may have output rules:
-        return Nothing
-    | not bteExplicitlyDemanded && isPhony bteBuildsome path = return Nothing
+        pure Nothing
+    | not bteExplicitlyDemanded && isPhony bteBuildsome path = pure Nothing
     | otherwise =
     case BuildMaps.find (bsBuildMaps bteBuildsome) path of
-    Nothing -> return Nothing
+    Nothing -> pure Nothing
     Just (targetKind, targetDesc) ->
         Just <$>
         getSlaveForTarget
@@ -250,7 +250,7 @@ slaveForDirectPath bte@BuildTargetEnv{..} path
 
 slavesForChildrenOf :: BuildTargetEnv -> FilePath -> IO [(Parallelism.Entity, Slave Stats)]
 slavesForChildrenOf bte@BuildTargetEnv{..} path
-    | FilePath.isAbsolute path = return [] -- Only project-relative paths may have output rules
+    | FilePath.isAbsolute path = pure [] -- Only project-relative paths may have output rules
     | not (null childPatterns) =
         fail $ "UNSUPPORTED: Read directory on directory with patterns. Path: '" ++ show path ++ "' (" ++ BS8.unpack (bsRender bteBuildsome $ show bteReason) ++ ") Patterns: " ++ show childPatterns
     | otherwise =
@@ -279,7 +279,7 @@ slavesFor bte@BuildTargetEnv{..} (SlaveRequestFull path) = do
     children <-
         slavesForChildrenOf
         bte { bteReason = Db.BecauseChildOfFullyRequestedDirectory bteReason } path
-    return $ maybeToList mSlave ++ children
+    pure $ maybeToList mSlave ++ children
 
 slaveReqForAccessType :: FSHook.AccessType -> FilePath -> SlaveRequest
 slaveReqForAccessType FSHook.AccessTypeFull = SlaveRequestFull
@@ -298,7 +298,7 @@ slaveReqForAccessType FSHook.AccessTypeStat =
 -- pattern, reduce code duplication
 waitForSlavesWithParReleased ::
     BuildTargetEnv -> Parallelism.Entity -> [(Parallelism.Entity, Slave Stats)] -> IO BuiltTargets
-waitForSlavesWithParReleased _ _ [] = return mempty
+waitForSlavesWithParReleased _ _ [] = pure mempty
 waitForSlavesWithParReleased BuildTargetEnv{..} entity forkedSlaves =
     Parallelism.withReleased btePrinter (bsParPool bteBuildsome) entity forks $
     do
@@ -306,7 +306,7 @@ waitForSlavesWithParReleased BuildTargetEnv{..} entity forkedSlaves =
                 Printer.printStrLn btePrinter $
                 "Waiting for " <> ColorText.intercalate ", " (map Slave.str slaves)
         stats <- mconcat <$> traverse Slave.wait slaves
-        return BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
+        pure BuiltTargets { builtTargets = map Slave.target slaves, builtStats = stats }
     where
         forks = map fst forkedSlaves
         slaves = map snd forkedSlaves
@@ -318,7 +318,7 @@ buildExplicitWithParReleased bte@BuildTargetEnv{..} entity inputs = do
     built <-
         waitForSlavesWithParReleased bte entity . concat =<< traverse (slavesFor bte) inputs
     explicitPathsBuilt <- assertExplicitInputsExist bte $ map inputFilePath inputs
-    return (explicitPathsBuilt, built)
+    pure (explicitPathsBuilt, built)
 
 data IllegalUnspecifiedOutputs = IllegalUnspecifiedOutputs (ColorText -> ByteString) Target [FilePath]
     deriving (Typeable)
@@ -342,7 +342,7 @@ verifyTargetSpec bte inputs outputs target = do
 verifyTargetInputs :: BuildTargetEnv -> Set FilePath -> Target -> IO ()
 verifyTargetInputs bte@BuildTargetEnv{..} inputs target
     | all (`S.member` bsPhoniesSet bteBuildsome)
-        (targetOutputs target) = return () -- Phony target doesn't need real inputs
+        (targetOutputs target) = pure () -- Phony target doesn't need real inputs
     | otherwise =
         warnOverSpecified bte "inputs" ""
         (S.fromList (targetAllInputs target) `S.difference`
@@ -380,7 +380,7 @@ verifyTargetOutputs bte@BuildTargetEnv{..} outputs target = do
                 (outputs `S.union` bsPhoniesSet bteBuildsome)
     warnOverSpecified bte "outputs" " (consider adding a .PHONY declaration)" unusedOutputs (targetPos target)
     traverse_ removeFileOrDirectoryOrNothing $ S.toList unusedOutputs
-    return $ S.intersection outputs specified
+    pure $ S.intersection outputs specified
     where
         Color.Scheme{..} = Color.scheme
         (unspecifiedOutputs, illegalOutputs) =
@@ -418,7 +418,7 @@ verifyFileDesc ::
 verifyFileDesc str filePath fileDesc existingVerify = do
     mStat <- liftIO $ Dir.getMFileStatus filePath
     case (mStat, fileDesc) of
-        (Nothing, Db.FileDescNonExisting _) -> return ()
+        (Nothing, Db.FileDescNonExisting _) -> pure ()
         (Just stat, Db.FileDescExisting desc) -> existingVerify stat desc
         (Just _, Db.FileDescNonExisting _)    -> throwE (str <> " file did not exist, now exists", filePath)
         (Nothing, Db.FileDescExisting {}) -> throwE (str <> " file was deleted", filePath)
@@ -474,7 +474,7 @@ syncCatchAndLogSpeculativeErrors printer TargetDesc{..} errRes =
             Print.posMessage printer (targetPos tdTarget) $ cWarning $
             "Warning: Ignoring failed build of speculative target: " <>
             cTarget (show tdRep) <> " " <> showFirstLine e
-        return (errRes e)
+        pure (errRes e)
     where
         Color.Scheme{..} = Color.scheme
 
@@ -494,7 +494,7 @@ tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog =
             (Right <$> executionLogBuildInputs bte entity targetDesc executionLog)
         withExceptT MismatchedFiles $
             executionLogVerifyFilesState bte targetDesc executionLog
-        return (executionLog, builtTargets)
+        pure (executionLog, builtTargets)
 
 executionLogVerifyFilesState ::
     MonadIO m =>
@@ -506,8 +506,8 @@ executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionL
             when (Posix.modificationTimeHiRes stat /= mtime) $ do
                 let verify str getDesc mPair =
                             verifyMDesc ("input(" <> str <> ")") filePath getDesc $ snd <$> mPair
-                verify "mode" (return (fileModeDescOfStat stat)) mModeAccess
-                verify "stat" (return (fileStatDescOfStat stat)) mStatAccess
+                verify "mode" (pure (fileModeDescOfStat stat)) mModeAccess
+                verify "stat" (pure (fileStatDescOfStat stat)) mStatAccess
                 verify "content"
                     (fileContentDescOfStat "When applying execution log (input)"
                      db filePath stat) mContentAccess
@@ -516,7 +516,7 @@ executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionL
     -- the output content is still correct
     forM_ (M.toList elOutputsDescs) $ \(filePath, outputDesc) ->
         verifyFileDesc "output" filePath outputDesc $ \stat (Db.OutputDesc oldStatDesc oldMContentDesc) -> do
-            verifyDesc    "output(stat)"        filePath (return (fileStatDescOfStat stat)) oldStatDesc
+            verifyDesc    "output(stat)"        filePath (pure (fileStatDescOfStat stat)) oldStatDesc
             verifyMDesc "output(content)" filePath
                 (fileContentDescOfStat "When applying execution log (output)"
                  db filePath stat) oldMContentDesc
@@ -526,14 +526,14 @@ executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionL
         elStdoutputs elSelfTime
     where
         db = bsDb bteBuildsome
-        verifyMDesc _     _                _             Nothing                = return ()
+        verifyMDesc _     _                _             Nothing                = pure ()
         verifyMDesc str filePath getDesc (Just oldDesc) =
             verifyDesc str filePath getDesc oldDesc
 
         verifyDesc str filePath getDesc oldDesc = do
             newDesc <- liftIO getDesc
             case Cmp.cmp oldDesc newDesc of
-                Cmp.Equals -> return ()
+                Cmp.Equals -> pure ()
                 Cmp.NotEquals reasons ->
                     -- fail entire computation
                     throwE (str <> ": " <> BS8.intercalate ", " reasons, filePath)
@@ -550,13 +550,13 @@ executionLogBuildInputs bte@BuildTargetEnv{..} entity TargetDesc{..} Db.Executio
     where
         mkInputSlavesFor desc inputPath =
             case fromFileDesc desc of
-                Nothing -> return []
+                Nothing -> pure []
                 Just (depReason, accessType) ->
                     slavesFor bteImplicit
                     { bteReason = Db.BecauseSpeculative depReason }
                     $ slaveReqForAccessType accessType inputPath
         mkInputSlaves (inputPath, desc)
-            | inputPath `S.member` hinted = return []
+            | inputPath `S.member` hinted = pure []
             | otherwise = mkInputSlavesFor desc inputPath
         Color.Scheme{..} = Color.scheme
         hinted = S.fromList $ targetAllInputs tdTarget
@@ -595,19 +595,19 @@ findApplyExecutionLog bte@BuildTargetEnv{..} entity TargetDesc{..} = do
     mExecutionLog <- readIRef $ Db.executionLog tdTarget $ bsDb bteBuildsome
     case mExecutionLog of
         Nothing -> -- No previous execution log
-            return Nothing
+            pure Nothing
         Just executionLog -> do
             eRes <- tryApplyExecutionLog bte entity TargetDesc{..} executionLog
             case eRes of
                 Left (SpeculativeBuildFailure exception)
-                    | isThreadKilled exception -> return Nothing
+                    | isThreadKilled exception -> pure Nothing
                 Left err -> do
                     printStrLn btePrinter $ bsRender bteBuildsome $ mconcat
                         [ "Execution log of ", cTarget (show (targetOutputs tdTarget))
                         , " did not match because ", describeError err
                         ]
-                    return Nothing
-                Right res -> return (Just res)
+                    pure Nothing
+                Right res -> pure (Just res)
     where
         Color.Scheme{..} = Color.scheme
         describeError (MismatchedFiles (str, filePath)) =
@@ -676,7 +676,7 @@ getSlaveForTarget bte@BuildTargetEnv{..} TargetDesc{..}
                         wrapChild depPrinter $ unmask $ do
                             let newBte = bte { bteParents = newParents, btePrinter = depPrinter }
                             buildTarget newBte fork TargetDesc{..}
-            return (fork, slave)
+            pure (fork, slave)
         where
             Color.Scheme{..} = Color.scheme
             newParents = (tdRep, tdTarget, bteReason) : bteParents
@@ -717,7 +717,7 @@ removeOldOutput :: Printer -> Buildsome -> Set FilePath -> FilePath -> IO ()
 removeOldOutput printer buildsome registeredOutputs path = do
     mStat <- getMFileStatus path
     case mStat of
-        Nothing -> return () -- Nothing to do
+        Nothing -> pure () -- Nothing to do
         Just _
             | path `S.member` registeredOutputs -> removeFileOrDirectory path
             | otherwise -> removeOldUnregisteredOutput printer buildsome path
@@ -737,7 +737,7 @@ outEffectToMaybe OutputEffectChanged = True
 delayedOutputEffect :: FSHook.DelayedOutput -> IO Bool
 delayedOutputEffect (FSHook.DelayedOutput behavior path) = do
     outputExists <- FilePath.exists path
-    return $ outEffectToMaybe $
+    pure $ outEffectToMaybe $
         if outputExists
         then whenFileExists behavior
         else whenFileMissing behavior
@@ -811,7 +811,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
     where
         fsUndelayedAccessHandler accessDoc rawInputs rawOutputs =
             commonAccessHandler accessDoc rawInputs rawOutputs
-            FSHook.outPath (return . undelayedOutputEffect) $ \_ _ -> return ()
+            FSHook.outPath (pure . undelayedOutputEffect) $ \_ _ -> pure ()
 
         fsDelayedAccessHandler accessDoc rawInputs rawOutputs =
             commonAccessHandler accessDoc rawInputs rawOutputs
@@ -837,7 +837,7 @@ fsAccessHandlers outputsRef inputsRef builtTargetsRef bte@BuildTargetEnv{..} ent
                 () <- handler inputs outputs
                 let addMEffect output = do
                             hasEffect <- getOutEffect output
-                            return $ if hasEffect
+                            pure $ if hasEffect
                                 then Just $ getOutPath output
                                 else Nothing
                 filteredOutputs <- S.fromList . catMaybes <$> traverse addMEffect outputs
@@ -863,12 +863,12 @@ runCmd bte@BuildTargetEnv{..} entity target = do
     case exitCode of
         ExitFailure {} ->
             E.throwIO $ TargetCommandFailed (bsRender bteBuildsome) target exitCode stdOutputs
-        _ -> return ()
+        _ -> pure ()
     Print.targetStdOutputs btePrinter target stdOutputs
     inputs <- readIORef inputsRef
     outputs <- readIORef outputsRef
     builtTargets <- readIORef builtTargetsRef
-    return RunCmdResults
+    pure RunCmdResults
         { rcrStdOutputs = stdOutputs
         , rcrSelfTime = realToFrac time
         , rcrInputs =
@@ -897,17 +897,17 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
                         mStat <- Dir.getMFileStatus outPath
                         fileDesc <-
                                 case mStat of
-                                Nothing -> return $ Db.FileDescNonExisting ()
+                                Nothing -> pure $ Db.FileDescNonExisting ()
                                 Just stat ->
                                         Db.FileDescExisting . Db.OutputDesc (fileStatDescOfStat stat)
                                         <$> if Posix.isDirectory stat
-                                                then return Nothing
+                                                then pure Nothing
                                                 else
                                                         Just <$>
                                                         fileContentDescOfStat "When making execution log (output)"
                                                         db outPath stat
-                        return (outPath, fileDesc)
-        return Db.ExecutionLog
+                        pure (outPath, fileDesc)
+        pure Db.ExecutionLog
                 { elBuildId = bsBuildId buildsome
                 , elCommand = targetInterpolatedCmds target
                 , elInputsDescs = inputsDescs
@@ -930,22 +930,22 @@ makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
                         [] -> error $ "AccessTypes empty in rcrInputs:" ++ show path
                         x:_ -> x
             assertFileMTime path Nothing
-            return $ Db.FileDescNonExisting reason
+            pure $ Db.FileDescNonExisting reason
         inputAccess path (accessTypes, Just stat) = do
             assertFileMTime path $ Just stat
             let
                 addDesc accessType getDesc = do
                     desc <- getDesc
-                    return $ flip (,) desc <$> M.lookup accessType accessTypes
+                    pure $ flip (,) desc <$> M.lookup accessType accessTypes
             -- TODO: Missing meddling check for non-contents below!
             modeAccess <-
-                addDesc FSHook.AccessTypeModeOnly $ return $ fileModeDescOfStat stat
+                addDesc FSHook.AccessTypeModeOnly $ pure $ fileModeDescOfStat stat
             statAccess <-
-                addDesc FSHook.AccessTypeStat $ return $ fileStatDescOfStat stat
+                addDesc FSHook.AccessTypeStat $ pure $ fileStatDescOfStat stat
             contentAccess <-
                 addDesc FSHook.AccessTypeFull $
                 fileContentDescOfStat "When making execution log (input)" db path stat
-            return $ Db.FileDescExisting
+            pure $ Db.FileDescExisting
                 ( Posix.modificationTimeHiRes stat
                 , Db.InputDesc
                     { Db.idModeAccess = modeAccess
@@ -970,13 +970,13 @@ buildTargetHints bte@BuildTargetEnv{..} entity target =
             entity $ map SlaveRequestDirect parentPaths
         explicitParentsBuilt <- assertExplicitInputsExist bte parentPaths
         case explicitParentsBuilt of
-            ExplicitPathsNotBuilt -> return (ExplicitPathsNotBuilt, targetParentsBuilt)
+            ExplicitPathsNotBuilt -> pure (ExplicitPathsNotBuilt, targetParentsBuilt)
             ExplicitPathsBuilt -> do
                 (explicitPathsBuilt, inputsBuilt) <-
                     buildExplicitWithParReleased
                         bte { bteReason = Db.BecauseHintFrom $ targetOutputs target }
                         entity $ map SlaveRequestDirect $ targetAllInputs target
-                return (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
+                pure (explicitPathsBuilt, targetParentsBuilt <> inputsBuilt)
     where
         Color.Scheme{..} = Color.scheme
 
@@ -997,7 +997,7 @@ buildTargetReal bte@BuildTargetEnv{..} entity TargetDesc{..} =
         writeIRef (Db.executionLog tdTarget (bsDb bteBuildsome)) executionLog
 
         Print.targetTiming btePrinter "now" rcrSelfTime
-        return (executionLog, rcrBuiltTargets)
+        pure (executionLog, rcrBuiltTargets)
     where
         verbosityCommands = Opts.verbosityCommands verbosity
         verbosity = optVerbosity (bsOpts bteBuildsome)
@@ -1028,18 +1028,18 @@ buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
                 case explicitPathsBuilt of
                         ExplicitPathsNotBuilt ->
                                 -- Failed to build our hints when allowed, just leave with collected stats
-                                return $ builtStats hintedBuiltTargets
+                                pure $ builtStats hintedBuiltTargets
                         ExplicitPathsBuilt
                                 | BS8.null $ targetInterpolatedCmds tdTarget ->
-                                        return $ statsOfNullCmd bte TargetDesc{..} hintedBuiltTargets
+                                        pure $ statsOfNullCmd bte TargetDesc{..} hintedBuiltTargets
                                 | otherwise ->
                                         do
                                                 mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
                                                 (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
                                                         case mSlaveStats of
-                                                        Just res -> return (Stats.FromCache, res)
+                                                        Just res -> pure (Stats.FromCache, res)
                                                         Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..}
-                                                return $! -- strict application, otherwise stuff below isn't
+                                                pure $! -- strict application, otherwise stuff below isn't
                                                                     -- gc'd apparently.
                                                         case bteCollectStats of
                                                         DontCollectStats -> mempty
@@ -1080,13 +1080,13 @@ registerLeakedOutputs = registerDbList Db.leakedOutputsRef
 andM :: Monad m => (a -> m Bool) -> [a] -> m Bool
 andM check = go
         where
-                go [] = return True
+                go [] = pure True
                 go (x:xs) =
                         do
                                 res <- check x
                                 if res
                                         then go xs
-                                        else return False
+                                        else pure False
 
 data FileBuildRule
     = NoBuildRule
@@ -1098,26 +1098,26 @@ getFileBuildRule :: Set FilePath -> Set FilePath -> BuildMaps -> FilePath -> IO 
 getFileBuildRule registeredOutputs phonies buildMaps = go
     where
         go path
-            | path `S.member` phonies = return PhonyBuildRule
+            | path `S.member` phonies = pure PhonyBuildRule
             | otherwise =
                 case BuildMaps.find buildMaps path of
-                Nothing -> return NoBuildRule
-                Just (BuildMaps.TargetSimple, _) -> return ValidBuildRule
+                Nothing -> pure NoBuildRule
+                Just (BuildMaps.TargetSimple, _) -> pure ValidBuildRule
                 Just (BuildMaps.TargetPattern, targetDesc) ->
                     do
                         inputsCanExist <- andM fileCanExist (targetAllInputs (tdTarget targetDesc))
-                        return $
+                        pure $
                             if inputsCanExist
                             then ValidBuildRule
                             else InvalidPatternBuildRule
         fileCanExist path = do
             fileBuildRule <- go path
             case fileBuildRule of
-                InvalidPatternBuildRule -> return False
-                PhonyBuildRule -> return False
-                ValidBuildRule -> return True
+                InvalidPatternBuildRule -> pure False
+                PhonyBuildRule -> pure False
+                ValidBuildRule -> pure True
                 NoBuildRule
-                    | path `S.member` registeredOutputs -> return False -- a has-been
+                    | path `S.member` registeredOutputs -> pure False -- a has-been
                     | otherwise -> FilePath.exists path
 
 deleteRemovedOutputs :: Printer -> Db -> Set FilePath -> BuildMaps -> IO ()
@@ -1194,7 +1194,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
                 , bsSlaveByTargetRep = slaveMapByTargetRep
                 , bsFreshPrinterIds = freshPrinterIds
                 , bsFastKillBuild = case optKeepGoing of
-                        Opts.KeepGoing -> const (return ())
+                        Opts.KeepGoing -> const (pure ())
                         Opts.DieQuickly -> killOnce "Build step failed, no -k specified"
                 , bsRender = Printer.render printer
                 , bsParPool = pool
@@ -1214,7 +1214,7 @@ with printer db makefilePath makefile opt@Opt{..} body = do
         maybeUpdateGitIgnore buildsome =
             case optUpdateGitIgnore of
             Opts.UpdateGitIgnore -> updateGitIgnore buildsome makefilePath
-            Opts.DontUpdateGitIgnore -> return ()
+            Opts.DontUpdateGitIgnore -> pure ()
 
 clean :: Printer -> Buildsome -> IO ()
 clean printer buildsome = do

@@ -140,7 +140,7 @@ serve printer fsHook conn = do
         Just pidJobId -> do
           (pidStr, tidStr, jobId, needStr) <-
             case BS8.split ':' pidJobId of
-            [a,b,c,d] -> return (a,b,c,d)
+            [a,b,c,d] -> pure (a,b,c,d)
             _ -> E.throwIO $ ProtocolError $ "Bad pid/jobid: " ++ BS8.unpack pidJobId
           let fullTidStr = concat [BS8.unpack pidStr, ":", BS8.unpack tidStr]
 
@@ -151,7 +151,7 @@ serve printer fsHook conn = do
               E.throwIO $ ProtocolError $ concat ["Bad slave id: ", show jobId, " mismatches all: ", show jobIds]
             Just (KillingJob _label _labelColorText) ->
               -- New connection created in the process of killing connections, ignore it
-              return ()
+              pure ()
             Just (LiveJob job) ->
               handleJobConnection fullTidStr conn job $ fromNeedStr needStr
             Just (CompletedJob _label labelStr) ->
@@ -166,7 +166,7 @@ printRethrowExceptions :: String -> IO a -> IO a
 printRethrowExceptions msg =
   E.handle $ \e -> do
     case E.fromException e of
-      Just E.ThreadKilled -> return ()
+      Just E.ThreadKilled -> pure ()
       _ -> E.uninterruptibleMask_ $ hPutStrLn stderr $ msg ++ show (e :: E.SomeException)
     E.throwIO e
 
@@ -282,7 +282,7 @@ wrapHandler job conn isDelayed handler =
     -- means we disallow the effect.
     case isDelayed of
       Delayed -> sendGo conn
-      NotDelayed -> return ()
+      NotDelayed -> pure ()
   where
     forwardExceptions =
       handleSync $ \e@E.SomeException {} ->
@@ -336,7 +336,7 @@ timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAcc
     measurePauseTime act = do
       (time, res) <- timeIt act
       addPauseTime time
-      return res
+      pure res
     wrappedFsAccessHandler isDelayed handler accessDoc inputs outputs = do
       let act = handler accessDoc inputs outputs
       case isDelayed of
@@ -354,7 +354,7 @@ timedRunCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAcc
     runCommand fsHook rootFilter inheritEnvs cmdSpec
     label labelColorText wrappedFsAccessHandlers
   subtractedTime <- (time-) <$> readIORef pauseTimeRef
-  return (subtractedTime, res)
+  pure (subtractedTime, res)
 
 withRunningJob :: FSHook -> JobId -> RunningJob -> IO r -> IO r
 withRunningJob fsHook jobId job body = do
@@ -397,7 +397,7 @@ runCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHa
                "children connected to FS hooks")
         Timeout.warning (Timeout.seconds 5) timeoutMsg $
           onActiveConnections awaitConnection
-        return (exitCode, stdOutputs)
+        pure (exitCode, stdOutputs)
   where
     runCmd = Process.getOutputs cmdSpec inheritEnvs
     killConnection (tid, awaitConn) = killThread tid >> awaitConn
@@ -415,16 +415,16 @@ getLdPreloadPath :: Maybe FilePath -> IO FilePath
 getLdPreloadPath (Just path) = do
   ldPreloadPath <- canonicalizePath path
   assertLdPreloadPathExists ldPreloadPath
-  return ldPreloadPath
+  pure ldPreloadPath
 getLdPreloadPath Nothing = do
   installedFilePath <- BS8.pack <$> (getDataFileName . BS8.unpack) fileName
   installedExists <- FilePath.exists installedFilePath
   if installedExists
-    then return installedFilePath
+    then pure installedFilePath
     else do
       argv0 <- getArgv0
       let nearExecPath = takeDirectory argv0 </> fileName
       assertLdPreloadPathExists nearExecPath
-      return nearExecPath
+      pure nearExecPath
   where
     fileName = "cbits/fs_override.so"

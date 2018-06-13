@@ -23,7 +23,7 @@ instance Show MissingPhony where
 verifyPhonies :: Makefile -> IO ()
 verifyPhonies makefile =
   case filter ((`S.notMember` outputPathsSet) . snd) (makefilePhonies makefile) of
-  [] -> return ()
+  [] -> pure ()
   ((pos, danglingInput):_) -> E.throwIO (MissingPhony pos danglingInput)
   where
     outputPathsSet = S.fromList $ concatMap targetOutputs $ makefileTargets makefile

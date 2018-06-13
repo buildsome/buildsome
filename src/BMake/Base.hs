@@ -6,7 +6,7 @@
 
 module BMake.Base
   ( thenP
-  , returnP
+  , pureP
   , happyError
   , handleErrorExpList
   , Parser
@@ -49,8 +49,8 @@ type Parser a = Alex a
 thenP :: Parser a -> (a -> Parser b) -> Parser b
 thenP = (>>=)
 
-returnP :: a -> Parser a
-returnP = return
+pureP :: a -> Parser a
+pureP = pure
 
 alexGetPosition :: Alex AlexPosn
 alexGetPosition = Alex $ \s@AlexState{alex_pos=pos} -> Right (s, pos)

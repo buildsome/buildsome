@@ -41,7 +41,7 @@ parseWithAlex startState bs = root
           loop s' =
               lexer $ \token@(Token _ cls) ->
               case cls of
-              TokenEOF -> return s'
+              TokenEOF -> pure s'
               _ -> loop $ s' `DList.snoc` token
 
 
@@ -96,12 +96,12 @@ memoIO cache action k =
     do
         m <- readIORef cache
         case Map.lookup k m of
-            Just v -> return v
+            Just v -> pure v
             Nothing ->
                 do
                     v <- action k
                     modifyIORef cache $ Map.insert k v
-                    return v
+                    pure v
 
 newParse :: ParseCache -> FilePath -> FilePath -> IO Makefile
 newParse cache rootDir =

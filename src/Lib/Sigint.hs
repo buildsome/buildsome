@@ -27,4 +27,4 @@ withInstalledSigintHandler action body =
         uninstall oldHandler =
             do
                 _ <- handleSigint oldHandler
-                return ()
+                pure ()

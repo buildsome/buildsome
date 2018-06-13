@@ -194,44 +194,44 @@ parseOpenW = mkOpen <$> getOutPath <*> getWord32le <*> getWord32le
 
 execP :: FilePath -> FilePath -> FilePath -> FilePath -> IO Func
 execP file cwd envPath confStrPath
-  | "/" `BS8.isInfixOf` file = return $ ExecP (Just file) []
+  | "/" `BS8.isInfixOf` file = pure $ ExecP (Just file) []
   | otherwise = search [] allPaths
   where
     split = BS8.split ':'
     allPaths =
       map ((</> file) . (cwd </>)) $ split envPath ++ split confStrPath
-    search attempted [] = return $ ExecP Nothing attempted
+    search attempted [] = pure $ ExecP Nothing attempted
     search attempted (path:paths) = do
-      canExec <- fileAccess path False False True `catchDoesNotExist` return False
+      canExec <- fileAccess path False False True `catchDoesNotExist` pure False
       if canExec
-        then return $ ExecP (Just path) attempted
+        then pure $ ExecP (Just path) attempted
         else search (path:attempted) paths
 
 funcs :: IntMap (String, Get (IO Func))
 funcs =
   M.fromList
-  [ (0x10000, ("openR"   , return <$> (OpenR <$> getInPath)))
-  , (0x10001, ("openW"   , return <$> parseOpenW)) -- TODO: Parse here, do post-process in func like execP
-  , (0x10002, ("creat"   , return <$> (Creat <$> getOutPath <*> getWord32le)))
-  , (0x10003, ("stat"    , return <$> (Stat <$> getInPath)))
-  , (0x10004, ("lstat"   , return <$> (LStat <$> getInPath)))
-  , (0x10005, ("opendir" , return <$> (OpenDir <$> getInPath)))
-  , (0x10006, ("access"  , return <$> (Access <$> getInPath <*> getWord32le)))
-  , (0x10007, ("truncate", return <$> (Truncate <$> getOutPath <*> getWord64le)))
-  , (0x10008, ("unlink"  , return <$> (Unlink <$> getOutPath <*> getWord32le)))
-  , (0x10009, ("rename"  , return <$> (Rename <$> getOutPath <*> getOutPath)))
-  , (0x1000A, ("chmod"   , return <$> (Chmod <$> getOutPath <*> getWord32le)))
-  , (0x1000B, ("readlink", return <$> (ReadLink <$> getInPath)))
-  , (0x1000C, ("mknod"   , return <$> (MkNod <$> getOutPath <*> getWord32le <*> getWord64le)))
-  , (0x1000D, ("mkdir"   , return <$> (MkDir <$> getOutPath <*> getWord32le)))
-  , (0x1000E, ("rmdir"   , return <$> (RmDir <$> getOutPath)))
-  , (0x1000F, ("symlink" , return <$> (SymLink <$> getInPath <*> getOutPath)))
-  , (0x10010, ("link"    , return <$> (Link <$> getOutPath <*> getOutPath)))
-  , (0x10011, ("chown"   , return <$> (Chown <$> getOutPath <*> getWord32le <*> getWord32le)))
-  , (0x10012, ("exec"    , return <$> (Exec <$> getInPath)))
+  [ (0x10000, ("openR"   , pure <$> (OpenR <$> getInPath)))
+  , (0x10001, ("openW"   , pure <$> parseOpenW)) -- TODO: Parse here, do post-process in func like execP
+  , (0x10002, ("creat"   , pure <$> (Creat <$> getOutPath <*> getWord32le)))
+  , (0x10003, ("stat"    , pure <$> (Stat <$> getInPath)))
+  , (0x10004, ("lstat"   , pure <$> (LStat <$> getInPath)))
+  , (0x10005, ("opendir" , pure <$> (OpenDir <$> getInPath)))
+  , (0x10006, ("access"  , pure <$> (Access <$> getInPath <*> getWord32le)))
+  , (0x10007, ("truncate", pure <$> (Truncate <$> getOutPath <*> getWord64le)))
+  , (0x10008, ("unlink"  , pure <$> (Unlink <$> getOutPath <*> getWord32le)))
+  , (0x10009, ("rename"  , pure <$> (Rename <$> getOutPath <*> getOutPath)))
+  , (0x1000A, ("chmod"   , pure <$> (Chmod <$> getOutPath <*> getWord32le)))
+  , (0x1000B, ("readlink", pure <$> (ReadLink <$> getInPath)))
+  , (0x1000C, ("mknod"   , pure <$> (MkNod <$> getOutPath <*> getWord32le <*> getWord64le)))
+  , (0x1000D, ("mkdir"   , pure <$> (MkDir <$> getOutPath <*> getWord32le)))
+  , (0x1000E, ("rmdir"   , pure <$> (RmDir <$> getOutPath)))
+  , (0x1000F, ("symlink" , pure <$> (SymLink <$> getInPath <*> getOutPath)))
+  , (0x10010, ("link"    , pure <$> (Link <$> getOutPath <*> getOutPath)))
+  , (0x10011, ("chown"   , pure <$> (Chown <$> getOutPath <*> getWord32le <*> getWord32le)))
+  , (0x10012, ("exec"    , pure <$> (Exec <$> getInPath)))
   , (0x10013, ("execp"   , execP <$> getNullTerminated mAX_EXEC_FILE <*> getPath <*> getNullTerminated mAX_PATH_ENV_VAR_LENGTH <*> getNullTerminated mAX_PATH_CONF_STR))
-  , (0x10014, ("realPath", return <$> (RealPath <$> getInPath)))
-  , (0xF0000, ("trace"   , return <$> (Trace <$> getSeverity <*> getNullTerminated 1024)))
+  , (0x10014, ("realPath", pure <$> (RealPath <$> getInPath)))
+  , (0xF0000, ("trace"   , pure <$> (Trace <$> getSeverity <*> getNullTerminated 1024)))
   ]
 
 {-# INLINE parseMsgLazy #-}
@@ -246,7 +246,7 @@ parseMsgLazy bs =
       ioFunc <- getter
       finished <- isEmpty
       unless finished $ fail "Unexpected trailing input in message"
-      return (if isDelayedInt == 0 then NotDelayed else Delayed, ioFunc)
+      pure (if isDelayedInt == 0 then NotDelayed else Delayed, ioFunc)
 
 {-# INLINE strictToLazy #-}
 strictToLazy :: ByteString -> BSL.ByteString

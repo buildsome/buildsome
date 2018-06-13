@@ -32,6 +32,6 @@ main = do
           val <- Sophia.valAtCursor cursor
           execLogDoc <-
             E.evaluate (pPrint (decode val :: Db.ExecutionLog))
-            `E.catch` \E.SomeException {} -> return "not an execution log"
+            `E.catch` \E.SomeException {} -> pure "not an execution log"
           putStrLn $ "Key " ++ take 8 (show key) ++ "... = " ++ show execLogDoc
         putStrLn "Done"

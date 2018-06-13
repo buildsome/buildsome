@@ -27,7 +27,7 @@ buildCommands cwd stats target =
   fmap (fromMaybe []) $
   Revisit.avoid (BuildMaps.computeTargetRep target) $ do
     deps <- depBuildCommands
-    return $ myBuildCommands ++ deps
+    pure $ myBuildCommands ++ deps
   where
     myBuildCommands =
       case targetInputs target of
@@ -42,7 +42,7 @@ buildCommands cwd stats target =
         _ -> []
     depBuildCommands =
       case Map.lookup (BuildMaps.computeTargetRep target) (Stats.ofTarget stats) of
-      Nothing -> return [] -- ok because some dependencies have no rule?
+      Nothing -> pure [] -- ok because some dependencies have no rule?
       Just targetStats -> buildCommandsTargets cwd stats $ Stats.tsDirectDeps targetStats
 
 buildCommandsTargets :: FilePath -> Stats -> [Target] -> M [Aeson.Value]

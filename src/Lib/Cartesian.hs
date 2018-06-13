@@ -35,6 +35,6 @@ cartesian pos str =
       _ <- P.char '{'
       cartesians <- go " ,}" `P.sepBy1` P.char ','
       _ <- P.char '}'
-      return $ CartesianFork cartesians
+      pure $ CartesianFork cartesians
 
     cartesianChar disallowed = CartesianChar <$> P.noneOf disallowed

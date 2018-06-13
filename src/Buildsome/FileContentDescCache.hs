@@ -19,7 +19,7 @@ fileContentDescOfStat msgPrefix db path stat = do
     Just oldCache
       | Posix.modificationTimeHiRes stat ==
         Db.fcdcModificationTime oldCache ->
-        return $ Db.fcdcFileContentDesc oldCache
+        pure $ Db.fcdcFileContentDesc oldCache
     _ -> do
       newFileContentDesc <- FileDesc.fileContentDescOfStat path stat
 
@@ -31,6 +31,6 @@ fileContentDescOfStat msgPrefix db path stat = do
         { Db.fcdcModificationTime = Posix.modificationTimeHiRes stat
         , Db.fcdcFileContentDesc = newFileContentDesc
         }
-      return newFileContentDesc
+      pure newFileContentDesc
   where
     cacheIRef = Db.fileContentDescCache path db

@@ -19,17 +19,17 @@ import           Prelude.Compat hiding (FilePath)
 -- May not receive all if EOF encountered
 recvAll :: Socket -> Int -> IO BS.ByteString
 recvAll _ n | n < 0 = error "recvAll: negative length"
-recvAll _ 0 = return mempty
+recvAll _ 0 = pure mempty
 recvAll sock n = do
   dat <- SockBS.recv sock n
-  if BS.null dat then return dat
+  if BS.null dat then pure dat
   else (dat <>) <$> recvAll sock (n - BS.length dat)
 
 recvFrame :: Socket -> IO (Maybe BS.ByteString)
 recvFrame sock = do
   frameSizeStr <- recvAll sock 4
   if BS.null frameSizeStr
-    then return Nothing
+    then pure Nothing
     else Just <$> recvAll sock (fromIntegral (decode frameSizeStr :: Word32))
 
 {-# INLINE recvLoop_ #-}
@@ -39,7 +39,7 @@ recvLoop_ f sock = go
     go = do
       mFrame <- recvFrame sock
       case mFrame of
-        Nothing -> return ()
+        Nothing -> pure ()
         Just frame -> do
           f frame
           go

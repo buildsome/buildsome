@@ -20,8 +20,8 @@ version =
         Nothing ->
           do sha <- stripWhitespace <$> Process.readProcess "git" ["log", "--pretty=format:%h-%ci", "-1", "HEAD"] ""
              describe <- stripWhitespace <$> Process.readProcess "git" ["describe", "--dirty", "--all"] ""
-             return $ sha ++ "-" ++ describe
+             pure $ sha ++ "-" ++ describe
           where
             stripWhitespace :: String -> String
             stripWhitespace = unwords . words
-        Just x -> return x))
+        Just x -> pure x))

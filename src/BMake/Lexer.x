@@ -101,8 +101,8 @@ getFileName = fmap filePath getUserState
 tok' r f (p, _, input, _) len = do
    case r of
       Just i -> alexSetStartCode i
-      Nothing -> return ()
-   return $ Token p (f (B.take (fromIntegral len) input))
+      Nothing -> pure ()
+   pure $ Token p (f (B.take (fromIntegral len) input))
 
 tok x = tok' Nothing (\s -> x)
 mkStr = BS.pack . B.unpack
@@ -187,7 +187,7 @@ tokenDesc TokenEndif                 = "endif"
 alexEOF :: Alex Token
 alexEOF = do
   (p, _, _, _) <- alexGetInput
-  return $ Token p TokenEOF
+  pure $ Token p TokenEOF
 
 newtype AlexUserState = AlexUserState
     { filePath   :: FilePath.FilePath

@@ -99,7 +99,7 @@ makefile (Makefile stmts) =
        phonies <- liftIO $ readIORef envPhonies
        weakVars <- liftIO $ readIORef envWeakVars
 
-       return $ MT.Makefile {
+       pure $ MT.Makefile {
             MT.makefileTargets = tgts
           , MT.makefilePatterns = pats
           , MT.makefilePhonies = phonies
@@ -239,7 +239,7 @@ local stmts =
         varsSnapshot <- readIORef varsRef & liftIO
         res <- statements stmts
         writeIORef varsRef varsSnapshot & liftIO
-        return res
+        pure res
 
 showExprL :: [Expr3] -> String
 showExprL = concatMap showExpr
@@ -364,7 +364,7 @@ target (filename, AlexPn _ line col) outputs inputs orderOnlyInputs script =
                       , targetPos = pos
                       } : xs
                 liftIO $ modifyIORef' envPatterns modf
-                return ()
+                pure ()
             else case outputPaths of
                 [".PHONY"] -> do
                     when (orderOnlyInputsPaths /= []) $
@@ -373,7 +373,7 @@ target (filename, AlexPn _ line col) outputs inputs orderOnlyInputs script =
                         errWithInfo "Phony target may not specify commands"
                     forM_ inputPaths $ \path ->
                         liftIO $ modifyIORef' envPhonies ((:) (pos, path))
-                    return ()
+                    pure ()
                 _ -> do
                     let resTarget = MT.Target
                           { targetOutputs = outputPaths

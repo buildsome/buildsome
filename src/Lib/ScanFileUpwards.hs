@@ -22,7 +22,7 @@ scanFileUpwards name = do
   res <- runExceptT $ traverse_ check candidates
   case res of
     Left found -> Just <$> FilePath.makeRelativeToCurrentDirectory found
-    Right () -> return Nothing
+    Right () -> pure Nothing
   where
     check path = do
       exists <- liftIO $ FilePath.exists path

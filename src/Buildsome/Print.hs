@@ -80,7 +80,7 @@ outputsStr = StdOutputs.str . colorStdOutputs
 
 targetStdOutputs :: Printer -> Target -> StdOutputs ByteString -> IO ()
 targetStdOutputs printer _target stdOutputs =
-  maybe (return ()) (Printer.rawPrintStrLn printer) $ outputsStr stdOutputs
+  maybe (pure ()) (Printer.rawPrintStrLn printer) $ outputsStr stdOutputs
 
 cmd :: Printer -> Target -> IO ()
 cmd printer target =
@@ -92,13 +92,13 @@ cmd printer target =
 
 replayCmd :: PrintCommands -> Printer -> Target -> IO ()
 replayCmd PrintCommandsForAll printer target = cmd printer target
-replayCmd PrintCommandsForExecution _ _ = return ()
-replayCmd PrintCommandsNever _ _ = return ()
+replayCmd PrintCommandsForExecution _ _ = pure ()
+replayCmd PrintCommandsNever _ _ = pure ()
 
 executionCmd :: PrintCommands -> Printer -> Target -> IO ()
 executionCmd PrintCommandsForAll printer target = cmd printer target
 executionCmd PrintCommandsForExecution printer target = cmd printer target
-executionCmd PrintCommandsNever _ _ = return ()
+executionCmd PrintCommandsNever _ _ = pure ()
 
 delimitMultiline :: ByteString -> ByteString
 delimitMultiline xs
@@ -146,7 +146,7 @@ buildsomeCreation printer version withs withouts verbosity
     , " --with ", show withs
     , " --without ", show withouts
     ]
-  | null (withs ++ withouts) = return ()
+  | null (withs ++ withouts) = pure ()
   | otherwise =
     printStrLn printer $ mconcat
     [ header

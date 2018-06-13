@@ -41,17 +41,17 @@ getMFileStatus :: FilePath -> IO (Maybe Posix.FileStatus)
 getMFileStatus path = do
   doesExist <- FilePath.exists path
   if doesExist
-    then (Just <$> Posix.getFileStatus path) `catchDoesNotExist` return Nothing
-    else return Nothing
+    then (Just <$> Posix.getFileStatus path) `catchDoesNotExist` pure Nothing
+    else pure Nothing
 
 createDirectories :: FilePath -> IO ()
 createDirectories path
-  | BS8.null path = return ()
+  | BS8.null path = pure ()
   | otherwise = do
     doesExist <- FilePath.exists path
     unless doesExist $ do
       createDirectories $ FilePath.takeDirectory path
-      Posix.createDirectory path 0o777 `catchAlreadyExists` return () 
+      Posix.createDirectory path 0o777 `catchAlreadyExists` pure () 
 
 removeFileByStat :: IO () -> FilePath -> IO ()
 removeFileByStat notExist path = do
@@ -65,7 +65,7 @@ removeFileByStat notExist path = do
       | otherwise -> error $ "removeFileOrDirectoryOrNothing: unsupported filestat " ++ show path
 
 removeFileOrDirectoryOrNothing :: FilePath -> IO ()
-removeFileOrDirectoryOrNothing = removeFileByStat $ return ()
+removeFileOrDirectoryOrNothing = removeFileByStat $ pure ()
 
 removeFileOrDirectory :: FilePath -> IO ()
 removeFileOrDirectory path =
@@ -81,7 +81,7 @@ getDirectoryContents path =
     go dirStream = do
       fn <- Posix.readDirStream dirStream
       if BS8.null fn
-        then return []
+        then pure []
         else (fn :) <$> go dirStream
 
 getDirectoryContentsHash :: FilePath -> IO BS8.ByteString
@@ -91,7 +91,7 @@ getDirectoryContentsHash path =
     go !hash !dirStream = do
       fn <- Posix.readDirStream dirStream
       if BS8.null fn
-        then return hash
+        then pure hash
         else go (MD5.hash (hash <> fn)) dirStream
 
 makeAbsolutePath :: FilePath -> IO FilePath
