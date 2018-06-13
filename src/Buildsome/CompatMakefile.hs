@@ -87,7 +87,7 @@ onOneTarget phoniesSet cwd stats target =
     tgt <- lift $ makefileTarget target
     directDepsPaths <-
         lift
-        $ concatMap makefileTargetPaths <$> mapM makefileTarget
+        $ concatMap makefileTargetPaths <$> traverse makefileTarget
         (Stats.tsDirectDeps targetStats)
     let
       (phonies, nonPhonies) = partition (`Set.member` phoniesSet) $ makefileTargetPaths tgt
@@ -121,7 +121,7 @@ onOneTarget phoniesSet cwd stats target =
     depBuildCommands = onMultipleTargets phoniesSet cwd stats directDeps
 
 onMultipleTargets :: Phonies -> FilePath -> Stats -> [Target] -> M [ByteString]
-onMultipleTargets phoniesSet cwd stats = fmap concat . mapM (onOneTarget phoniesSet cwd stats)
+onMultipleTargets phoniesSet cwd stats = fmap concat . traverse (onOneTarget phoniesSet cwd stats)
 
 make :: Phonies -> FilePath -> Stats -> [Target] -> FilePath -> IO ()
 make phoniesSet cwd stats rootTargets filePath = do

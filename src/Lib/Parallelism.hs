@@ -8,12 +8,11 @@ module Lib.Parallelism
   , upgradePriority
   ) where
 
-import           Prelude.Compat
-
 import           Control.Concurrent (forkIO)
 import           Control.Concurrent.MVar
 import qualified Control.Exception as E
 import           Control.Monad (join, when, void)
+import           Data.Foldable (traverse_)
 import           Data.Function (on)
 import           Data.IORef
 import qualified Data.List as List
@@ -21,6 +20,8 @@ import           Lib.Exception (bracket_, onException)
 import           Lib.PoolAlloc (PoolAlloc, Alloc)
 import qualified Lib.PoolAlloc as PoolAlloc
 import           Lib.Printer (Printer)
+
+import           Prelude.Compat
 
 type ParId = Int
 type Pool = PoolAlloc ParId
@@ -197,7 +198,7 @@ maybeReleaseToChildrenLoop allocStartedMVar printer pool parent children =
             ( (rc + 1, EntityReleasedToChildren children allocStartedMVar)
             , do
                 -- The following don't throw exceptions and are non-blocking (we're not interruptible)
-                mapM_ linkBoost children
+                traverse_ linkBoost children
                 PoolAlloc.release pool parId
             )
         EntityAlloced {} -> error "RC != 0 but we're at alloced?!"
@@ -220,7 +221,7 @@ maybeReleaseToChildrenLoop allocStartedMVar printer pool parent children =
             ( (rc + 1, EntityReleasedToChildren children allocStartedMVar)
               -- TODO: readMVar allocStartedMVar >> loop
             , do
-                mapM_ linkBoost children
+                traverse_ linkBoost children
                 assertPutMVar allocCompletionMVar $ error $
                     "Only releaseToChildren(rc == 0) should read this " ++
                     "mvar but we increased counter so it should not be " ++
@@ -235,7 +236,7 @@ maybeReleaseToChildrenLoop allocStartedMVar printer pool parent children =
             ( ( rc + 1
               , EntityReleasedToChildren (uniqueChildren ++ oldChildren) oldAllocStartedMVar
               )
-            , mapM_ linkBoost uniqueChildren
+            , traverse_ linkBoost uniqueChildren
             )
             where
                 uniqueChildren = filter (`notElem` oldChildren) children
@@ -331,7 +332,7 @@ cancelFork printer pool child =
     EntityStateRunning
         (EntityRunning parents _priority 0 (EntityForking _alloc)) ->
             ( EntityStateFinished
-            , mapM_ (notifyParent printer pool child) parents
+            , traverse_ (notifyParent printer pool child) parents
             )
     _ -> error "cancelFork: Expecting an EntityForking with rc=0"
 
@@ -358,7 +359,7 @@ wrapChild pool child alloc printer =
                 (EntityRunning parents _ 0 (EntityAlloced parId)) ->
                     ( EntityStateFinished
                     , do
-                        mapM_ (notifyParent printer pool child) parents
+                        traverse_ (notifyParent printer pool child) parents
                         PoolAlloc.release pool parId
                     )
             _ -> error "forked child did not return to Alloced state with rc=0"
@@ -383,7 +384,7 @@ boostPriority printer upgrade entity =
               EntityReallocating alloc _mvar ->
                   PoolAlloc.changePriority alloc (priorityVal newPriority)
               EntityReleasedToChildren children _mvar ->
-                  mapM_ (boostChildPriority printer (priorityVal newPriority)) children
+                  traverse_ (boostChildPriority printer (priorityVal newPriority)) children
               EntityReallocStarting _ -> return ()
               -- Not waiting for children, not allocating, do nothing:
               EntityAlloced _ -> return ()

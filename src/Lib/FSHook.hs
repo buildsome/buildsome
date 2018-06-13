@@ -22,6 +22,7 @@ import           Control.Monad (forever, void, unless, (<=<))
 import           Data.Binary (Binary(..))
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Foldable (traverse_)
 import           Data.IORef
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
@@ -385,7 +386,7 @@ runCommand fsHook rootFilter inheritEnvs cmdSpec label labelColorText fsAccessHa
               , jobFSAccessHandlers = fsAccessHandlers
               }
     -- Don't leak connections still running our handlers once we leave!
-    let onActiveConnections f = mapM_ f . M.elems =<< readIORef activeConnections
+    let onActiveConnections f = traverse_ f . M.elems =<< readIORef activeConnections
     (`onException` onActiveConnections killConnection) $
       do
         (exitCode, stdOutputs) <-

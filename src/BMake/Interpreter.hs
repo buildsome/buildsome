@@ -15,6 +15,7 @@ import qualified Control.Monad.Trans.Reader as Reader
 import qualified Data.ByteString.Char8 as BS8
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as BSL8
+import           Data.Foldable (traverse_)
 import           Data.Function ((&))
 import           Data.IORef
 import           Data.List (intercalate, intersperse, dropWhileEnd)
@@ -263,7 +264,7 @@ showExpr (Expr3'VarSpecial specialFlag specialModifier) =
             ModDir -> ('(':) . (++"D)")
 
 statements :: [Statement] -> M ()
-statements = mapM_ statement
+statements = traverse_ statement
 
 hasPatterns :: [Expr3] -> Bool
 hasPatterns (Expr3'Str text:xs) =
@@ -321,7 +322,7 @@ target (filename, AlexPn _ line col) outputs inputs orderOnlyInputs script =
                 put $ "     outs: " ++ showExprL outs
                 put $ "     ins:  " ++ showExprL ins
                 put   "     script:"
-                mapM_ (put . ("        "++) . showExprL) scrps
+                traverse_ (put . ("        "++) . showExprL) scrps
                 put $ show ins
                 put $ show outs
                 put $ show scrps

@@ -3,6 +3,7 @@ module Lib.ScanFileUpwards (scanFileUpwards) where
 import           Control.Monad (when)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Monad.Trans.Except
+import           Data.Foldable (traverse_)
 import           Lib.FilePath (FilePath, (</>))
 import qualified Lib.FilePath as FilePath
 import qualified System.Posix.ByteString as Posix
@@ -18,7 +19,7 @@ scanFileUpwards name = do
     candidates = map (</> name) parents
   -- Use EitherT with Left short-circuiting when found, and Right
   -- falling through to the end of the loop:
-  res <- runExceptT $ mapM_ check candidates
+  res <- runExceptT $ traverse_ check candidates
   case res of
     Left found -> Just <$> FilePath.makeRelativeToCurrentDirectory found
     Right () -> return Nothing

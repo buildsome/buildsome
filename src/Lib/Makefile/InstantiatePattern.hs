@@ -29,9 +29,9 @@ instantiatePatternByMatch match (Target outputs inputs ooInputs cmds pos) =
     mStem = Just $ StringPattern.matchPlaceHolder1 match
     plugInputMatch (InputPattern pat) = plugFilePattern match pat
     plugInputMatch (InputPath str) = Just str
-    mPluggedOutputs  = mapM (plugFilePattern match) outputs
-    mPluggedInputs   = mapM plugInputMatch inputs
-    mPluggedOOInputs = mapM plugInputMatch ooInputs
+    mPluggedOutputs  = traverse (plugFilePattern match) outputs
+    mPluggedInputs   = traverse plugInputMatch inputs
+    mPluggedOOInputs = traverse plugInputMatch ooInputs
 
 instantiatePatternByOutput :: FilePath -> Pattern -> Maybe Target
 instantiatePatternByOutput outputPath target =

@@ -46,7 +46,7 @@ buildCommands cwd stats target =
       Just targetStats -> buildCommandsTargets cwd stats $ Stats.tsDirectDeps targetStats
 
 buildCommandsTargets :: FilePath -> Stats -> [Target] -> M [Aeson.Value]
-buildCommandsTargets cwd stats = fmap concat . mapM (buildCommands cwd stats)
+buildCommandsTargets cwd stats = fmap concat . traverse (buildCommands cwd stats)
 
 make :: FilePath -> Stats -> [Target] -> FilePath -> IO ()
 make cwd stats rootTargets filePath = do

@@ -86,7 +86,7 @@ handleInclude cache dirs other =
     (: []) <$> substmts (handleIncludes cache dirs) other
 
 handleIncludes :: ParseCache -> Dirs -> [Statement] -> IO [Statement]
-handleIncludes cache dirs = fmap concat . mapM (handleInclude cache dirs)
+handleIncludes cache dirs = fmap concat . traverse (handleInclude cache dirs)
 
 parseSingle :: FilePath -> BL8.ByteString -> IO (Either Error Makefile)
 parseSingle fp = evaluate . force . parseMakefile fp
