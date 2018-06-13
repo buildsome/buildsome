@@ -639,6 +639,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
         }                                                               \
         case O_RDWR:                                                    \
             is_also_read = true;                                        \
+            /* Fallthrough */                                           \
         case O_WRONLY: {                                                \
             bool needs_await = false;                                   \
             DEFINE_MSG(msg, openw);                                     \
@@ -732,6 +733,7 @@ struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
         res.is_write = true;
         res.is_read = true;
         res.is_create = true;
+        break;
     default:
         LOG(error, "Invalid fopen mode?!");
         ASSERT(0);
