@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Fresh
   ( Fresh, new
   , next

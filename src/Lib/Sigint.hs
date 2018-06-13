@@ -8,6 +8,8 @@ import Lib.Exception (bracket)
 import Lib.Once (once)
 import System.Posix.ByteString (Handler(..), keyboardSignal, installHandler)
 
+import Prelude.Compat
+
 withInstalledSigintHandler :: IO () -> IO a -> IO a
 withInstalledSigintHandler action body =
     do

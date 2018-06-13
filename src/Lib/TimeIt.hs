@@ -8,6 +8,8 @@ import Control.Exception (evaluate)
 import Data.Time (getCurrentTime, diffUTCTime, NominalDiffTime)
 import System.IO.Unsafe
 
+import Prelude.Compat
+
 timeIt :: IO a -> IO (NominalDiffTime, a)
 timeIt act =
     do

@@ -1,6 +1,5 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 {-# OPTIONS -fno-warn-orphans #-}
-{-# LANGUAGE DeriveGeneric, DeriveDataTypeable, NoMonomorphismRestriction, OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable, NoMonomorphismRestriction #-}
 module Lib.FileDesc
   ( FileContentDesc(..)
   , fileContentDescOfStat

@@ -5,6 +5,8 @@ module Lib.Once
 import Control.Monad (join)
 import Data.IORef
 
+import Prelude.Compat
+
 once :: IO (IO a -> IO (Maybe a))
 once = do
   doneRef <- newIORef False

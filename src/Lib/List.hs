@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.List (filterA, unprefixed, unsuffixed, partitionA) where
 
 import Data.List (isPrefixOf, isSuffixOf)

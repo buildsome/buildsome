@@ -1,4 +1,4 @@
-{-# LANGUAGE StandaloneDeriving, DeriveGeneric #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS -fno-warn-orphans #-}
 module Lib.Posix.Instances () where
 

@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveGeneric, CPP #-}
+{-# LANGUAGE CPP #-}
 module Buildsome.BuildId
   ( BuildId(..), new
   ) where

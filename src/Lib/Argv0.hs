@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Argv0 (getArgv0) where
 
 

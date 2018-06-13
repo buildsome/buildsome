@@ -1,11 +1,12 @@
-{-# LANGUAGE DeriveGeneric #-}
 module Lib.Posix.FileType
   ( FileType(..), fileTypeOfStat
   ) where
 
-import Data.Binary (Binary)
-import GHC.Generics (Generic)
+import           Data.Binary (Binary)
+import           GHC.Generics (Generic)
 import qualified System.Posix.ByteString as Posix
+
+import           Prelude.Compat
 
 data FileType
   = BlockDevice

@@ -1,31 +1,12 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE CPP, FlexibleInstances, StandaloneDeriving, DeriveGeneric #-}
+{-# LANGUAGE CPP, FlexibleInstances, StandaloneDeriving #-}
 {-# OPTIONS -fno-warn-orphans #-}
 module Lib.TimeInstances () where
 
-import Prelude.Compat
-
-import Data.Binary(Binary(..))
+import Data.Binary (Binary(..))
+import Data.Fixed (Pico)
 import Data.Time.Clock (NominalDiffTime, DiffTime)
-import Data.Fixed (Pico, Fixed(..), E12)
 
-toPicos :: Pico -> Integer
-fromPicos :: Integer -> Pico
-#if __GLASGOW_HASKELL__ <= 706
-toPicos = truncate . (*1e12)
-fromPicos = (/1e12) . realToFrac
-#else
-toPicos (MkFixed x) = x
-fromPicos = MkFixed
-#endif
-{-# INLINE toPicos #-}
-{-# INLINE fromPicos #-}
-
-instance Binary (Fixed E12) where
-  get = fromPicos <$> get
-  put = put . toPicos
-  {-# INLINE get #-}
-  {-# INLINE put #-}
+import Prelude.Compat
 
 {-# INLINE toPico #-}
 toPico :: Real a => a -> Pico

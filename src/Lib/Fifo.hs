@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Fifo
   ( Fifo
   , empty, null

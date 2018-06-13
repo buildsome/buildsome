@@ -1,7 +1,7 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, RecordWildCards #-}
+{-# LANGUAGE DeriveDataTypeable, RecordWildCards #-}
 module Main (main) where
 
+import qualified BMake.User as BMake
 import qualified Buildsome
 import           Buildsome (Buildsome, CollectStats(..), PutInputsInStats(..))
 import qualified Buildsome.Chart as Chart
@@ -13,7 +13,6 @@ import qualified Buildsome.Db as Db
 import           Buildsome.Opts (Opts(..), Opt(..))
 import qualified Buildsome.Opts as Opts
 import qualified Buildsome.Print as Print
-import qualified BMake.User as BMake
 import qualified Control.Exception as E
 import           Control.Monad (forM_)
 import           Data.ByteString (ByteString)

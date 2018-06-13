@@ -1,18 +1,20 @@
-{-# LANGUAGE OverloadedStrings, RankNTypes #-}
+{-# LANGUAGE RankNTypes #-}
 module Lib.Timeout
   ( execute, warning
   , picos, nanos, micros, millis, seconds
   ) where
 
-import Control.Concurrent (threadDelay)
-import Control.Exception (uninterruptibleMask)
-import Control.Concurrent.Async (withAsyncWithUnmask)
-import Control.Monad (forever)
-import Data.ByteString (ByteString)
-import Data.Monoid ((<>))
-import Data.Time (DiffTime, picosecondsToDiffTime, secondsToDiffTime)
-import System.IO (stderr)
+import           Control.Concurrent (threadDelay)
+import           Control.Concurrent.Async (withAsyncWithUnmask)
+import           Control.Exception (uninterruptibleMask)
+import           Control.Monad (forever)
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Monoid ((<>))
+import           Data.Time (DiffTime, picosecondsToDiffTime, secondsToDiffTime)
+import           System.IO (stderr)
+
+import           Prelude.Compat
 
 picos :: Integer -> DiffTime
 picos = picosecondsToDiffTime

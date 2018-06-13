@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Directory
   ( getMFileStatus
   , catchDoesNotExist
@@ -11,25 +10,24 @@ module Lib.Directory
   , makeAbsolutePath
   ) where
 
-
-import Prelude.Compat hiding (FilePath)
-
-import Data.Monoid ((<>))
-import Control.Monad
-import Lib.Exception (bracket)
-import Lib.FilePath (FilePath, (</>))
-import System.IO.Error
 import qualified Control.Exception as E
+import           Control.Monad
+import qualified Crypto.Hash.MD5 as MD5
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Monoid ((<>))
+import           Lib.Exception (bracket)
+import           Lib.FilePath (FilePath, (</>))
 import qualified Lib.FilePath as FilePath
 import qualified System.Directory as Dir
+import           System.IO.Error
 import qualified System.Posix.ByteString as Posix
-import qualified Crypto.Hash.MD5 as MD5
+
+import           Prelude.Compat hiding (FilePath)
 
 catchErrorPred :: (IOErrorType -> Bool) -> IO a -> IO a -> IO a
-catchErrorPred pred act handler =
+catchErrorPred predicate act handler =
   act `E.catch` \e ->
-  if pred (ioeGetErrorType e)
+  if predicate (ioeGetErrorType e)
   then handler
   else E.throwIO e
 

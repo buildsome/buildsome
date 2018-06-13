@@ -1,5 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveGeneric #-}
 module Lib.Makefile.Types
   ( TargetType(..), targetAllInputs
   , FilePattern(..), onFilePatternPaths

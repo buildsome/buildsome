@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DefaultSignatures, DeriveFunctor, DeriveFoldable, DeriveTraversable, OverloadedStrings #-}
+{-# LANGUAGE DefaultSignatures #-}
 module Lib.Cmp
   ( ComparisonResult(..), Reasons
   , Cmp(..)
@@ -19,11 +18,13 @@ type Reasons = [ByteString]
 data ComparisonResult reason = NotEquals reason | Equals
   deriving (Eq, Ord, Functor, Foldable, Traversable)
 
-instance Monoid reason => Monoid (ComparisonResult reason) where
-  mempty = Equals
-  mappend (NotEquals x) (NotEquals y) = NotEquals (mappend x y)
-  mappend Equals x = x
-  mappend x Equals = x
+instance Semigroup reason => Semigroup (ComparisonResult reason) where
+    NotEquals x <> NotEquals y = NotEquals (x <> y)
+    Equals <> x = x
+    x <> Equals = x
+
+instance Semigroup reason => Monoid (ComparisonResult reason) where
+    mempty = Equals
 
 class Cmp a where
   cmp :: a -> a -> ComparisonResult Reasons

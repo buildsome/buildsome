@@ -18,8 +18,10 @@ import           Control.Exception (SomeAsyncException)
 #else
 import           Data.Typeable
 #endif
-import           Data.Maybe        (isJust)
-import qualified System.IO         as IO
+import           Data.Maybe (isJust)
+import qualified System.IO as IO
+
+import           Prelude.Compat
 
 putLn :: IO.Handle -> String -> IO ()
 putLn h = swallowExceptions . IO.hPutStrLn h

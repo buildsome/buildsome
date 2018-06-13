@@ -1,5 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
 module Buildsome.BuildMaps
   ( TargetRep(..), computeTargetRep
   , TargetDesc(..), descOfTarget
@@ -36,21 +34,22 @@ computeTargetRep :: Target -> TargetRep
 computeTargetRep = TargetRep . minimum . targetOutputs
 
 data TargetDesc = TargetDesc
-  { tdRep :: TargetRep
-  , tdTarget :: Target
-  } deriving (Show)
+    { tdRep :: TargetRep
+    , tdTarget :: Target
+    } deriving (Show)
 
 descOfTarget :: Target -> TargetDesc
 descOfTarget target = TargetDesc (computeTargetRep target) target
 
 data DirectoryBuildMap = DirectoryBuildMap
-  { dbmTargets :: [TargetDesc]
-  , dbmPatterns :: [Pattern]
-  } deriving (Show)
+    { dbmTargets :: [TargetDesc]
+    , dbmPatterns :: [Pattern]
+    } deriving (Show)
+instance Semigroup DirectoryBuildMap where
+    DirectoryBuildMap x0 x1 <> DirectoryBuildMap y0 y1 =
+        DirectoryBuildMap (x0 <> y0) (x1 <> y1)
 instance Monoid DirectoryBuildMap where
-  mempty = DirectoryBuildMap mempty mempty
-  mappend (DirectoryBuildMap x0 x1) (DirectoryBuildMap y0 y1) =
-    DirectoryBuildMap (mappend x0 y0) (mappend x1 y1)
+    mempty = DirectoryBuildMap mempty mempty
 
 data BuildMaps = BuildMaps
   { _bmBuildMap :: Map FilePath TargetDesc -- output paths -> min(representative) path and original spec

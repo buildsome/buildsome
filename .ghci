@@ -1,3 +1,7 @@
-:set -Wall
-:set -isrc -idist/build/autogen
-:set -optP-include -optPdist/build/autogen/cabal_macros.h
+:set -Wall -Widentities -Wmissing-home-modules -Wincomplete-patterns -Wnoncanonical-monad-instances -Wsemigroup -Wincomplete-record-updates -Wimplicit-prelude -Wredundant-constraints
+:set -isrc -idist/build/autogen -idist/build/buildsome/buildsome-tmp -idist/build/buildsome/autogen
+:set -optP-include -optPdist/build/buildsome/autogen/cabal_macros.h
+:set -hide-package cryptohash-md5
+:set -XNoImplicitPrelude -XOverloadedStrings -XPartialTypeSignatures -XLambdaCase -XDeriveTraversable -XDeriveGeneric
+:set -odir=ghci-out
+:set -outputdir=ghci-out

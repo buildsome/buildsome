@@ -1,24 +1,22 @@
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NoImplicitPrelude #-}
 -- | Low level wrapping over System.Process
 module Lib.Process (getOutputs, Env, CmdSpec(..)) where
 
-import Control.Concurrent.Async
-import Control.Exception (uninterruptibleMask)
-import Control.Monad
-import Data.Maybe (catMaybes)
-import Data.Foldable (traverse_)
-import Lib.Exception (bracket, finally)
-import Lib.StdOutputs (StdOutputs(..))
-import System.Environment (lookupEnv)
-import System.Exit (ExitCode(..))
-import System.IO (Handle, hClose)
-import System.Process
+import           Control.Concurrent.Async
+import           Control.Exception (uninterruptibleMask)
+import           Control.Monad
 import qualified Data.ByteString.Char8 as BS
+import           Data.Foldable (traverse_)
+import           Data.Maybe (catMaybes)
+import           Lib.Exception (bracket, finally)
+import           Lib.StdOutputs (StdOutputs(..))
 import qualified Lib.Timeout as Timeout
+import           System.Environment (lookupEnv)
+import           System.Exit (ExitCode(..))
+import           System.IO (Handle, hClose)
+import           System.Process
 
-import Prelude.Compat
+import           Prelude.Compat
 
 type Env = [(String, String)]
 
@@ -55,6 +53,12 @@ getOutputs cmd inheritedEnvs envs = do
     , close_fds = True -- MUST close fds so we don't leak server-side FDs as open/etc
     , create_group = True -- MUST be true so that interruptProcessGroupOf works
     , delegate_ctlc = False -- MUST be false to avoid disabling buildsome's SIGINT/SIGQUIT handlers
+    , detach_console = False
+    , create_new_console = False
+    , new_session = False
+    , child_group = Nothing
+    , child_user = Nothing
+    , use_process_jobs = False
     } $ \case
       (Just stdinHandle, Just stdoutHandle, Just stderrHandle, processHandle) -> do
         hClose stdinHandle

@@ -2,11 +2,13 @@ module Lib.Revisit
   ( M, avoid, run
   ) where
 
-import Control.Monad (liftM)
-import Control.Monad.Trans.State (StateT, evalStateT)
-import Data.Set (Set)
+import           Control.Monad (liftM)
+import           Control.Monad.Trans.State (StateT, evalStateT)
+import           Data.Set (Set)
 import qualified Control.Monad.Trans.State as State
 import qualified Data.Set as Set
+
+import           Prelude.Compat
 
 -- Visited:
 type M e m = StateT (Set e) m

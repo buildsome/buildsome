@@ -3,15 +3,17 @@ module Lib.AsyncContext
   , spawn
   ) where
 
-import Control.Concurrent.Async
-import Data.IORef
-import Data.IntMap (IntMap)
-import Lib.Exception (finally, onException)
-import Lib.Fresh (Fresh)
-import Lib.IORef (atomicModifyIORef'_)
+import           Control.Concurrent.Async
 import qualified Control.Exception as E
+import           Data.IORef
+import           Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import           Lib.Exception (finally, onException)
+import           Lib.Fresh (Fresh)
 import qualified Lib.Fresh as Fresh
+import           Lib.IORef (atomicModifyIORef'_)
+
+import           Prelude.Compat
 
 data AsyncContext = AsyncContext
   { _ctxFreshNames :: Fresh Int

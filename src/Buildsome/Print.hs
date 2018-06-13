@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings, RecordWildCards #-}
+{-# LANGUAGE RecordWildCards #-}
 module Buildsome.Print
   ( targetWrap, targetTiming
   , warn

@@ -1,16 +1,13 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
 module Lib.ScanFileUpwards (scanFileUpwards) where
 
-
-import Prelude.Compat hiding (FilePath)
-
-import Control.Monad (when)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Either
-import Lib.FilePath (FilePath, (</>))
+import           Control.Monad (when)
+import           Control.Monad.IO.Class (liftIO)
+import           Control.Monad.Trans.Except
+import           Lib.FilePath (FilePath, (</>))
 import qualified Lib.FilePath as FilePath
 import qualified System.Posix.ByteString as Posix
+
+import           Prelude.Compat hiding (FilePath)
 
 scanFileUpwards :: FilePath -> IO (Maybe FilePath)
 scanFileUpwards name = do
@@ -21,11 +18,11 @@ scanFileUpwards name = do
     candidates = map (</> name) parents
   -- Use EitherT with Left short-circuiting when found, and Right
   -- falling through to the end of the loop:
-  res <- runEitherT $ mapM_ check candidates
+  res <- runExceptT $ mapM_ check candidates
   case res of
     Left found -> Just <$> FilePath.makeRelativeToCurrentDirectory found
     Right () -> return Nothing
   where
     check path = do
       exists <- liftIO $ FilePath.exists path
-      when exists $ left path
+      when exists $ throwE path

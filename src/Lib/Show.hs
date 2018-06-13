@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Show (show) where
 
 import Prelude.Compat hiding (show)

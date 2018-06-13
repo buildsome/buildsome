@@ -1,5 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
 module Buildsome.MagicFiles
   ( inputIgnored, outputIgnored
   , allowedUnspecifiedOutput

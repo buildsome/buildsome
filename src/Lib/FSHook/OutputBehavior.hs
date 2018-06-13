@@ -6,6 +6,8 @@ module Lib.FSHook.OutputBehavior
   , fileChanger
   ) where
 
+import Prelude.Compat
+
 data OutputEffect = OutputEffectNone | OutputEffectChanged
   deriving (Eq, Ord, Show)
 

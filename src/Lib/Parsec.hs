@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 {-# OPTIONS -fno-warn-orphans #-}
 module Lib.Parsec (showErr, showPos) where
 

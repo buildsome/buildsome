@@ -1,11 +1,10 @@
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveGeneric #-}
-
 module BMake.Data
     ( MetaVar(..)
     , MetaVarModifier(..)
     , Expr3(..) -- ToDo: rename
     ) where
+
+import Prelude.Compat
 
 --------------------------------------------------------------------------------
 import           Control.DeepSeq          (NFData (..))

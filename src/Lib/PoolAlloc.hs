@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.PoolAlloc
   ( PoolAlloc, new
   , Priority(..)

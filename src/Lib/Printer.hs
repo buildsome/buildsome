@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings, FlexibleInstances, RecordWildCards, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances, RecordWildCards, GeneralizedNewtypeDeriving #-}
 module Lib.Printer
   ( Id(..)
   , Printable
@@ -10,14 +9,10 @@ module Lib.Printer
   , rawPrintWrap, rawPrinterWrap
   ) where
 
-import Prelude.Compat hiding (lines, putStrLn)
-import qualified Prelude.Compat as Prelude
-
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef
 import qualified Data.List as List
-import           Data.Monoid
 import           Data.String (IsString(..))
 import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText
@@ -25,6 +20,9 @@ import           Lib.Exception (onExceptionWith, bracket_, putLn, swallowExcepti
 import qualified Lib.Show as Show
 import qualified System.IO as IO
 import           Text.Printf (printf)
+
+import qualified Prelude.Compat as Prelude
+import           Prelude.Compat hiding (lines, putStrLn)
 
 newtype Id = Id Int
     deriving Enum

@@ -1,5 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings, DeriveGeneric #-}
 module Lib.FSHook.Protocol
   ( parseMsg, helloPrefix
   , OpenWriteMode(..), showOpenWriteMode

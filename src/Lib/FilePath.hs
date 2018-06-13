@@ -1,5 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
 module Lib.FilePath
   ( FilePath
   , isAbsolute
@@ -15,18 +13,16 @@ module Lib.FilePath
   , exists
   ) where
 
-
-import Prelude.Compat hiding (FilePath)
-
-import Control.Exception (catch, throwIO)
-import Data.ByteString.Char8 (ByteString)
-import Data.Maybe (fromMaybe)
-import Data.Monoid
-import GHC.IO.Exception (IOErrorType(..))
-import Lib.ByteString (unprefixed)
-import System.IO.Error (ioeGetErrorType)
+import           Control.Exception (catch, throwIO)
+import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Maybe (fromMaybe)
+import           GHC.IO.Exception (IOErrorType(..))
+import           Lib.ByteString (unprefixed)
+import           System.IO.Error (ioeGetErrorType)
 import qualified System.Posix.ByteString as Posix
+
+import           Prelude.Compat hiding (FilePath)
 
 type FilePath = Posix.RawFilePath
 

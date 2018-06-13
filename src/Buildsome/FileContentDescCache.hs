@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.FileContentDescCache
   ( fileContentDescOfStat
   ) where

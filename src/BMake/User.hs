@@ -1,8 +1,3 @@
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 module BMake.User
        ( parseWithAlex
        , parseMakefile
@@ -11,27 +6,27 @@ module BMake.User
        , Error(..)
        ) where
 
-import           Control.DeepSeq            (NFData)
-import           Control.DeepSeq            (force)
-import           Control.Exception          (evaluate)
-import qualified Data.ByteString.Char8      as B8
-import qualified Data.ByteString.Lazy       as BL
-import qualified Data.ByteString.Lazy.Char8 as BL8
-import           Data.DList                 (DList)
-import qualified Data.DList                 as DList
-import           Data.IORef
-import           Data.Map                   (Map)
-import qualified Data.Map                   as Map
-import           GHC.Generics               (Generic)
-import           Lib.FilePath               (FilePath, (</>))
-import qualified Lib.FilePath               as FilePath
-import           Prelude.Compat             hiding (FilePath)
-
 import           BMake.Base
-import qualified BMake.Lexer                as Lexer
-import           BMake.Interpreter          (interpret)
-import           BMake.Parser               (happyParser)
-import qualified Lib.Makefile.Types         as MT
+import           BMake.Interpreter (interpret)
+import qualified BMake.Lexer as Lexer
+import           BMake.Parser (happyParser)
+import           Control.DeepSeq (NFData)
+import           Control.DeepSeq (force)
+import           Control.Exception (evaluate)
+import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy.Char8 as BL8
+import           Data.DList (DList)
+import qualified Data.DList as DList
+import           Data.IORef
+import           Data.Map (Map)
+import qualified Data.Map as Map
+import           GHC.Generics (Generic)
+import           Lib.FilePath (FilePath, (</>))
+import qualified Lib.FilePath as FilePath
+import qualified Lib.Makefile.Types as MT
+
+import           Prelude.Compat hiding (FilePath)
 
 data Error = Error !Int !Int !String
    deriving (Show, Generic)

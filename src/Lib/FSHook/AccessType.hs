@@ -2,6 +2,8 @@ module Lib.FSHook.AccessType
   ( AccessType(..)
   ) where
 
+import Prelude.Compat
+
 data AccessType
   = AccessTypeModeOnly -- access, readlink.  Depend on its existence/permission-modes only. If directory, does not depend on file listing
   | AccessTypeStat -- stat: Depend on some rough attributes of the content

@@ -1,6 +1,4 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings, CPP #-}
+{-# LANGUAGE CPP #-}
 module Lib.Parallelism
   ( ParId
   , Pool, newPool

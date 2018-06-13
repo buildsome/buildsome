@@ -1,5 +1,3 @@
-
-{-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.Types where
 
 
@@ -27,25 +25,25 @@ import           Prelude.Compat hiding (FilePath)
 type Parents = [(TargetRep, Target, Reason)]
 
 data Buildsome = Buildsome
-  { -- static:
+    { -- static:
     bsOpts :: Opt
-  , bsMakefile :: Makefile
-  , bsPhoniesSet :: Set FilePath
-  , bsBuildId :: BuildId
-  , bsRootPath :: FilePath
-  , bsBuildMaps :: BuildMaps
+    , bsMakefile :: Makefile
+    , bsPhoniesSet :: Set FilePath
+    , bsBuildId :: BuildId
+    , bsRootPath :: FilePath
+    , bsBuildMaps :: BuildMaps
     -- dynamic:
-  , bsDb :: Db
-  , bsFsHook :: FSHook
-  , bsSlaveByTargetRep :: SyncMap TargetRep (Parallelism.Entity, Slave Stats)
-  , bsFreshPrinterIds :: Fresh Printer.Id
-  , bsFastKillBuild :: E.SomeException -> IO ()
-  , bsRender :: ColorText -> ByteString
-  , bsParPool :: Parallelism.Pool
-  }
+    , bsDb :: Db
+    , bsFsHook :: FSHook
+    , bsSlaveByTargetRep :: SyncMap TargetRep (Parallelism.Entity, Slave Stats)
+    , bsFreshPrinterIds :: Fresh Printer.Id
+    , bsFastKillBuild :: E.SomeException -> IO ()
+    , bsRender :: ColorText -> ByteString
+    , bsParPool :: Parallelism.Pool
+    }
 
 data WaitOrCancel = Wait | CancelAndWait
-  deriving Eq
+    deriving Eq
 
 data PutInputsInStats = PutInputsInStats | Don'tPutInputsInStats
     deriving (Eq, Ord, Show)
@@ -54,23 +52,24 @@ data CollectStats = CollectStats PutInputsInStats | Don'tCollectStats
     deriving (Eq, Ord, Show)
 
 data BuildTargetEnv = BuildTargetEnv
-  { bteBuildsome :: Buildsome
-  , btePrinter :: Printer
-  , bteReason :: Reason
-  , bteParents :: Parents
-  , bteExplicitlyDemanded :: Bool
-  , bteSpeculative :: Bool
+    { bteBuildsome :: Buildsome
+    , btePrinter :: Printer
+    , bteReason :: Reason
+    , bteParents :: Parents
+    , bteExplicitlyDemanded :: Bool
+    , bteSpeculative :: Bool
     -- used by charts & compat makefile, undesirable memory
     -- consumption otherwise
-  , bteCollectStats :: CollectStats
-  }
+    , bteCollectStats :: CollectStats
+    }
 
 data BuiltTargets = BuiltTargets
-  { builtTargets :: [Target]
-  , builtStats :: Stats
-  }
+    { builtTargets :: [Target]
+    , builtStats :: Stats
+    }
+instance Semigroup BuiltTargets where
+    BuiltTargets a1 b1 <> BuiltTargets a2 b2 =
+        BuiltTargets (a1 <> a2) (b1 <> b2)
 instance Monoid BuiltTargets where
-  mempty = BuiltTargets mempty mempty
-  mappend (BuiltTargets a1 b1) (BuiltTargets a2 b2) =
-    BuiltTargets (mappend a1 a2) (mappend b1 b2)
+    mempty = BuiltTargets mempty mempty
 

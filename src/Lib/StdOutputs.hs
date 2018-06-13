@@ -1,5 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Lib.StdOutputs
   ( StdOutputs(..)
   , str, null

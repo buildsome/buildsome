@@ -1,6 +1,5 @@
 {
 
-{-# LANGUAGE OverloadedStrings			#-}
 {-# LANGUAGE CPP				#-}
 {-# OPTIONS_GHC -fno-warn-unused-binds		#-}
 {-# OPTIONS_GHC -fno-warn-missing-signatures	#-}
@@ -32,9 +31,11 @@ where
 
 import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.ByteString.Char8 as BS
-import Data.ByteString.Lazy (ByteString)
+import           Data.ByteString.Lazy (ByteString)
 import qualified Control.Monad as Control.Monad
 import qualified Lib.FilePath as FilePath
+
+import           Prelude.Compat
 
 }
 

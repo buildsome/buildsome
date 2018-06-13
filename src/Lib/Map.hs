@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Map
   ( filterA, filterAWithKey
   ) where

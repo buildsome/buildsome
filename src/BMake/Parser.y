@@ -1,17 +1,17 @@
 {
-{-# LANGUAGE OverloadedStrings #-}
 module BMake.Parser where
 
-import BMake.Base
+import           BMake.Base
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
 import qualified Data.DList as DList
-import Data.Either
+import           Data.Either
 import           Data.DList (DList)
 import qualified Data.ByteString.Lazy as BL
-import Data.ByteString.Lazy (ByteString)
+import           Data.ByteString.Lazy (ByteString)
 import qualified BMake.Lexer as Lexer
 
+import           Prelude.Compat
 }
 
 %name happyParser

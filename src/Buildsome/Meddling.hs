@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 module Buildsome.Meddling
   ( ThirdPartyMeddlingError(..), assertFileMTime, assertSameMTime

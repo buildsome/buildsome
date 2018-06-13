@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
 module Lib.ByteString
   ( truncateAt
   , unprefixed, unsuffixed
@@ -7,12 +6,13 @@ module Lib.ByteString
   , splitBS
   ) where
 
-import Data.ByteString (ByteString)
-import Data.Monoid
-import Data.Word
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
+import           Data.Word
+
+import           Prelude.Compat
 
 chopTrailingNewline :: ByteString -> ByteString
 chopTrailingNewline bs

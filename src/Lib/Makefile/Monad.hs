@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving, DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Lib.Makefile.Monad
   ( PutStrLn, runPutStrLn
   , M, runM
@@ -41,10 +40,11 @@ data W = W
   { wPutStrLns :: [PutStrLn]
   , wReadFiles :: Map FilePath [Maybe Posix.FileStatus]
   }
+instance Semigroup W where
+    W ax ay <> W bx by =
+        W (ax <> bx) (Map.unionWith (++) ay by)
 instance Monoid W where
-  mempty = W mempty mempty
-  mappend (W ax ay) (W bx by) =
-    W (mappend ax bx) (Map.unionWith (++) ay by)
+    mempty = W mempty mempty
 
 runPutStrLn :: PutStrLn -> IO ()
 runPutStrLn (PutStrLn target bs) = BS8.hPutStrLn (targetHandle target) bs

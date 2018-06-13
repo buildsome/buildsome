@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveDataTypeable, OverloadedStrings, DeriveGeneric #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 module Lib.FSHook
   ( getLdPreloadPath
   , FSHook

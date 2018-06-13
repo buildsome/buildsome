@@ -1,23 +1,20 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Sock
   ( recvAll, recvFrame, recvLoop_
   , withUnixStreamListener
   ) where
 
-
-import Prelude.Compat hiding (FilePath)
-
-import Data.Monoid
-import Data.Word (Word32)
-import Lib.Binary (decode)
-import Lib.Exception (bracket, bracket_)
-import Lib.FilePath (FilePath)
-import Network.Socket (Socket)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Word (Word32)
+import           Lib.Binary (decode)
+import           Lib.Exception (bracket, bracket_)
+import           Lib.FilePath (FilePath)
+import           Network.Socket (Socket)
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as SockBS
 import qualified System.Posix.ByteString as Posix
+
+import           Prelude.Compat hiding (FilePath)
 
 -- May not receive all if EOF encountered
 recvAll :: Socket -> Int -> IO BS.ByteString

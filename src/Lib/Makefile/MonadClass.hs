@@ -1,4 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 module Lib.Makefile.MonadClass (MonadMakefileParser(..)) where
 
 import Prelude.Compat hiding (FilePath)

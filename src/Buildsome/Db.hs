@@ -1,5 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Buildsome.Db
   ( Db, with
   , registeredOutputsRef, leakedOutputsRef

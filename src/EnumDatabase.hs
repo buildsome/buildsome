@@ -1,5 +1,4 @@
 {-# OPTIONS -Wall -O2 #-}
-{-# LANGUAGE OverloadedStrings #-}
 import Control.Monad
 import Data.ByteString (empty)
 import Lib.Binary (decode)

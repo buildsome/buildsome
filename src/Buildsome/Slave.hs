@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE RecordWildCards, OverloadedStrings, RankNTypes #-}
+{-# LANGUAGE RecordWildCards, RankNTypes #-}
 module Buildsome.Slave
     ( Slave, newWithUnmask
     , target
@@ -8,20 +7,18 @@ module Buildsome.Slave
     , cancel
     ) where
 
-import           Prelude.Compat hiding (show, FilePath)
-
 import qualified Buildsome.Color as Color
-
 import           Control.Concurrent.Async (Async)
 import qualified Control.Concurrent.Async as Async
 import qualified Control.Exception as E
-import           Data.Monoid
 import           Lib.ColorText (ColorText)
 import           Lib.FilePath (FilePath)
 import           Lib.Makefile (Target)
 import qualified Lib.Printer as Printer
 import           Lib.Show (show)
 import           Lib.TimeInstances ()
+
+import           Prelude.Compat hiding (show, FilePath)
 
 data Slave a = Slave
     { slaveTarget :: Target
@@ -37,7 +34,7 @@ target = slaveTarget
 -- below which is needed due to rank-2 typing.
 --
 -- The :: String in the annotation is needed because of GHC weirdness
--- with OverloadedStrings, see
+-- with see
 -- http://comments.gmane.org/gmane.comp.lang.haskell.glasgow.bugs/74427
 {-# ANN newWithUnmask ("HLint: ignore Avoid lambda" :: String) #-}
 newWithUnmask :: Target -> Printer.Id -> [FilePath] -> ((forall b. IO b -> IO b) -> IO a) -> IO (Slave a)

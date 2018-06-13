@@ -1,6 +1,3 @@
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 
@@ -15,8 +12,8 @@ import           Control.Monad (when, forM_)
 import           Control.Monad.IO.Class (MonadIO(..))
 import           Control.Monad.Trans.Reader (ReaderT(..))
 import qualified Control.Monad.Trans.Reader as Reader
-import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as BSL8
 import           Data.Function ((&))
 import           Data.IORef
@@ -26,11 +23,12 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe, listToMaybe)
 import           GHC.Generics (Generic)
+import qualified Lib.FilePath as FilePath
+import qualified Lib.Makefile.Types as MT
+import qualified Lib.StringPattern as StringPattern
 import qualified Text.Parsec.Pos as ParsecPos
 
-import qualified Lib.FilePath as FilePath
-import qualified Lib.StringPattern as StringPattern
-import qualified Lib.Makefile.Types as MT
+import           Prelude.Compat
 
 type Vars = Map ByteString [Expr]
 

@@ -1,5 +1,4 @@
 {-# OPTIONS -Wall -O2 -fno-warn-orphans #-}
-{-# LANGUAGE OverloadedStrings #-}
 module Pretty () where
 
 import Data.ByteString (ByteString)

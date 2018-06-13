@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings, CPP #-}
+{-# LANGUAGE CPP #-}
 module Buildsome.Opts
   ( OverwriteUnregisteredOutputs(..)
   , UpdateGitIgnore(..)

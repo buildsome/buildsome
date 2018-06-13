@@ -1,5 +1,4 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings, TupleSections #-}
+{-# LANGUAGE TupleSections #-}
 module Buildsome.CompatMakefile
   ( Phonies, make
   ) where

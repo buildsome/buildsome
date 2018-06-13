@@ -1,9 +1,5 @@
-{-# LANGUAGE DeriveFunctor      #-}
-{-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE FlexibleContexts   #-}
 {-# LANGUAGE FlexibleInstances  #-}
-{-# LANGUAGE NoImplicitPrelude  #-}
-{-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 {-# OPTIONS -fno-warn-orphans #-}
@@ -34,19 +30,20 @@ module BMake.Base
   where
 
 --------------------------------------------------------------------------------
-import           Control.DeepSeq          (NFData (..))
-import           Control.DeepSeq.Generics (genericRnf)
-import           Data.Aeson
-import           Data.ByteString.Lazy     (ByteString)
-import           Data.List                (intersperse)
-import           Data.String              (IsString)
-import           GHC.Generics
-import           Lib.FilePath             (FilePath)
+import Control.DeepSeq (NFData (..))
+import Control.DeepSeq.Generics (genericRnf)
+import Data.Aeson
+import Data.ByteString.Lazy (ByteString)
+import Data.List (intersperse)
+import Data.String (IsString)
+import GHC.Generics
+import Lib.FilePath (FilePath)
 ----
-import           BMake.Data
-import           BMake.Lexer
-import           Prelude.Compat           hiding (FilePath)
+import BMake.Data
+import BMake.Lexer
 --------------------------------------------------------------------------------
+
+import Prelude.Compat hiding (FilePath)
 
 type Parser a = Alex a
 

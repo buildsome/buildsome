@@ -1,19 +1,20 @@
 -- | The notion of a string pattern: abc%def can be matched or plugged
 -- with a match
-{-# LANGUAGE DeriveGeneric, OverloadedStrings #-}
 module Lib.StringPattern
   ( StringPattern, fromString, toString
   , Match, matchPlaceHolder1, matchPlaceHolder2, match, plug
   ) where
 
-import Control.DeepSeq (NFData(..))
-import Control.DeepSeq.Generics (genericRnf)
-import Data.Binary (Binary)
-import Data.ByteString (ByteString)
-import Data.Monoid ((<>))
-import GHC.Generics (Generic)
-import Lib.ByteString (unprefixed, unsuffixed, splitBS)
+import           Control.DeepSeq (NFData(..))
+import           Control.DeepSeq.Generics (genericRnf)
+import           Data.Binary (Binary)
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
+import           Data.Monoid ((<>))
+import           GHC.Generics (Generic)
+import           Lib.ByteString (unprefixed, unsuffixed, splitBS)
+
+import           Prelude.Compat
 
 -- String Pattern is one of:
 -- 1. A%B
