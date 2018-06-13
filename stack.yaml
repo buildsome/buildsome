@@ -7,5 +7,5 @@ packages:
 - .
 extra-deps:
 - leveldb-haskell-0.6.3
-resolver: lts-5.15
+resolver: nightly-2018-06-14
 rebuild-ghc-options: true
