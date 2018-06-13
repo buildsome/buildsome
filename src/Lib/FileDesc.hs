@@ -49,7 +49,7 @@ instance Cmp FileContentDesc where
   FileContentDescSymlink _ `cmp` _ = Cmp.NotEquals ["symlink vs. non-symlink"]
   FileContentDescDir _ `cmp` _ = Cmp.NotEquals ["dir vs. non-dir"]
 
-data FileModeDesc = FileModeDesc Posix.FileMode
+newtype FileModeDesc = FileModeDesc Posix.FileMode
   deriving (Generic, Eq, Show)
 instance Binary FileModeDesc
 instance Cmp FileModeDesc where
@@ -113,7 +113,7 @@ instance Binary Posix.CMode where
   get = Posix.CMode <$> get
   put (Posix.CMode x) = put x
 
-data UnsupportedFileTypeError = UnsupportedFileTypeError FilePath deriving (Show, Typeable)
+newtype UnsupportedFileTypeError = UnsupportedFileTypeError FilePath deriving (Show, Typeable)
 instance E.Exception UnsupportedFileTypeError
 
 -- Basic stat essence compares only things that do not change in a

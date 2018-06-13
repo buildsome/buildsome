@@ -889,30 +889,31 @@ makeExecutionLog ::
   Map FilePath (Map FSHook.AccessType Reason, Maybe Posix.FileStatus) ->
   [FilePath] -> StdOutputs ByteString -> DiffTime -> IO Db.ExecutionLog
 makeExecutionLog buildsome target inputs outputs stdOutputs selfTime = do
-  inputsDescs <- M.traverseWithKey inputAccess inputs
-  outputDescPairs <-
-    forM outputs $ \outPath -> do
-      mStat <- Dir.getMFileStatus outPath
-      fileDesc <-
-        case mStat of
-        Nothing -> return $ Db.FileDescNonExisting ()
-        Just stat -> do
-          mContentDesc <-
-            if Posix.isDirectory stat
-            then return Nothing
-            else Just <$>
-                 fileContentDescOfStat "When making execution log (output)"
-                 db outPath stat
-          return $ Db.FileDescExisting $ Db.OutputDesc (fileStatDescOfStat stat) mContentDesc
-      return (outPath, fileDesc)
-  return Db.ExecutionLog
-    { elBuildId = bsBuildId buildsome
-    , elCommand = targetInterpolatedCmds target
-    , elInputsDescs = inputsDescs
-    , elOutputsDescs = M.fromList outputDescPairs
-    , elStdoutputs = stdOutputs
-    , elSelfTime = selfTime
-    }
+    inputsDescs <- M.traverseWithKey inputAccess inputs
+    outputDescPairs <-
+        forM outputs $ \outPath ->
+        do
+            mStat <- Dir.getMFileStatus outPath
+            fileDesc <-
+                case mStat of
+                Nothing -> return $ Db.FileDescNonExisting ()
+                Just stat ->
+                    Db.FileDescExisting . Db.OutputDesc (fileStatDescOfStat stat)
+                    <$> if Posix.isDirectory stat
+                        then return Nothing
+                        else
+                            Just <$>
+                            fileContentDescOfStat "When making execution log (output)"
+                            db outPath stat
+            return (outPath, fileDesc)
+    return Db.ExecutionLog
+        { elBuildId = bsBuildId buildsome
+        , elCommand = targetInterpolatedCmds target
+        , elInputsDescs = inputsDescs
+        , elOutputsDescs = M.fromList outputDescPairs
+        , elStdoutputs = stdOutputs
+        , elSelfTime = selfTime
+        }
   where
     db = bsDb buildsome
     assertFileMTime path oldMStat =
@@ -1020,46 +1021,49 @@ statsOfNullCmd BuildTargetEnv{..} TargetDesc{..} hintedBuiltTargets =
 
 buildTarget :: BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> IO Stats
 buildTarget bte@BuildTargetEnv{..} entity TargetDesc{..} =
-  maybeRedirectExceptions bte TargetDesc{..} $ do
-    (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte entity tdTarget
-    case explicitPathsBuilt of
-      ExplicitPathsNotBuilt ->
-        -- Failed to build our hints when allowed, just leave with collected stats
-        return $ builtStats hintedBuiltTargets
-      ExplicitPathsBuilt | BS8.null $ targetInterpolatedCmds tdTarget ->
-        return $ statsOfNullCmd bte TargetDesc{..} hintedBuiltTargets
-      ExplicitPathsBuilt | otherwise ->  do
-        mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
-        (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
-          case mSlaveStats of
-          Just res -> return (Stats.FromCache, res)
-          Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..}
-        return $! -- strict application, otherwise stuff below isn't
-                  -- gc'd apparently.
-          case bteCollectStats of
-            Don'tCollectStats -> mempty
-            CollectStats putInputsInStats ->
-              let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
-              in  stats <>
-                  Stats
-                  { Stats.ofTarget =
-                    M.singleton tdRep Stats.TargetStats
-                    { tsWhen = whenBuilt
-                    , tsTime = elSelfTime
-                    , tsDirectDeps = deps
-                    , tsExistingInputs =
-                      case putInputsInStats of
-                      PutInputsInStats ->
-                          Just $ targetAllInputs tdTarget ++ [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
-                      Don'tPutInputsInStats -> Nothing
-                    }
-                  , Stats.stdErr =
-                    if mempty /= stdErr elStdoutputs
-                    then S.singleton tdRep
-                    else S.empty
-                  }
-  where
-    Color.Scheme{..} = Color.scheme
+    maybeRedirectExceptions bte TargetDesc{..} $
+    do
+        (explicitPathsBuilt, hintedBuiltTargets) <- buildTargetHints bte entity tdTarget
+        case explicitPathsBuilt of
+            ExplicitPathsNotBuilt ->
+                -- Failed to build our hints when allowed, just leave with collected stats
+                return $ builtStats hintedBuiltTargets
+            ExplicitPathsBuilt
+                | BS8.null $ targetInterpolatedCmds tdTarget ->
+                    return $ statsOfNullCmd bte TargetDesc{..} hintedBuiltTargets
+                | otherwise ->
+                    do
+                        mSlaveStats <- findApplyExecutionLog bte entity TargetDesc{..}
+                        (whenBuilt, (Db.ExecutionLog{..}, builtTargets)) <-
+                            case mSlaveStats of
+                            Just res -> return (Stats.FromCache, res)
+                            Nothing -> (,) Stats.BuiltNow <$> buildTargetReal bte entity TargetDesc{..}
+                        return $! -- strict application, otherwise stuff below isn't
+                                  -- gc'd apparently.
+                            case bteCollectStats of
+                            DontCollectStats -> mempty
+                            CollectStats putInputsInStats ->
+                                let BuiltTargets deps stats = hintedBuiltTargets <> builtTargets
+                                in  stats <>
+                                    Stats
+                                    { Stats.ofTarget =
+                                      M.singleton tdRep Stats.TargetStats
+                                      { tsWhen = whenBuilt
+                                      , tsTime = elSelfTime
+                                      , tsDirectDeps = deps
+                                      , tsExistingInputs =
+                                        case putInputsInStats of
+                                        PutInputsInStats ->
+                                            Just $ targetAllInputs tdTarget ++ [ path | (path, Db.FileDescExisting _) <- M.toList elInputsDescs ]
+                                        DontPutInputsInStats -> Nothing
+                                      }
+                                    , Stats.stdErr =
+                                      if mempty /= stdErr elStdoutputs
+                                      then S.singleton tdRep
+                                      else S.empty
+                                    }
+    where
+        Color.Scheme{..} = Color.scheme
 
 registerDbList :: Ord a => (Db -> IORef (Set a)) -> Buildsome -> Set a -> IO ()
 registerDbList mkIORef buildsome newItems =

@@ -114,7 +114,7 @@ data FSHook = FSHook
   , fsHookPrinter :: Printer
   }
 
-data ProtocolError = ProtocolError String deriving (Typeable)
+newtype ProtocolError = ProtocolError String deriving (Typeable)
 instance E.Exception ProtocolError
 instance Show ProtocolError where
   show (ProtocolError msg) = "ProtocolError: " ++ msg

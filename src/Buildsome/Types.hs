@@ -45,10 +45,10 @@ data Buildsome = Buildsome
 data WaitOrCancel = Wait | CancelAndWait
     deriving Eq
 
-data PutInputsInStats = PutInputsInStats | Don'tPutInputsInStats
+data PutInputsInStats = PutInputsInStats | DontPutInputsInStats
     deriving (Eq, Ord, Show)
 
-data CollectStats = CollectStats PutInputsInStats | Don'tCollectStats
+data CollectStats = CollectStats PutInputsInStats | DontCollectStats
     deriving (Eq, Ord, Show)
 
 data BuildTargetEnv = BuildTargetEnv

@@ -67,7 +67,7 @@ find (BuildMaps buildMap childrenMap) path =
   where
     simpleMatch = path `M.lookup` buildMap
     patterns = dbmPatterns $ M.findWithDefault mempty (takeDirectory path) childrenMap
-    instantiate pattern = (,) pattern <$> Makefile.instantiatePatternByOutput path pattern
+    instantiate pat = (,) pat <$> Makefile.instantiatePatternByOutput path pat
     patternMatch =
       case mapMaybe instantiate patterns of
       [] -> Nothing
@@ -78,12 +78,12 @@ find (BuildMaps buildMap childrenMap) path =
         , BS8.unlines $
           map (showPattern . fst) targets
         ]
-    showPattern pattern =
-      Print.posText (targetPos pattern) <> showPatternOutputs pattern
-    showPatternOutputs pattern =
+    showPattern pat =
+      Print.posText (targetPos pat) <> showPatternOutputs pat
+    showPatternOutputs pat =
       BS8.unwords $
       map (StringPattern.toString . Makefile.filePatternFile) $
-      targetOutputs pattern
+      targetOutputs pat
 
 findDirectory :: BuildMaps -> FilePath -> DirectoryBuildMap
 findDirectory (BuildMaps _ childrenMap) path =

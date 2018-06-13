@@ -10,8 +10,7 @@ import           BMake.Base
 import           BMake.Interpreter (interpret)
 import qualified BMake.Lexer as Lexer
 import           BMake.Parser (happyParser)
-import           Control.DeepSeq (NFData)
-import           Control.DeepSeq (force)
+import           Control.DeepSeq (NFData, force)
 import           Control.Exception (evaluate)
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy as BL
@@ -39,11 +38,11 @@ stateBase = 0
 parseWithAlex :: Int -> BL.ByteString -> Either String (DList Token)
 parseWithAlex startState bs = root
     where root = runAlex bs (alexSetStartCode startState >> loop DList.empty)
-          loop s' = do
-              lexer $ \token@(Token _ cls) -> do
-                  case cls of
-                      TokenEOF -> return s'
-                      _ -> loop $ s' `DList.snoc` token
+          loop s' =
+              lexer $ \token@(Token _ cls) ->
+              case cls of
+              TokenEOF -> return s'
+              _ -> loop $ s' `DList.snoc` token
 
 
 parseMakefile :: FilePath -> BL.ByteString -> Either Error Makefile
@@ -71,9 +70,10 @@ handleIncludePath cache dirs = fmap unit . newParse cache (dirsRoot dirs)
 
 handleIncludeStr :: ParseCache -> Dirs -> FilePath -> IO [Statement]
 handleIncludeStr cache dirs path =
-    case "/" `B8.isPrefixOf` path of
-        True ->  handleIncludePath cache dirs $ dirsRoot dirs </> (B8.drop 1 path)
-        False -> handleIncludePath cache dirs $ dirsCurMakefile dirs </> path
+    handleIncludePath cache dirs $
+    if "/" `B8.isPrefixOf` path
+    then dirsRoot dirs </> B8.drop 1 path
+    else dirsCurMakefile dirs </> path
 
 handleInclude :: ParseCache -> Dirs -> Statement -> IO [Statement]
 handleInclude cache dirs (Include path) =
@@ -110,11 +110,9 @@ newParse cache rootDir =
         let dirs = Dirs rootDir (FilePath.takeDirectory makefile)
         res <- parseSingle makefile content
         case res of
-            Left (Error line col str) -> do
+            Left (Error line col str) ->
                 fail $ B8.unpack makefile ++ ":" ++ show line ++ ":" ++ show col ++ ": " ++ str
-            Right ast -> do
-                ast' <- Makefile <$> handleIncludes cache dirs (unit ast)
-                return ast'
+            Right ast -> Makefile <$> handleIncludes cache dirs (unit ast)
 
 parse :: FilePath -> MT.Vars -> IO MT.Makefile
 parse makefilePath vars = do

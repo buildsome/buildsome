@@ -96,8 +96,8 @@ modifyEntityRunningState ::
     Entity ->
     (EntityRunning -> EntityRunningState -> (EntityRunningState, IO r)) -> IO r
 modifyEntityRunningState entity f =
-    modifyEntityState entity $ \state ->
-    case state of
+    modifyEntityState entity $
+    \case
     EntityStateRunning running ->
         let (newRunningState, action) = f running (entityRunningState running)
         in ( EntityStateRunning running { entityRunningState = newRunningState }
@@ -160,8 +160,8 @@ notifyParent printer pool child parent =
 -- runs under mask (non-blocking)
 linkChild :: Printer -> Pool -> Entity -> Entity -> IO ()
 linkChild printer pool parent child =
-    modifyEntityState child $ \oldState ->
-    case oldState of
+    modifyEntityState child $
+    \case
     EntityStateFinished -> (EntityStateFinished, notifyParent printer pool child parent)
     EntityStateRunning er ->
         ( EntityStateRunning er { entityRunningParents = parent:entityRunningParents er }
@@ -326,8 +326,8 @@ fork ident _printer pool =
 -- Runs under uninterruptibleMask
 cancelFork :: Printer -> Pool -> Entity -> IO ()
 cancelFork printer pool child =
-    modifyEntityState child $ \state ->
-    case state of
+    modifyEntityState child $
+    \case
     EntityStateRunning
         (EntityRunning parents _priority 0 (EntityForking _alloc)) ->
             ( EntityStateFinished
@@ -353,8 +353,7 @@ wrapChild pool child alloc printer =
         afterChild =
             -- runs under uninterruptibleMask
             modifyEntityState child $
-            \oldState ->
-            case oldState of
+            \case
             EntityStateRunning
                 (EntityRunning parents _ 0 (EntityAlloced parId)) ->
                     ( EntityStateFinished

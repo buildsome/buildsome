@@ -2,7 +2,6 @@ module Lib.Revisit
   ( M, avoid, run
   ) where
 
-import           Control.Monad (liftM)
 import           Control.Monad.Trans.State (StateT, evalStateT)
 import           Data.Set (Set)
 import qualified Control.Monad.Trans.State as State
@@ -20,7 +19,7 @@ avoid rep act = do
     then return Nothing
     else do
       State.modify $ Set.insert rep
-      liftM Just act
+      Just <$> act
 
 run :: Monad m => M e m a -> m a
 run = flip evalStateT Set.empty

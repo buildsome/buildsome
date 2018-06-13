@@ -141,7 +141,7 @@ opt :: Read a => Mod OptionFields a -> Parser (Maybe a)
 opt = optional . option
 
 bytestr :: Monad m => String -> m ByteString
-bytestr = liftM BS8.pack . str
+bytestr = fmap BS8.pack . str
 #endif
 
 get :: IO Opts

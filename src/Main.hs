@@ -52,7 +52,7 @@ import           Prelude.Compat hiding (FilePath, show)
 standardMakeFilename :: FilePath
 standardMakeFilename = "Buildsome.mk"
 
-errorShowConcat :: (ColorText -> ByteString) -> [ColorText] -> [Char]
+errorShowConcat :: (ColorText -> ByteString) -> [ColorText] -> String
 errorShowConcat render = BS8.unpack . render . cError . mconcat
     where
       Color.Scheme{..} = Color.scheme
@@ -159,7 +159,7 @@ parseMakefile printer _ origMakefilePath finalMakefilePath vars cwd = do
   where
     Color.Scheme{..} = Color.scheme
 
-data MakefileScanFailed = MakefileScanFailed (ColorText -> ByteString) deriving (Typeable)
+newtype MakefileScanFailed = MakefileScanFailed (ColorText -> ByteString) deriving (Typeable)
 instance E.Exception MakefileScanFailed
 instance Show MakefileScanFailed where
   show (MakefileScanFailed render) =
@@ -286,8 +286,8 @@ handleRequested
       Opts.CompatMakefile -> (CollectStats PutInputsInStats, id :: IO a -> IO a)
       Opts.NoCompatMakefile
           | isJust mChartPath || isJust mClangCommandsPath
-            -> (CollectStats Don'tPutInputsInStats, const (return ()))
-          | otherwise -> (Don'tCollectStats, const (return ()))
+            -> (CollectStats DontPutInputsInStats, const (return ()))
+          | otherwise -> (DontCollectStats, const (return ()))
 
 -- Includes "fail" and "error" (i.e: userError is part of IOError)
 -- Other error types are trusted to do their own color pretty-printing

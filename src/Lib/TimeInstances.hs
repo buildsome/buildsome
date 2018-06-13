@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP, FlexibleInstances, StandaloneDeriving #-}
 {-# OPTIONS -fno-warn-orphans #-}
 module Lib.TimeInstances () where
 

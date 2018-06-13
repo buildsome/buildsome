@@ -51,7 +51,7 @@ createDirectories path
     doesExist <- FilePath.exists path
     unless doesExist $ do
       createDirectories $ FilePath.takeDirectory path
-      (Posix.createDirectory path 0o777) `catchAlreadyExists` return () 
+      Posix.createDirectory path 0o777 `catchAlreadyExists` return () 
 
 removeFileByStat :: IO () -> FilePath -> IO ()
 removeFileByStat notExist path = do

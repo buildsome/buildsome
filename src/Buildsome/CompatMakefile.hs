@@ -1,4 +1,3 @@
-{-# LANGUAGE TupleSections #-}
 module Buildsome.CompatMakefile
   ( Phonies, make
   ) where

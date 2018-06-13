@@ -34,7 +34,6 @@ import Control.DeepSeq (NFData (..))
 import Control.DeepSeq.Generics (genericRnf)
 import Data.Aeson
 import Data.ByteString.Lazy (ByteString)
-import Data.List (intersperse)
 import Data.String (IsString)
 import GHC.Generics
 import Lib.FilePath (FilePath)
@@ -53,7 +52,7 @@ thenP = (>>=)
 returnP :: a -> Parser a
 returnP = return
 
-alexGetPosition :: Alex (AlexPosn)
+alexGetPosition :: Alex AlexPosn
 alexGetPosition = Alex $ \s@AlexState{alex_pos=pos} -> Right (s, pos)
 
 happyError :: Parser a
@@ -65,7 +64,7 @@ handleErrorExpList :: (Token, [String]) -> Parser a
 handleErrorExpList (Token _ cls, opts) = do
     (AlexPn _ line col) <- alexGetPosition
     let expected [x] = ", expected: " ++ x
-        expected xs =  ", expected one of: " ++ (concat $ intersperse " " xs)
+        expected xs =  ", expected one of: " ++ unwords xs
     alexStructError (line, col,
                      "syntax error: got " ++ tokenDesc cls ++ expected opts)
 
@@ -135,15 +134,15 @@ data Statement
 substmts ::
     Applicative f =>
     ([Statement] -> f [Statement]) ->
-    Statement -> f (Statement)
+    Statement -> f Statement
 substmts f (Local dl) = Local <$> f dl
 substmts f (IfCmp a b c dla dlb) = IfCmp a b c <$> f dla <*> f dlb
 substmts _ x = pure x
 
-instance NFData (Statement) where
+instance NFData Statement where
     rnf = genericRnf
 
-data Makefile = Makefile
+newtype Makefile = Makefile
     { unit :: [Statement]
     } deriving (Show, Generic)
 

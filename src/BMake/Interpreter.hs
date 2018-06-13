@@ -61,7 +61,7 @@ run vars act =
             }
 
 interpret :: Makefile -> MT.Vars -> IO MT.Makefile
-interpret bmakefile vars = (run vars) . makefile $ bmakefile
+interpret bmakefile vars = run vars $ makefile bmakefile
 
 -- | Expr after variable substitution
 data Expr1
@@ -176,7 +176,7 @@ compress :: CompressDetails -> [Expr3] -> [Expr3]
 compress _ [] = []
 compress cd xs' =
     case span spaceOrStr xs' of
-        ([], (x:xs)) -> x:compress cd xs
+        ([], x:xs) -> x:compress cd xs
         ([x], xs)    -> x:compress cd xs
         (ys, xs)     -> (Expr3'Str $ BSL8.concat $ map toStr ys):compress cd xs
 
@@ -195,7 +195,7 @@ cartesian :: [Expr2] -> [Expr3]
 cartesian input = afterExpand
 --    (\output -> trace ("cartesian input: " ++ show input ++ "\n   output: " ++ show output) output) .
     where
-        afterExpand = unwords2 . map unwords2 . map go . splitOn [Expr2'Spaces] $ input
+        afterExpand = unwords2 . map (unwords2 . go) $ splitOn [Expr2'Spaces] input
         unwords2 = intercalate [Expr3'Spaces]
         go :: [Expr2] -> [[Expr3]]
         go (Expr2'Spaces:_) = error "splitOn should leave no Spaces!"
@@ -227,7 +227,7 @@ assign name assignType exprL =
                 liftIO $ modifyIORef' envWeakVars modf
 
         case (assignType, Map.lookup name vars) of
-            (AssignConditional, (Just _)) -> addWeak
+            (AssignConditional, Just _) -> addWeak
             (AssignConditional, Nothing) -> addWeak >> set
             _ -> set
 
@@ -266,15 +266,13 @@ statements :: [Statement] -> M ()
 statements = mapM_ statement
 
 hasPatterns :: [Expr3] -> Bool
-hasPatterns ((Expr3'Str text):xs) =
-    case any ("%" `BS8.isInfixOf`) (BSL8.toChunks text) of
-        True -> True
-        False -> hasPatterns xs
+hasPatterns (Expr3'Str text:xs) =
+    any ("%" `BS8.isInfixOf`) (BSL8.toChunks text) || hasPatterns xs
 hasPatterns (_:xs) = hasPatterns xs
 hasPatterns [] = False
 
 toFileNames :: [Expr3] -> [FilePath.FilePath]
-toFileNames ((Expr3'Str text):xs) = (BS8.concat . BSL8.toChunks) text : toFileNames xs
+toFileNames (Expr3'Str text:xs) = (BS8.concat . BSL8.toChunks) text : toFileNames xs
 toFileNames (_:xs)                = toFileNames xs
 toFileNames []                    = []
 
@@ -284,18 +282,18 @@ interpolateCmds mStem tgt@(MT.Target outputPaths inputsPaths ooInputs (Right exp
     where
         getFirst err paths = fromMaybe (errWithParsecPos parsecPos err) $ listToMaybe paths
 
-        cmds = Left $ BS8.concat $ concat $ concat $ intersperse [["\n"]] $ map (map perItem) exprL
+        cmds = Left $ BS8.concat $ concat $ intercalate [["\n"]] $ map (map perItem) exprL
 
         perItem (Expr3'Str text) = BSL8.toChunks text
-        perItem (Expr3'Spaces) = [" "]
+        perItem Expr3'Spaces = [" "]
         perItem (Expr3'VarSpecial FirstOutput modtype) =
             [modfn modtype $ getFirst "No first output for @ variable" outputPaths]
         perItem (Expr3'VarSpecial FirstInput modtype) =
             [modfn modtype $ getFirst "No first input for @ variable" inputsPaths]
         perItem (Expr3'VarSpecial AllInputs modtype) =
-            intersperse " " (map (modfn modtype) $ inputsPaths)
+            intersperse " " (map (modfn modtype) inputsPaths)
         perItem (Expr3'VarSpecial AllOOInputs modtype) =
-            intersperse " " (map (modfn modtype) $ ooInputs)
+            intersperse " " (map (modfn modtype) ooInputs)
         perItem (Expr3'VarSpecial Stem modtype) =
             case mStem of
                Nothing -> []
@@ -322,7 +320,7 @@ target (filename, AlexPn _ line col) outputs inputs orderOnlyInputs script =
                 put "target:"
                 put $ "     outs: " ++ showExprL outs
                 put $ "     ins:  " ++ showExprL ins
-                put $ "     script:"
+                put   "     script:"
                 mapM_ (put . ("        "++) . showExprL) scrps
                 put $ show ins
                 put $ show outs
@@ -348,8 +346,8 @@ target (filename, AlexPn _ line col) outputs inputs orderOnlyInputs script =
               where
                 (dir, file) = FilePath.splitFileName path
 
-        case hasPatterns outs of
-            True -> do
+        if hasPatterns outs
+            then do
                 let mkOutputPattern outputPath =
                       fromMaybe (errWithInfo ("Outputs must all be patterns (contain %) in pattern rules: " ++ show outputPath)) $
                       mkFilePattern outputPath
@@ -366,28 +364,27 @@ target (filename, AlexPn _ line col) outputs inputs orderOnlyInputs script =
                       } : xs
                 liftIO $ modifyIORef' envPatterns modf
                 return ()
-            False -> do
-                case outputPaths of
-                    [".PHONY"] -> do
-                        when (orderOnlyInputsPaths /= []) $ do
-                            errWithInfo "Unexpected order only inputs for phony target"
-                        when (scrps /= []) $ do
-                            errWithInfo "Phony target may not specify commands"
-                        forM_ inputPaths $ \path -> do
-                            liftIO $ modifyIORef' envPhonies ((:) (pos, path))
-                        return ()
-                    _ -> do
-                        let resTarget = MT.Target
-                              { targetOutputs = outputPaths
-                              , targetInputs = inputPaths
-                              , targetOrderOnlyInputs = orderOnlyInputsPaths
-                              , targetCmds = Right scrps
-                              , targetPos = pos
-                              }
-                        let interpolatedTarget =
-                                interpolateCmds Nothing resTarget
-                        let modf xs = interpolatedTarget : xs
-                        liftIO $ modifyIORef' envTargets modf
+            else case outputPaths of
+                [".PHONY"] -> do
+                    when (orderOnlyInputsPaths /= []) $
+                        errWithInfo "Unexpected order only inputs for phony target"
+                    when (scrps /= []) $
+                        errWithInfo "Phony target may not specify commands"
+                    forM_ inputPaths $ \path ->
+                        liftIO $ modifyIORef' envPhonies ((:) (pos, path))
+                    return ()
+                _ -> do
+                    let resTarget = MT.Target
+                          { targetOutputs = outputPaths
+                          , targetInputs = inputPaths
+                          , targetOrderOnlyInputs = orderOnlyInputsPaths
+                          , targetCmds = Right scrps
+                          , targetPos = pos
+                          }
+                    let interpolatedTarget =
+                            interpolateCmds Nothing resTarget
+                    let modf xs = interpolatedTarget : xs
+                    liftIO $ modifyIORef' envTargets modf
 
 -- Expanded exprs given!
 -- TODO: Consider type-level marking of "expanded" exprs
