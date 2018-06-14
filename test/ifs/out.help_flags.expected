@@ -2,5 +2,5 @@ ECHO: NOTX BEFORE
 ECHO: "notx.mk says hello"
 ECHO: NOTX AFTER
 Available flags:
-  x (default = "disable")
-  y (default = "enable")
+    x (default = "disable")
+    y (default = "enable")
