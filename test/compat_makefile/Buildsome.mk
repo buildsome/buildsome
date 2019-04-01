@@ -25,4 +25,4 @@ default: out/foo.o moshe.a moshe.a.b should_be_deleted_by_make # escape_input
 # 	cat escape\(bla=12\) escape\(bla=123,foo=\'123\'\) > "$@"
 
 should_be_deleted_by_make: should_be_deleted_by_make_dependency
-	echo "# bla" >> "$@"
+	echo "true" >> "$@"
