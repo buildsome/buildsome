@@ -2,10 +2,8 @@ flags:
   buildsome:
     Charts: False
 packages:
-- location: https://github.com/da-x/happy/archive/65c2494c77bd1bb321c1eb29b5117a975b1723a0.zip
-  extra-dep: true
 - .
 extra-deps:
 - leveldb-haskell-0.6.3
-resolver: nightly-2018-06-14
+resolver: lts-12.26
 rebuild-ghc-options: true

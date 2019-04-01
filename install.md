@@ -31,6 +31,12 @@ cd buildsome
 stack install
 ```
 
+On NixOS use the following command:
+
+```
+nix-shell -p stack --run 'stack install --nix-packages leveldb'
+```
+
 ## `$PATH` variable
 
 Stack installs buildsome at `$HOME/.local/bin`, so make sure
