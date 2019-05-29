@@ -22,7 +22,7 @@ home.
 * **Output capture**: The standard output and standard error of
   execution are saved for replay and diagnosis.
 * **Verbosity**: prints in a friendly manner why a target was rebuilt.
-* **Git integartion**: a root `.gitignore` file is automatically
+* **Git integration**: a root `.gitignore` file is automatically
   maintained for all build outputs, so no 'clean' targets are needed.
 * The target specification itself is implicitly a dependency, unlike
   in [make](https://www.gnu.org/software/make).
