@@ -42,9 +42,9 @@ mkdir -p ~/.local/{bin,stack}
 export PATH=~/.local/bin:$PATH
 
 if [[ ! -x ~/.local/bin/stack ]] ; then
-    wget https://github.com/commercialhaskell/stack/releases/download/v1.0.4.3/stack-1.0.4.3-linux-x86_64.tar.gz
-    tar -zxf stack-1.0.4.3-linux-x86_64.tar.gz -C ~/.local/stack
-    ln -f -s ~/.local/stack/stack-1.0.4.3-linux-x86_64/stack ~/.local/bin/stack
+    wget https://github.com/commercialhaskell/stack/releases/download/v1.9.3/stack-1.9.3-linux-x86_64.tar.gz
+    tar -zxf stack-1.9.3-linux-x86_64.tar.gz -C ~/.local/stack
+    ln -f -s ~/.local/stack/stack-1.9.3-linux-x86_64/stack ~/.local/bin/stack
 fi
 
 stack --no-terminal setup
