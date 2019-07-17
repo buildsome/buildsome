@@ -51,8 +51,8 @@ stack --no-terminal setup
 
 pushd ~
 # A hack to make sure *some* version of Happy is installed before proceeding
-stack --resolver lts-5.15 --no-terminal setup
-stack --resolver lts-5.15 install happy
+stack --resolver lts-6.35 --no-terminal setup
+stack --resolver lts-6.35 install happy
 popd
 
 %build
