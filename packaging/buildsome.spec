@@ -19,6 +19,7 @@ BuildRequires:  snappy-devel
 BuildRequires:  gmp-devel
 BuildRequires:  python
 BuildRequires:  chrpath
+BuildRequires:  wget
 
 %if 0%{?fedora} >= 24
 # GHC builds need tinfo.so.5
@@ -41,8 +42,8 @@ mkdir -p ~/.local/{bin,stack}
 export PATH=~/.local/bin:$PATH
 
 if [[ ! -x ~/.local/bin/stack ]] ; then
-    curl -L https://github.com/commercialhaskell/stack/releases/download/v1.0.4.3/stack-1.0.4.3-linux-x86_64.tar.gz | \
-	tar -zxf - -C ~/.local/stack
+    wget https://github.com/commercialhaskell/stack/releases/download/v1.0.4.3/stack-1.0.4.3-linux-x86_64.tar.gz
+    tar -zxf stack-1.0.4.3-linux-x86_64.tar.gz -C ~/.local/stack
     ln -f -s ~/.local/stack/stack-1.0.4.3-linux-x86_64/stack ~/.local/bin/stack
 fi
 
@@ -50,8 +51,8 @@ stack --no-terminal setup
 
 pushd ~
 # A hack to make sure *some* version of Happy is installed before proceeding
-stack --no-terminal setup
-stack install happy
+stack --resolver lts-5.15 --no-terminal setup
+stack --resolver lts-5.15 install happy
 popd
 
 %build
