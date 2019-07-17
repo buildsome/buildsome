@@ -68,17 +68,17 @@ stack --no-terminal build
 echo rpm build root: $RPM_BUILD_ROOT
 echo prefix is: %{_prefix}
 
-mkdir -p $RPM_BUILD_ROOT/%{_prefix}/share/doc/buildsome-0.1.0.0
-cp LICENSE.txt $RPM_BUILD_ROOT/%{_prefix}/share/doc/buildsome-0.1.0.0/LICENSE.txt
+mkdir -p $RPM_BUILD_ROOT/%{_prefix}/share/doc/buildsome-0.2.0.0
+cp LICENSE.txt $RPM_BUILD_ROOT/%{_prefix}/share/doc/buildsome-0.2.0.0/LICENSE.txt
 
-mkdir -p $RPM_BUILD_ROOT/%{_prefix}/share/buildsome-0.1.0.0/cbits
-cp .stack-work/*/*/*/*/*/*/*/cbits/fs_override.so $RPM_BUILD_ROOT/%{_prefix}/share/buildsome-0.1.0.0/cbits
+mkdir -p $RPM_BUILD_ROOT/%{_prefix}/share/buildsome-0.2.0.0/cbits
+cp .stack-work/*/*/*/*/*/*/*/cbits/fs_override.so $RPM_BUILD_ROOT/%{_prefix}/share/buildsome-0.2.0.0/cbits
 
 mkdir -p $RPM_BUILD_ROOT/%{_prefix}/bin
 buildsome_exe=$RPM_BUILD_ROOT/%{_prefix}/bin/buildsome
 cp .stack-work/install/*/*/*/bin/buildsome ${buildsome_exe}
 
-abs_share_path=$(ls -1d `pwd`/.stack-work/*/*/*/*/*/*/buildsome-0.1.0.0)
+abs_share_path=$(ls -1d `pwd`/.stack-work/*/*/*/*/*/*/buildsome-0.2.0.0)
 
 # Patch executable to point to the correct path of fs_override.so (how are
 # you supposed to do this with Stack? Did not find in docs.
@@ -87,7 +87,7 @@ python -c """
 f = \"${buildsome_exe}\"
 content = open(f).read()
 a = \"${abs_share_path}\"
-b = \"%{_prefix}/share/buildsome-0.1.0.0\"
+b = \"%{_prefix}/share/buildsome-0.2.0.0\"
 b += \"\0\" * (len(a) - len(b))
 content = content.replace(a, b)
 open(f, \"w\").write(content)
@@ -101,7 +101,7 @@ chrpath -d ${buildsome_exe}
 %files
 %{_prefix}/bin/buildsome
 # FIXME: Version needs to be automated here.
-%{_prefix}/share/buildsome-0.1.0.0/cbits/fs_override.so
-%{_prefix}/share/doc/buildsome-0.1.0.0/LICENSE.txt
+%{_prefix}/share/buildsome-0.2.0.0/cbits/fs_override.so
+%{_prefix}/share/doc/buildsome-0.2.0.0/LICENSE.txt
 
 %changelog

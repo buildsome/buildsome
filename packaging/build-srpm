@@ -52,7 +52,7 @@ if [[ ! -e ${t}/${PKG_NAME}.spec ]] ; then
     exit -1
 fi
 
-PKG_VERSION=0.1.`git log HEAD --pretty=oneline | wc -l`
+PKG_VERSION=0.2.`git log HEAD --pretty=oneline | wc -l`
 PKG_RELEASE=`git log --pretty="%ai" -n 1 | tr -d ':' | tr ' \-+:' '....'  | cut -c1-17`
 PKG_RELEASE=${PKG_RELEASE}.git`git log --pretty="%h" -n 1`
 
