@@ -317,6 +317,7 @@ mkEnvVars fsHook rootFilter jobId =
   , ("BUILDSOME_MASTER_UNIX_SOCKADDR", fsHookServerAddress fsHook)
   , ("BUILDSOME_JOB_ID", jobId)
   , ("BUILDSOME_ROOT_FILTER", rootFilter)
+  , ("SHELL", "/bin/bash")
     -- Tell python to not generate .pyc files. If the users want them,
     -- they can generate them with an explicit rule, such as:
     --
