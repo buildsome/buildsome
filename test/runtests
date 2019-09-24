@@ -61,5 +61,9 @@ git clean -fdx -- speculative_error
 pyc/test ${buildsome}
 git clean -fdx -- pyc
 
+${buildsome} -f mv
+${buildsome} -f mv
+git clean -fdx -- mv/
+
 echo PASSED ALL TESTS
 ${buildsome} --version
