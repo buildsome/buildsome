@@ -17,7 +17,11 @@ static __thread struct {
     enum need need;
 } thread_state = {-1, -1, -1};
 
-static int gettid(void)
+int gettid(void);
+
+/* Some platforms do have this defined */
+__attribute__((weak))
+int gettid(void)
 {
     #ifdef __APPLE__
         return pthread_mach_thread_np(pthread_self());
