@@ -200,6 +200,22 @@ DEFINE_STAT_WRAPPER(  __lxstat, lstat, stat  )
 DEFINE_STAT_WRAPPER( __xstat64,  stat, stat64)
 DEFINE_STAT_WRAPPER(__lxstat64, lstat, stat64)
 
+
+#define DEFINE_STAT_WRAPPER_NOVERS(name, msg_type, stat_struct)                \
+DEFINE_WRAPPER(int, name, (const char *path, struct stat_struct *buf)) \
+{                                                                       \
+    initialize_process_state();                                         \
+    bool needs_await = false;                                           \
+    DEFINE_MSG(msg, msg_type);                                          \
+    IN_PATH_COPY(needs_await, msg.args.path, path);                     \
+    return AWAIT_CALL_REAL(needs_await, msg, name, path, buf);    \
+}
+
+DEFINE_STAT_WRAPPER_NOVERS(  __stat, stat, stat  )
+DEFINE_STAT_WRAPPER_NOVERS(__stat64, stat, stat64)
+DEFINE_STAT_WRAPPER_NOVERS(  stat, stat, stat  )
+DEFINE_STAT_WRAPPER_NOVERS(stat64, stat, stat64)
+
 /* Depends on the full path */
 DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 {

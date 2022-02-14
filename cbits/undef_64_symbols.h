@@ -29,3 +29,9 @@
 #ifdef off64
 #undef off64
 #endif
+#ifdef stat
+#undef stat
+#endif
+#ifdef stat64
+#undef stat64
+#endif
