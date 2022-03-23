@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                buildsome
-version:             0.1.0.0
+version:             0.1.1.0
 synopsis:            Buildsome: The awesome build system
 description:         An automatic dependency discovery build system
                      with a no-false-negative guarantee, speculative
@@ -115,7 +115,7 @@ executable buildsome
                ,     Lib.Version
                ,     Paths_buildsome
 
-  build-depends:     aeson >=0.7 
+  build-depends:     aeson >=0.7
                    , aeson-pretty >=0.7 && <0.8
                    , ansi-terminal == 0.6.*
                    , array >= 0.5.1
