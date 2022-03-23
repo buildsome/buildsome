@@ -9,7 +9,7 @@ import Control.Exception (uninterruptibleMask)
 import Control.Concurrent.Async (withAsyncWithUnmask)
 import Control.Monad (forever)
 import Data.ByteString (ByteString)
-import Data.Monoid ((<>))
+
 import Data.Time (DiffTime, picosecondsToDiffTime, secondsToDiffTime)
 import System.IO (stderr)
 import qualified Data.ByteString.Char8 as BS8

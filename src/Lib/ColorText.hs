@@ -9,10 +9,9 @@ module Lib.ColorText
 
 import Prelude.Compat hiding (putStrLn, lines)
 
-import Data.Binary (Binary)
 import Data.ByteString (ByteString)
 import Data.Function (on)
-import Data.Monoid
+
 import Data.String (IsString(..))
 import GHC.Generics (Generic)
 import Lib.AnsiConsoleUtils ()
@@ -21,8 +20,8 @@ import qualified Data.List as List
 import qualified System.Console.ANSI as Console
 
 newtype ColorText = ColorText { colorTextPairs :: [([Console.SGR], ByteString)] }
-  deriving (Monoid, Show, Generic)
-instance Binary ColorText
+  deriving (Semigroup, Monoid, Show, Generic)
+
 
 {-# INLINE onFirst #-}
 onFirst :: (a -> a') -> (a, b) -> (a', b)

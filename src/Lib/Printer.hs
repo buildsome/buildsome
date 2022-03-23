@@ -17,7 +17,7 @@ import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef
 import qualified Data.List as List
-import           Data.Monoid
+
 import           Data.String (IsString(..))
 import           Lib.ColorText (ColorText)
 import qualified Lib.ColorText as ColorText

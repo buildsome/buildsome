@@ -18,7 +18,7 @@ import Prelude.Compat hiding (FilePath)
 import Data.Binary (Binary(..))
 import Data.ByteString (ByteString)
 import Data.Function (on)
-import Data.Monoid ((<>))
+
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)

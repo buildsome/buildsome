@@ -15,7 +15,7 @@ import qualified Data.Char as Char
 import           Data.List (partition)
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
-import           Data.Monoid ((<>))
+
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Lib.Directory as Directory

@@ -11,7 +11,6 @@ import Prelude.Compat hiding (show)
 
 import Data.ByteString (ByteString)
 
-import Data.Monoid((<>))
 
 import Lib.Show (show)
 
@@ -19,11 +18,13 @@ type Reasons = [ByteString]
 data ComparisonResult reason = NotEquals reason | Equals
   deriving (Eq, Ord, Functor, Foldable, Traversable)
 
+instance Semigroup reason => Semigroup (ComparisonResult reason) where
+  (<>) (NotEquals x) (NotEquals y) = NotEquals ((<>) x y)
+  (<>) Equals x = x
+  (<>) x Equals = x
+
 instance Monoid reason => Monoid (ComparisonResult reason) where
   mempty = Equals
-  mappend (NotEquals x) (NotEquals y) = NotEquals (mappend x y)
-  mappend Equals x = x
-  mappend x Equals = x
 
 class Cmp a where
   cmp :: a -> a -> ComparisonResult Reasons

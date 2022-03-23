@@ -23,6 +23,3 @@ instance Binary Console.ColorIntensity
 
 deriving instance Generic Console.ConsoleLayer
 instance Binary Console.ConsoleLayer
-
-deriving instance Generic Console.SGR
-instance Binary Console.SGR

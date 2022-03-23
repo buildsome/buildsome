@@ -9,7 +9,7 @@ import Prelude.Compat hiding (FilePath)
 import Buildsome.Stats (Stats(..))
 import Data.ByteString (ByteString)
 import Data.Map (Map)
-import Data.Monoid ((<>))
+
 import Lib.FilePath (FilePath)
 import qualified Buildsome.BuildMaps as BuildMaps
 import qualified Buildsome.Stats as Stats

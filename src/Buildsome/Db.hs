@@ -20,7 +20,7 @@ import qualified Data.ByteString.Char8 as BS8
 import           Data.Default (def)
 import           Data.IORef
 import           Data.Map (Map)
-import           Data.Monoid ((<>))
+
 import           Data.Set (Set)
 import qualified Data.Set as S
 import           Data.Time.Clock (DiffTime)

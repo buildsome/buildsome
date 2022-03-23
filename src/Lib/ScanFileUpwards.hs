@@ -7,7 +7,7 @@ import Prelude.Compat hiding (FilePath)
 
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Either
+import Control.Monad.Trans.Except
 import Lib.FilePath (FilePath, (</>))
 import qualified Lib.FilePath as FilePath
 import qualified System.Posix.ByteString as Posix
@@ -19,13 +19,13 @@ scanFileUpwards name = do
     -- NOTE: Excludes root (which is probably fine)
     parents = takeWhile (/= "/") $ iterate FilePath.takeDirectory cwd
     candidates = map (</> name) parents
-  -- Use EitherT with Left short-circuiting when found, and Right
+  -- Use ExceptT with Left short-circuiting when found, and Right
   -- falling through to the end of the loop:
-  res <- runEitherT $ mapM_ check candidates
+  res <- runExceptT $ mapM_ check candidates
   case res of
     Left found -> Just <$> FilePath.makeRelativeToCurrentDirectory found
     Right () -> return Nothing
   where
     check path = do
       exists <- liftIO $ FilePath.exists path
-      when exists $ left path
+      when exists $ throwE path

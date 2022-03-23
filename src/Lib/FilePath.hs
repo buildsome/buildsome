@@ -21,7 +21,7 @@ import Prelude.Compat hiding (FilePath)
 import Control.Exception (catch, throwIO)
 import Data.ByteString.Char8 (ByteString)
 import Data.Maybe (fromMaybe)
-import Data.Monoid
+
 import GHC.IO.Exception (IOErrorType(..))
 import Lib.ByteString (unprefixed)
 import System.IO.Error (ioeGetErrorType)

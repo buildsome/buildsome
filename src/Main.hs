@@ -22,7 +22,7 @@ import           Data.Functor.Identity (Identity(..))
 import           Data.List (foldl')
 import qualified Data.Map as M
 import           Data.Maybe (mapMaybe, isJust)
-import           Data.Monoid
+
 import           Data.String (IsString(..))
 import           Data.Typeable (Typeable)
 import           GHC.Conc (setNumCapabilities, getNumProcessors)

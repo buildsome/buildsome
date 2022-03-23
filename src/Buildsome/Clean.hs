@@ -13,11 +13,14 @@ data Result = Result
   , cleanedTotalEstimatedSpace :: FileOffset
   , cleanedTotalCount :: Int
   }
+instance Semigroup Result where
+  (<>) (Result asize aspace acount)
+        (Result bsize bspace bcount) =
+          Result (asize+bsize) (aspace+bspace) (acount+bcount)
+
 instance Monoid Result where
   mempty = Result 0 0 0
-  mappend (Result asize aspace acount)
-          (Result bsize bspace bcount) =
-          Result (asize+bsize) (aspace+bspace) (acount+bcount)
+
 
 align :: Integral a => a -> a -> a
 align alignment x = ((x + alignment - 1) `div` alignment) * alignment
