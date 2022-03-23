@@ -55,6 +55,12 @@ getOutputs cmd inheritedEnvs envs = do
     , close_fds = True -- MUST close fds so we don't leak server-side FDs as open/etc
     , create_group = True -- MUST be true so that interruptProcessGroupOf works
     , delegate_ctlc = False -- MUST be false to avoid disabling buildsome's SIGINT/SIGQUIT handlers
+    , detach_console = False
+    , create_new_console = False
+    , new_session = False
+    , child_group = Nothing
+    , child_user = Nothing
+    , use_process_jobs = False
     } $ \case
       (Just stdinHandle, Just stdoutHandle, Just stderrHandle, processHandle) -> do
         hClose stdinHandle

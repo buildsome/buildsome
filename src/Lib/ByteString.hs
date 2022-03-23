@@ -8,7 +8,7 @@ module Lib.ByteString
   ) where
 
 import Data.ByteString (ByteString)
-import Data.Monoid
+
 import Data.Word
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8

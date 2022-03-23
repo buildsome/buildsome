@@ -28,9 +28,10 @@ data Stats = Stats
   , stdErr :: Set TargetRep
   } deriving (Show)
 
-instance Monoid Stats where
-  mempty = Stats mempty mempty
-  mappend (Stats a1 a2) (Stats b1 b2) =
+instance Semigroup Stats where
+  (<>) (Stats a1 a2) (Stats b1 b2) =
     Stats
     (a1 `mappend` b1)
     (a2 `mappend` b2)
+instance Monoid Stats where
+  mempty = Stats mempty mempty

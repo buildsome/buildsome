@@ -18,7 +18,7 @@ import           Buildsome.Opts (Verbosity(..), PrintOutputs(..), PrintCommands(
 import           Control.Monad
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
-import           Data.Monoid
+
 import           Data.String (IsString(..))
 import           Lib.ByteString (chopTrailingNewline)
 import           Lib.ColorText (ColorText)

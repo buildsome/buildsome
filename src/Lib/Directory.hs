@@ -14,7 +14,7 @@ module Lib.Directory
 
 import Prelude.Compat hiding (FilePath)
 
-import Data.Monoid ((<>))
+
 import Control.Monad
 import Lib.Exception (bracket)
 import Lib.FilePath (FilePath, (</>))
@@ -27,9 +27,9 @@ import qualified System.Posix.ByteString as Posix
 import qualified Crypto.Hash.MD5 as MD5
 
 catchErrorPred :: (IOErrorType -> Bool) -> IO a -> IO a -> IO a
-catchErrorPred pred act handler =
+catchErrorPred p act handler =
   act `E.catch` \e ->
-  if pred (ioeGetErrorType e)
+  if p (ioeGetErrorType e)
   then handler
   else E.throwIO e
 
@@ -53,7 +53,7 @@ createDirectories path
     doesExist <- FilePath.exists path
     unless doesExist $ do
       createDirectories $ FilePath.takeDirectory path
-      (Posix.createDirectory path 0o777) `catchAlreadyExists` return () 
+      (Posix.createDirectory path 0o777) `catchAlreadyExists` return ()
 
 removeFileByStat :: IO () -> FilePath -> IO ()
 removeFileByStat notExist path = do

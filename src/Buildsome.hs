@@ -30,14 +30,14 @@ import           Control.Concurrent (forkIO, threadDelay)
 import qualified Control.Exception as E
 import           Control.Monad (void, unless, when, filterM, forM, forM_)
 import           Control.Monad.IO.Class (MonadIO(..))
-import           Control.Monad.Trans.Either (EitherT(..), left, bimapEitherT)
+import           Control.Monad.Trans.Except (ExceptT(..), throwE, runExceptT)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS8
 import           Data.IORef
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe, catMaybes, maybeToList)
-import           Data.Monoid
+
 import           Data.Set (Set)
 import qualified Data.Set as S
 import           Data.String (IsString(..))
@@ -171,10 +171,10 @@ instance Show ExplicitFileMissing where
 assertExplicitInputsExist :: BuildTargetEnv -> [FilePath] -> IO ExplicitPathsBuilt
 assertExplicitInputsExist BuildTargetEnv{..} paths = do
   res <-
-    runEitherT $ forM_ paths $ \path ->
+    runExceptT $ forM_ paths $ \path ->
     unless (isPhony bteBuildsome path) $ do
       doesExist <- liftIO $ FilePath.exists path
-      unless doesExist $ left $
+      unless doesExist $ throwE $
         ExplicitFileMissing (bsRender bteBuildsome) path bteParents
   case res of
     Right () -> return ExplicitPathsBuilt
@@ -412,15 +412,15 @@ replayExecutionLog bte@BuildTargetEnv{..} target inputs outputs stdOutputs selfT
 verifyFileDesc ::
   (IsString str, Monoid str, MonadIO m) =>
   str -> FilePath -> Db.FileDesc ne desc ->
-  (Posix.FileStatus -> desc -> EitherT (str, FilePath) m ()) ->
-  EitherT (str, FilePath) m ()
+  (Posix.FileStatus -> desc -> ExceptT (str, FilePath) m ()) ->
+  ExceptT (str, FilePath) m ()
 verifyFileDesc str filePath fileDesc existingVerify = do
   mStat <- liftIO $ Dir.getMFileStatus filePath
   case (mStat, fileDesc) of
     (Nothing, Db.FileDescNonExisting _) -> return ()
     (Just stat, Db.FileDescExisting desc) -> existingVerify stat desc
-    (Just _, Db.FileDescNonExisting _)  -> left (str <> " file did not exist, now exists", filePath)
-    (Nothing, Db.FileDescExisting {}) -> left (str <> " file was deleted", filePath)
+    (Just _, Db.FileDescNonExisting _)  -> throwE (str <> " file did not exist, now exists", filePath)
+    (Nothing, Db.FileDescExisting {}) -> throwE (str <> " file was deleted", filePath)
 
 data WrapException = WrapException (ColorText -> ByteString) Parents E.SomeException
   deriving (Typeable)
@@ -481,24 +481,30 @@ data ExecutionLogFailure
   = MismatchedFiles (ByteString, FilePath)
   | SpeculativeBuildFailure E.SomeException
 
+-- | Map over both failure and success.
+bimapExceptT :: Functor m => (e -> f) -> (a -> b) -> ExceptT e m a -> ExceptT f m b
+bimapExceptT f g (ExceptT m) = ExceptT (fmap h m) where
+  h (Left e)  = Left (f e)
+  h (Right a) = Right (g a)
+
 tryApplyExecutionLog ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc -> Db.ExecutionLog ->
   IO (Either ExecutionLogFailure (Db.ExecutionLog, BuiltTargets))
 tryApplyExecutionLog bte@BuildTargetEnv{..} entity targetDesc executionLog =
-  runEitherT $ do
+  runExceptT $ do
     builtTargets <-
-      EitherT $
+      ExceptT $
       syncCatchAndLogSpeculativeErrors btePrinter targetDesc
       (Left . SpeculativeBuildFailure)
       (Right <$> executionLogBuildInputs bte entity targetDesc executionLog)
-    bimapEitherT MismatchedFiles id $
+    bimapExceptT MismatchedFiles id $
       executionLogVerifyFilesState bte targetDesc executionLog
     return (executionLog, builtTargets)
 
 executionLogVerifyFilesState ::
   MonadIO m =>
   BuildTargetEnv -> TargetDesc -> Db.ExecutionLog ->
-  EitherT (ByteString, FilePath) m ()
+  ExceptT (ByteString, FilePath) m ()
 executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionLog{..} = do
   forM_ (M.toList elInputsDescs) $ \(filePath, desc) ->
     verifyFileDesc "input" filePath desc $ \stat (mtime, Db.InputDesc mModeAccess mStatAccess mContentAccess) ->
@@ -535,7 +541,7 @@ executionLogVerifyFilesState bte@BuildTargetEnv{..} TargetDesc{..} Db.ExecutionL
         Cmp.Equals -> return ()
         Cmp.NotEquals reasons ->
           -- fail entire computation
-          left (str <> ": " <> BS8.intercalate ", " reasons, filePath)
+          throwE (str <> ": " <> BS8.intercalate ", " reasons, filePath)
 
 executionLogBuildInputs ::
   BuildTargetEnv -> Parallelism.Entity -> TargetDesc ->

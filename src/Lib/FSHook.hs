@@ -27,7 +27,7 @@ import           Data.IORef
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (maybeToList)
-import           Data.Monoid ((<>))
+
 import           Data.Time (NominalDiffTime)
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic(..))

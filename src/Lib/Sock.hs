@@ -7,7 +7,7 @@ module Lib.Sock
 
 import Prelude.Compat hiding (FilePath)
 
-import Data.Monoid
+
 import Data.Word (Word32)
 import Lib.Binary (decode)
 import Lib.Exception (bracket, bracket_)

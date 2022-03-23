@@ -1,4 +1,3 @@
-
 {-# LANGUAGE NoImplicitPrelude #-}
 module Buildsome.Types where
 
@@ -69,8 +68,8 @@ data BuiltTargets = BuiltTargets
   { builtTargets :: [Target]
   , builtStats :: Stats
   }
+instance Semigroup BuiltTargets where
+  (<>) (BuiltTargets a1 b1) (BuiltTargets a2 b2) =
+    BuiltTargets (mappend a1 a2) (mappend b1 b2)
 instance Monoid BuiltTargets where
   mempty = BuiltTargets mempty mempty
-  mappend (BuiltTargets a1 b1) (BuiltTargets a2 b2) =
-    BuiltTargets (mappend a1 a2) (mappend b1 b2)
-

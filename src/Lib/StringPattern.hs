@@ -10,7 +10,7 @@ import Control.DeepSeq (NFData(..))
 import Control.DeepSeq.Generics (genericRnf)
 import Data.Binary (Binary)
 import Data.ByteString (ByteString)
-import Data.Monoid ((<>))
+
 import GHC.Generics (Generic)
 import Lib.ByteString (unprefixed, unsuffixed, splitBS)
 import qualified Data.ByteString.Char8 as BS8

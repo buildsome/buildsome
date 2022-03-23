@@ -3,7 +3,7 @@ module Lib.ShowBytes (showBytes) where
 
 import Control.Applicative ((<|>))
 import Data.Maybe (fromMaybe)
-import Data.Monoid
+
 import Data.String (IsString(..))
 import Text.Printf (printf)
 
