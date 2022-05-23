@@ -15,11 +15,24 @@ BuildRoot:      %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 # This can be rectified in the future.
 BuildRequires:  leveldb-devel
 BuildRequires:  snappy-devel
-#BuildRequires: happy
 BuildRequires:  gmp-devel
-BuildRequires:  python
+BuildRequires:  python3
+BuildRequires:  python2
 BuildRequires:  chrpath
 BuildRequires:  wget
+BuildRequires:  perl
+BuildRequires:  make
+BuildRequires:  automake
+BuildRequires:  gcc
+BuildRequires:  gmp-devel
+BuildRequires:  libffi
+BuildRequires:  zlib
+BuildRequires:  zlib-devel
+BuildRequires:  xz
+BuildRequires:  tar
+BuildRequires:  git
+BuildRequires:  gnupg
+BuildRequires:  ncurses-libs
 
 %if 0%{?fedora} >= 24
 # GHC builds need tinfo.so.5
@@ -38,28 +51,35 @@ declaration of the build steps, and give better guarantees to users.
 %prep
 %setup -q
 
-mkdir -p ~/.local/{bin,stack}
+mkdir -p ~/.local/{bin,lib}
 export PATH=~/.local/bin:$PATH
+export LD_LIBRARY_PATH=~/.local/lib:$LD_LIBRARY_PATH
+ln -s /usr/lib64/libncursesw.so.6 ~/.local/lib/libncursesw.so.5
+cd ~/.local
+wget http://archive.ubuntu.com/ubuntu/pool/main/g/gmp/gmp_6.1.2+dfsg.orig.tar.xz
+tar xf gmp_6.1.2+dfsg.orig.tar.xz
+cd gmp-6.1.2+dfsg
+./configure  --prefix=$HOME/.local
+make install
+ln -s ~/.local/lib/libgmp.so.10 ~/.local/lib/libgmp.so.3
+cd ~/.local
+wget https://downloads.haskell.org/~ghc/7.0.1/ghc-7.0.1-x86_64-unknown-linux.tar.bz2
+tar xf ghc-7.0.1-x86_64-unknown-linux.tar.bz2
+cd ghc-7.0.1
+./configure --prefix=$HOME/.local
+make install
+cd ~/.local
+curl -sSL https://get.haskellstack.org/ -o haskellstack.sh
+bash ./haskellstack.sh -d ~/.local/bin
+stack install alex happy
 
-if [[ ! -x ~/.local/bin/stack ]] ; then
-    wget https://github.com/commercialhaskell/stack/releases/download/v1.9.3/stack-1.9.3-linux-x86_64.tar.gz
-    tar -zxf stack-1.9.3-linux-x86_64.tar.gz -C ~/.local/stack
-    ln -f -s ~/.local/stack/stack-1.9.3-linux-x86_64/stack ~/.local/bin/stack
-fi
-
-stack --no-terminal setup
-
-pushd ~
-# A hack to make sure *some* version of Happy is installed before proceeding
-stack --resolver lts-6.35 --no-terminal setup
-stack --resolver lts-6.35 install happy
-popd
 
 %build
 
 # It depends on git, we need to fix that. For now:
 export BUILDSOME_BUILT_REVISION=%{version}-%{release}
 export PATH=~/.local/bin:$PATH
+export LD_LIBRARY_PATH=~/.local/lib:$LD_LIBRARY_PATH
 
 # Proceed to build Buildsome
 stack --no-terminal build
@@ -84,7 +104,7 @@ abs_share_path=$(ls -1d `pwd`/.stack-work/*/*/*/*/*/*/buildsome-0.1.1.0)
 # Patch executable to point to the correct path of fs_override.so (how are
 # you supposed to do this with Stack? Did not find in docs.
 
-python -c """
+python2 -c """
 f = \"${buildsome_exe}\"
 content = open(f).read()
 a = \"${abs_share_path}\"
