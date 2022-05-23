@@ -87,7 +87,8 @@ if [[ "${MOCK_CONFIG}" != "" ]] ; then
         MOCK_ARGS=""
     fi
     MOCK_ARGS="${MOCK_ARGS}"
-    sudo mock \
+    mock \
+	--dnf \
         --resultdir=${TARGET_DIR}/RESULT \
         ${MOCK_ARGS} ${TARGET_DIR}/SRPMS/*.src.rpm ||
        (cat ${TARGET_DIR}/RESULT/build.log && exit 1)
