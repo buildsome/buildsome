@@ -646,6 +646,17 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
         va_start(args, _flags);                                         \
         mode_t mode = is_create ? va_arg(args, mode_t) : 0;             \
         va_end(args);                                                   \
+        if (flags & O_PATH) {                                           \
+            /* The file  itself  is not opened, and can't be read. */   \
+            /* Only need to diferentiate on file existence. */          \
+            TRACE_DEBUG("O_PATH set, '%s' '%s' %d' reporting as 'stat'",\
+                        #_name, path, _flags);                          \
+            bool needs_await = false;                                   \
+            DEFINE_MSG(msg, stat);                                      \
+            IN_PATH_COPY(needs_await, msg.args.path, _path);            \
+            SEND_MSG_AWAIT(needs_await, msg);                           \
+            return SILENT_CALL_REAL(_name, _path, _flags);              \
+        }                                                               \
         switch(_flags & (O_RDONLY | O_RDWR | O_WRONLY)) {               \
         case O_RDONLY: {                                                \
             /* TODO: Remove ASSERT and correctly handle O_CREAT, O_TRUNCATE */ \
