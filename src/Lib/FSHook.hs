@@ -243,7 +243,7 @@ handleJobMsg _tidStr conn job (Protocol.Msg isDelayed func) =
     Protocol.Stat path             -> handleInput AccessTypeStat path
     Protocol.LStat path            -> handleInput AccessTypeStat path
     Protocol.OpenDir path          -> handleInput AccessTypeFull path
-    Protocol.ReadLink path         -> handleInput AccessTypeFull path
+    Protocol.ReadLink path         -> handleInput AccessTypeStat path
     Protocol.Exec path             -> handleInput AccessTypeFull path
     Protocol.ExecP mPath attempted ->
       handleInputs $
