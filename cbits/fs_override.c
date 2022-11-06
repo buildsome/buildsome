@@ -18,7 +18,7 @@
 static void vtrace(enum severity, const char *fmt, va_list);
 static void trace(enum severity, const char *fmt, ...);
 
-#define TRACE_DEBUG(...)   // TRACE(severity_debug, __VA_ARGS__)
+#define TRACE_DEBUG(...)   TRACE(severity_debug, __VA_ARGS__)
 #define TRACE_WARNING(...) trace(severity_warning, __VA_ARGS__)
 #define TRACE_ERROR(...)   trace(severity_error, __VA_ARGS__)
 
@@ -44,6 +44,7 @@ static void update_cwd(void)
     ASSERT(process_state.cwd_length < MAX_PATH);
     process_state.cwd[process_state.cwd_length-1] = '/';
     process_state.cwd[process_state.cwd_length] = 0;
+    TRACE_DEBUG("update_cwd to: %s", process_state.cwd);
 }
 
 static void initialize_process_state(void)
@@ -200,7 +201,6 @@ DEFINE_STAT_WRAPPER(  __lxstat, lstat, stat  )
 DEFINE_STAT_WRAPPER( __xstat64,  stat, stat64)
 DEFINE_STAT_WRAPPER(__lxstat64, lstat, stat64)
 
-
 #define DEFINE_STAT_WRAPPER_NOVERS(name, msg_type, stat_struct)                \
 DEFINE_WRAPPER(int, name, (const char *path, struct stat_struct *buf)) \
 {                                                                       \
@@ -257,6 +257,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 /* Depends on the full direct path */
 DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
+    TRACE_DEBUG("readlink: %s", path);
     initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, readlink);
@@ -291,6 +292,7 @@ static bool get_fullpath_of_dirfd(char *fullpath, size_t fullpath_size, int dirf
         TRACE_ERROR("Path too long!");
         ASSERT(0);
     }
+    TRACE_DEBUG("get_fullpath_of_dirfd: %d: %s", dirfd, path);
     return true;
 }
 
@@ -636,6 +638,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 #define OPEN_HANDLER(_name, _path, _flags)                              \
     do {                                                                \
         initialize_process_state();                                     \
+        TRACE_DEBUG("OPEN_HANDLER for '%s': %s", #_name, _path);        \
         bool is_also_read = false;                                      \
         bool is_create = _flags & CREATION_FLAGS;                       \
         bool is_truncate = _flags & O_TRUNC;                            \
@@ -760,6 +763,7 @@ struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
 #define FOPEN_HANDLER(name, path, modestr, ...)                         \
     do {                                                                \
         initialize_process_state();                                     \
+        TRACE_DEBUG("FOPEN_HANDLER %s: %s", #name, path);               \
         struct fopen_mode_bools mode = fopen_parse_modestr(modestr);    \
         if(!mode.is_write && !mode.is_create && !mode.is_truncate) {    \
             ASSERT(mode.is_read);                                       \
@@ -909,6 +913,39 @@ static FILE *log_file(void)
 
 void _do_log(enum severity sev, const char *fmt, ...)
 {
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(log_file(), fmt, args);
+    va_end(args);
+    fflush(log_file());
+    va_start(args, fmt);
+    vtrace(sev, fmt, args);
+    va_end(args);
+}
+
+static bool traces_enabled(void)
+{
+    // To avoid searching a string in env for each call, when traces are
+    // disabled we do the following:
+    // FAST path: if traces are already known to be disabled, bail out.
+    // Otherwise, check env to see if these had to be disabled, update the state
+    // and continue accordingly.
+    static bool trace_enabled = true;
+    if (!trace_enabled) {
+        return false;
+    }
+    if (getenv(BUILDSOME_TRACE_ON) == NULL) {
+        trace_enabled = false;
+        return false;
+    }
+    return true;
+}
+
+void _maybe_do_trace(enum severity sev, const char *fmt, ...)
+{
+    if (!traces_enabled())
+        return;
+
     va_list args;
     va_start(args, fmt);
     vfprintf(log_file(), fmt, args);
