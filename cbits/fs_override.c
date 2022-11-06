@@ -18,6 +18,8 @@
 static void vtrace(enum severity, const char *fmt, va_list);
 static void trace(enum severity, const char *fmt, ...);
 
+static bool dereference_dir(int dirfd, char *buf, size_t buf_len) ATTR_WARN_UNUSED_RESULT;
+
 #define TRACE_DEBUG(...)   TRACE(severity_debug, __VA_ARGS__)
 #define TRACE_WARNING(...) trace(severity_warning, __VA_ARGS__)
 #define TRACE_ERROR(...)   trace(severity_error, __VA_ARGS__)
@@ -227,6 +229,23 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 }
 
 /* Depends on the full path */
+DEFINE_WRAPPER(DIR *, fdopendir, (int dirfd))
+{
+    initialize_process_state();
+    TRACE_DEBUG("handle fdopendir: %d", dirfd);
+    bool needs_await = false;
+    DEFINE_MSG(msg, opendir);
+    char fullpath[MAX_PATH];
+    if (!dereference_dir(dirfd, PS(fullpath))) {
+        errno = ENOENT;
+        return NULL;
+    }
+    IN_PATH_COPY(needs_await, msg.args.path, fullpath);
+    SEND_MSG_AWAIT(needs_await, msg);
+    return AWAIT_CALL_REAL(needs_await, msg, fdopendir, dirfd);
+}
+
+/* Depends on the full path */
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
     initialize_process_state();
@@ -235,6 +254,19 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
     IN_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     return AWAIT_CALL_REAL(needs_await, msg, access, path, mode);
+}
+
+/* Depends on the full path */
+DEFINE_WRAPPER(int, eaccess, (const char *path, int mode))
+{
+    initialize_process_state();
+    TRACE_DEBUG("handle eaccess: %s", path);
+    bool needs_await = false;
+    DEFINE_MSG(msg, access);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
+    msg.args.mode = mode;
+    SEND_MSG_AWAIT(needs_await, msg);
+    return AWAIT_CALL_REAL(needs_await, msg, eaccess, path, mode);
 }
 
 /* Outputs the full path */
@@ -265,7 +297,6 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
     return AWAIT_CALL_REAL(needs_await, msg, readlink, path, buf, bufsiz);
 }
 
-static bool dereference_dir(int dirfd, char *buf, size_t buf_len) ATTR_WARN_UNUSED_RESULT;
 static bool dereference_dir(int dirfd, char *buf, size_t buf_len)
 {
     const pid_t pid = getpid();
@@ -727,6 +758,26 @@ DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
     OPEN_HANDLER(open64, path, flags);
 }
 
+DEFINE_WRAPPER(int, __open64_nocancel, (const char *path, int flags, ...))
+{
+    TRACE_DEBUG("__open64_nocancel: %s", path);
+    OPEN_HANDLER(__open64_nocancel, path, flags);
+}
+
+/* Ditto openat */
+DEFINE_WRAPPER(int, openat64, (int dirfd, const char *path, int flags, ...))
+{
+    if (AT_FDCWD == dirfd || path[0] == '/') {
+        TRACE_DEBUG("openat64 %d %s %X degrading to normal open64", dirfd, path, flags);
+        OPEN_HANDLER(open64, path, flags);
+    } else {
+        char fullpath[MAX_PATH];
+        if (!get_fullpath_of_dirfd(PS(fullpath), dirfd, path)) return -1;
+        TRACE_DEBUG("openat64 %d %s %X converted to open64 of %s", dirfd, path, flags, fullpath);
+        OPEN_HANDLER(open64, fullpath, flags);
+    }
+}
+
 DEFINE_WRAPPER(int, __open_2, (const char *path, int flags, ...))
 {
     OPEN_HANDLER(__open_2, path, flags);
@@ -876,6 +927,23 @@ DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
     }
 
     return rptr;
+}
+
+DEFINE_WRAPPER(int, fstatat, (int dirfd, const char *path, struct stat *buf, int flags))
+{
+    TRACE_DEBUG("HANDLING fstatat: %d, %s", dirfd, path);
+    int (*stat_or_lstat) (const char *, struct stat *) = (
+            flags & AT_SYMLINK_NOFOLLOW ? lstat : stat);
+
+    if (AT_FDCWD == dirfd || path[0] == '/') {
+        TRACE_DEBUG("fstatat %d %s %X degrading to stat", dirfd, path, flags);
+        return stat_or_lstat(path, buf);
+    } else {
+        char fullpath[MAX_PATH];
+        if (!get_fullpath_of_dirfd(PS(fullpath), dirfd, path)) return -1;
+        TRACE_DEBUG("fstatat %d %s %X converted to stat of %s", dirfd, path, flags, fullpath);
+        return stat_or_lstat(fullpath, buf);
+    }
 }
 
 /*************************************/
