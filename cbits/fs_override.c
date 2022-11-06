@@ -18,7 +18,9 @@
 static void vtrace(enum severity, const char *fmt, va_list);
 static void trace(enum severity, const char *fmt, ...);
 
-#define TRACE_DEBUG(...)   // TRACE(severity_debug, __VA_ARGS__)
+static bool dereference_dir(int dirfd, char *buf, size_t buf_len) ATTR_WARN_UNUSED_RESULT;
+
+#define TRACE_DEBUG(...)   TRACE(severity_debug, __VA_ARGS__)
 #define TRACE_WARNING(...) trace(severity_warning, __VA_ARGS__)
 #define TRACE_ERROR(...)   trace(severity_error, __VA_ARGS__)
 
@@ -44,6 +46,7 @@ static void update_cwd(void)
     ASSERT(process_state.cwd_length < MAX_PATH);
     process_state.cwd[process_state.cwd_length-1] = '/';
     process_state.cwd[process_state.cwd_length] = 0;
+    TRACE_DEBUG("update_cwd to: %s", process_state.cwd);
 }
 
 static void initialize_process_state(void)
@@ -200,7 +203,6 @@ DEFINE_STAT_WRAPPER(  __lxstat, lstat, stat  )
 DEFINE_STAT_WRAPPER( __xstat64,  stat, stat64)
 DEFINE_STAT_WRAPPER(__lxstat64, lstat, stat64)
 
-
 #define DEFINE_STAT_WRAPPER_NOVERS(name, msg_type, stat_struct)                \
 DEFINE_WRAPPER(int, name, (const char *path, struct stat_struct *buf)) \
 {                                                                       \
@@ -227,6 +229,23 @@ DEFINE_WRAPPER(DIR *, opendir, (const char *path))
 }
 
 /* Depends on the full path */
+DEFINE_WRAPPER(DIR *, fdopendir, (int dirfd))
+{
+    initialize_process_state();
+    TRACE_DEBUG("handle fdopendir: %d", dirfd);
+    bool needs_await = false;
+    DEFINE_MSG(msg, opendir);
+    char fullpath[MAX_PATH];
+    if (!dereference_dir(dirfd, PS(fullpath))) {
+        errno = ENOENT;
+        return NULL;
+    }
+    IN_PATH_COPY(needs_await, msg.args.path, fullpath);
+    SEND_MSG_AWAIT(needs_await, msg);
+    return AWAIT_CALL_REAL(needs_await, msg, fdopendir, dirfd);
+}
+
+/* Depends on the full path */
 DEFINE_WRAPPER(int, access, (const char *path, int mode))
 {
     initialize_process_state();
@@ -235,6 +254,19 @@ DEFINE_WRAPPER(int, access, (const char *path, int mode))
     IN_PATH_COPY(needs_await, msg.args.path, path);
     msg.args.mode = mode;
     return AWAIT_CALL_REAL(needs_await, msg, access, path, mode);
+}
+
+/* Depends on the full path */
+DEFINE_WRAPPER(int, eaccess, (const char *path, int mode))
+{
+    initialize_process_state();
+    TRACE_DEBUG("handle eaccess: %s", path);
+    bool needs_await = false;
+    DEFINE_MSG(msg, access);
+    IN_PATH_COPY(needs_await, msg.args.path, path);
+    msg.args.mode = mode;
+    SEND_MSG_AWAIT(needs_await, msg);
+    return AWAIT_CALL_REAL(needs_await, msg, eaccess, path, mode);
 }
 
 /* Outputs the full path */
@@ -257,6 +289,7 @@ DEFINE_WRAPPER(int, truncate, (const char *path, off_t length))
 /* Depends on the full direct path */
 DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
 {
+    TRACE_DEBUG("readlink: %s", path);
     initialize_process_state();
     bool needs_await = false;
     DEFINE_MSG(msg, readlink);
@@ -264,7 +297,6 @@ DEFINE_WRAPPER(ssize_t, readlink, (const char *path, char *buf, size_t bufsiz))
     return AWAIT_CALL_REAL(needs_await, msg, readlink, path, buf, bufsiz);
 }
 
-static bool dereference_dir(int dirfd, char *buf, size_t buf_len) ATTR_WARN_UNUSED_RESULT;
 static bool dereference_dir(int dirfd, char *buf, size_t buf_len)
 {
     const pid_t pid = getpid();
@@ -291,6 +323,7 @@ static bool get_fullpath_of_dirfd(char *fullpath, size_t fullpath_size, int dirf
         TRACE_ERROR("Path too long!");
         ASSERT(0);
     }
+    TRACE_DEBUG("get_fullpath_of_dirfd: %d: %s", dirfd, path);
     return true;
 }
 
@@ -636,6 +669,7 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
 #define OPEN_HANDLER(_name, _path, _flags)                              \
     do {                                                                \
         initialize_process_state();                                     \
+        TRACE_DEBUG("OPEN_HANDLER for '%s': %s", #_name, _path);        \
         bool is_also_read = false;                                      \
         bool is_create = _flags & CREATION_FLAGS;                       \
         bool is_truncate = _flags & O_TRUNC;                            \
@@ -643,6 +677,17 @@ DEFINE_WRAPPER(int, execve, (const char *filename, char *const argv[], char *con
         va_start(args, _flags);                                         \
         mode_t mode = is_create ? va_arg(args, mode_t) : 0;             \
         va_end(args);                                                   \
+        if (flags & O_PATH) {                                           \
+            /* The file  itself  is not opened, and can't be read. */   \
+            /* Only need to diferentiate on file existence. */          \
+            TRACE_DEBUG("O_PATH set, '%s' '%s' %d' reporting as 'stat'",\
+                        #_name, path, _flags);                          \
+            bool needs_await = false;                                   \
+            DEFINE_MSG(msg, stat);                                      \
+            IN_PATH_COPY(needs_await, msg.args.path, _path);            \
+            SEND_MSG_AWAIT(needs_await, msg);                           \
+            return SILENT_CALL_REAL(_name, _path, _flags);              \
+        }                                                               \
         switch(_flags & (O_RDONLY | O_RDWR | O_WRONLY)) {               \
         case O_RDONLY: {                                                \
             /* TODO: Remove ASSERT and correctly handle O_CREAT, O_TRUNCATE */ \
@@ -713,6 +758,26 @@ DEFINE_WRAPPER(int, open64, (const char *path, int flags, ...))
     OPEN_HANDLER(open64, path, flags);
 }
 
+DEFINE_WRAPPER(int, __open64_nocancel, (const char *path, int flags, ...))
+{
+    TRACE_DEBUG("__open64_nocancel: %s", path);
+    OPEN_HANDLER(__open64_nocancel, path, flags);
+}
+
+/* Ditto openat */
+DEFINE_WRAPPER(int, openat64, (int dirfd, const char *path, int flags, ...))
+{
+    if (AT_FDCWD == dirfd || path[0] == '/') {
+        TRACE_DEBUG("openat64 %d %s %X degrading to normal open64", dirfd, path, flags);
+        OPEN_HANDLER(open64, path, flags);
+    } else {
+        char fullpath[MAX_PATH];
+        if (!get_fullpath_of_dirfd(PS(fullpath), dirfd, path)) return -1;
+        TRACE_DEBUG("openat64 %d %s %X converted to open64 of %s", dirfd, path, flags, fullpath);
+        OPEN_HANDLER(open64, fullpath, flags);
+    }
+}
+
 DEFINE_WRAPPER(int, __open_2, (const char *path, int flags, ...))
 {
     OPEN_HANDLER(__open_2, path, flags);
@@ -760,6 +825,7 @@ struct fopen_mode_bools fopen_parse_modestr(const char *modestr)
 #define FOPEN_HANDLER(name, path, modestr, ...)                         \
     do {                                                                \
         initialize_process_state();                                     \
+        TRACE_DEBUG("FOPEN_HANDLER %s: %s", #name, path);               \
         struct fopen_mode_bools mode = fopen_parse_modestr(modestr);    \
         if(!mode.is_write && !mode.is_create && !mode.is_truncate) {    \
             ASSERT(mode.is_read);                                       \
@@ -863,6 +929,23 @@ DEFINE_WRAPPER(char *, realpath, (const char *path, char *resolved_path))
     return rptr;
 }
 
+DEFINE_WRAPPER(int, fstatat, (int dirfd, const char *path, struct stat *buf, int flags))
+{
+    TRACE_DEBUG("HANDLING fstatat: %d, %s", dirfd, path);
+    int (*stat_or_lstat) (const char *, struct stat *) = (
+            flags & AT_SYMLINK_NOFOLLOW ? lstat : stat);
+
+    if (AT_FDCWD == dirfd || path[0] == '/') {
+        TRACE_DEBUG("fstatat %d %s %X degrading to stat", dirfd, path, flags);
+        return stat_or_lstat(path, buf);
+    } else {
+        char fullpath[MAX_PATH];
+        if (!get_fullpath_of_dirfd(PS(fullpath), dirfd, path)) return -1;
+        TRACE_DEBUG("fstatat %d %s %X converted to stat of %s", dirfd, path, flags, fullpath);
+        return stat_or_lstat(fullpath, buf);
+    }
+}
+
 /*************************************/
 
 static void vtrace(enum severity sev, const char *fmt, va_list args)
@@ -909,6 +992,39 @@ static FILE *log_file(void)
 
 void _do_log(enum severity sev, const char *fmt, ...)
 {
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(log_file(), fmt, args);
+    va_end(args);
+    fflush(log_file());
+    va_start(args, fmt);
+    vtrace(sev, fmt, args);
+    va_end(args);
+}
+
+static bool traces_enabled(void)
+{
+    // To avoid searching a string in env for each call, when traces are
+    // disabled we do the following:
+    // FAST path: if traces are already known to be disabled, bail out.
+    // Otherwise, check env to see if these had to be disabled, update the state
+    // and continue accordingly.
+    static bool trace_enabled = true;
+    if (!trace_enabled) {
+        return false;
+    }
+    if (getenv(BUILDSOME_TRACE_ON) == NULL) {
+        trace_enabled = false;
+        return false;
+    }
+    return true;
+}
+
+void _maybe_do_trace(enum severity sev, const char *fmt, ...)
+{
+    if (!traces_enabled())
+        return;
+
     va_list args;
     va_start(args, fmt);
     vfprintf(log_file(), fmt, args);
